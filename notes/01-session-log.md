@@ -121,3 +121,41 @@ architecture (option B from session 1).
 2. Act-boss voting in v0.1, or skip it (StS2's boss selection might be different
    enough that the original's BossSelectScreen approach doesn't transfer)?
 3. Confirm: monolithic mod (recommended).
+
+---
+
+## 2026-05-07 — Session 1.6: StS2 modding API initial pass
+
+Same day, kept going. Read all 13 files of
+`MegaCrit.Sts2.Core.Modding/` plus the top of `Core/Hooks/Hook.cs` (the
+file is 27k+ tokens — sampled).
+
+**Headline corrections** (session 1's optimism was partly misplaced):
+- `RunHookSubscriptionDelegate` is *not* an event-bus. It's a registration
+  delegate that returns `IEnumerable<AbstractModel>` — i.e., it asks the
+  mod to register models that participate in the run.
+- The actual hook surface is `AbstractModel`'s virtual methods, called by
+  the static `Hook` class via `runState.IterateHookListeners(...)`.
+- We can also (or instead) use Harmony patches — game ships `0Harmony.dll`
+  and auto-runs `PatchAll` on any mod assembly without `[ModInitializer]`.
+
+**New things known**:
+- Manifest schema is dead simple (id, name, author, description, version,
+  has_pck, has_dll, dependencies, affects_gameplay).
+- Mods folder is `<game-install>/mods/`, NOT `%APPDATA%`.
+- Two clean entry-point styles: `[ModInitializer]` + manual setup, OR
+  pure-Harmony (game auto-PatchAlls).
+- For Slay the Streamer 2 we'll use `[ModInitializer]` (need IRC startup +
+  manual Harmony lifecycle control).
+
+**Single most valuable next task**: read `AbstractModel.cs` in
+`Core/Models/`. Its virtual-method surface determines whether v0.1 is
+"~20 AbstractModel overrides + IRC layer" or "~20 Harmony patches + IRC
+layer". Both are feasible; the design diverges meaningfully.
+
+Full writeup: `notes/03-sts2-modding-api.md`.
+
+**Stopping for the day.** Substantial commits today: workspace + tooling
+(`c86bb35`), original-mod feature inventory (`636c1aa`), StS2 modding API
+notes (next commit). Three deep dives in one sitting is enough — fresh
+session next time.

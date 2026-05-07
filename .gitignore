@@ -1,0 +1,24 @@
+# Decompiled output - regenerable from sts2.dll, large, and not "ours" to commit
+decompiled/
+
+# Reference repos - not ours, cloned fresh per workspace (see references/README.md)
+references/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+
+# Godot
+.godot/
+.import/
+
+# IDE
+.vs/
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -70,6 +70,54 @@ delegate files.
    the input/decision pipeline? Study one of them as a working reference.
 
 **Things explicitly not done yet** (deliberate scope discipline):
-- Reading any of the original mod's source — that's session 2's job.
+- ~~Reading any of the original mod's source — that's session 2's job.~~ Started in session 1.5 below.
 - Mapping hook points in the decompiled DLL — needs the decompile to finish first.
 - Writing any code at all — we're in research mode.
+
+---
+
+## 2026-05-07 — Session 1.5: original-mod feature inventory
+
+Same day, continued straight on. Renamed workspace from `sts2-streamer` to
+`slay-the-streamer-2` (PowerShell rename was racy, ended up nesting via Bash
+`mv` quirk; cleaned up by re-flattening and re-initing git from scratch).
+Made the initial commit `c86bb35`.
+
+Then dove into option 3: original mod feature inventory.
+
+**Read in full**:
+- `SlayTheStreamer.java` (main entrypoint)
+- `TwirkPatch.java` (UTF-8 encoding fix for Korean chat)
+- `ConfigPanel.java` (commented-out UI — users edit JSON by hand)
+- `CardRewardPatch.java` (decoration only — voting comes from base mod)
+- `MonsterMessageRepeater.java` (chat speech bubbles, ~35 LOC of logic)
+- `HexaghostModel.java` (display-only Hexaghost for boss-select backdrop)
+- `StartGamePatch.java` (Neow voting + sealed deck construction)
+
+**Not yet read** (~770 lines remaining):
+- `BossSelectScreen.java` (345)
+- `MonsterNamesPatch.java` (256)
+- `NoSkipBossRelicPatch.java` (222)
+- `BossChoicePatch.java` (145)
+- `BossSelectRoom.java` (44)
+- `ShopkeeperNamesPatch.java` (76)
+- `MainMenuDisplayPatch.java` (39)
+
+The unread ones either flesh out boss voting (definitely v0.1-relevant) or
+implement chat-as-monster polish (post-MVP).
+
+**Headline finding**: see `02-original-mod-feature-inventory.md` for the
+full writeup. The crucial insight: most "chat votes on X" features came
+from the underlying robojumper Twitch Integration mod, not Slay the Streamer
+itself. Slay the Streamer is a *thin layer* (sealed deck + Neow + Act-boss
+votes + chat-as-monster polish) on top of a generic chat-voting framework.
+
+For our project: there is no Twitch Integration mod for StS2, so we'll
+reimplement both layers ourselves. Strongly favours the monolithic
+architecture (option B from session 1).
+
+**Open scoping decisions** (deferred to design phase):
+1. Sealed deck in v0.1, or pure-voting v0.1 with sealed deck for v0.2?
+2. Act-boss voting in v0.1, or skip it (StS2's boss selection might be different
+   enough that the original's BossSelectScreen approach doesn't transfer)?
+3. Confirm: monolithic mod (recommended).

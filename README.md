@@ -60,6 +60,7 @@ ilspycmd "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_st
 - Git
 - .NET 9 SDK (`9.0.313`)
 - ILSpy CLI (`ilspycmd 9.1.0.7988`) for decompiling `sts2.dll`
+- Godot 4.5.1 Mono at `C:\Tools\Godot_4.5.1_mono\` — required for the build pipeline (`Godot.NET.Sdk` csproj)
 - VS Code with Claude Code extension
 - StS2 install at `C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\`
 - Game DLL at `data_sts2_windows_x86_64\sts2.dll`

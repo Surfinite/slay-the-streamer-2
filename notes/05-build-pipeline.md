@@ -31,11 +31,13 @@ Source: `references/STS2FirstMod/` — the working example by jiegec
 |---|---|---|
 | .NET 9 SDK | C# compilation | ✅ installed (9.0.313) |
 | sts2.dll reference | API surface for our mod | ✅ located |
-| **Godot 4.5.1 Mono (.NET)** | Build invocation + asset packaging | ❌ **not installed** |
+| Godot 4.5.1 Mono (.NET) | Build invocation + asset packaging | ✅ installed at `C:\Tools\Godot_4.5.1_mono\` |
 | ILSpy CLI | Decompile reference | ✅ installed |
 
-**Godot 4.5.1 Mono download**: https://godotengine.org/download/archive/4.5.1-stable/
-For Windows: `Godot_v4.5.1-stable_mono_win64.zip` (or installer variant).
+**Godot executables** (after extraction):
+- `C:\Tools\Godot_4.5.1_mono\Godot_v4.5.1-stable_mono_win64.exe` — GUI
+- `C:\Tools\Godot_4.5.1_mono\Godot_v4.5.1-stable_mono_win64_console.exe` — console (use this for `--build-solutions` etc., it returns stdout properly)
+- Verified: prints `4.5.1.stable.mono.official.f62fdbde1` on `--version`.
 
 ## Project structure (target for our mod)
 
@@ -174,7 +176,7 @@ The reference `build.sh` is bash. Our Windows equivalent will live as
 
 ```powershell
 $gameDll = "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64\sts2.dll"
-$godot   = "C:\path\to\Godot_v4.5.1-stable_mono_win64\Godot_v4.5.1-stable_mono_win64.exe"
+$godot   = "C:\Tools\Godot_4.5.1_mono\Godot_v4.5.1-stable_mono_win64_console.exe"
 
 Copy-Item $gameDll src\sts2.dll
 & $godot --build-solutions --quit --headless --path src
@@ -217,8 +219,7 @@ shows logs go to Godot's standard logger.
   with the .csproj, or if we can use a pure dotnet flow. (The csproj uses
   `Godot.NET.Sdk` so Godot context is probably required.)
 
-## Update to memory: Godot install will be needed next session
+## All prerequisites in place
 
-Adding to the "things to set up before we start writing code" list:
-- Install Godot 4.5.1 Mono (.NET version) — Windows Mono build,
-  ~150 MB extracted.
+(2026-05-07: Godot was installed in the same session — see toolchain table above.)
+We're fully ready to start building once we've finished design.

@@ -159,3 +159,56 @@ Full writeup: `notes/03-sts2-modding-api.md`.
 (`c86bb35`), original-mod feature inventory (`636c1aa`), StS2 modding API
 notes (next commit). Three deep dives in one sitting is enough — fresh
 session next time.
+
+---
+
+## 2026-05-07 — Session 1.7: AbstractModel + ModHelper + build pipeline
+
+Same day, kept going (Surfinite had ~2 more hours and we're moving fast).
+
+**Read**:
+- `Core/Models/AbstractModel.cs` (1,038 lines, ~200 virtual methods —
+  inventoried via grep, then targeted reads).
+- `Core/Modding/ModHelper.cs` (full read, 147 lines — closes the
+  registration question).
+- `references/STS2FirstMod/`: `README.md`, `FirstMod.json`,
+  `FirstMod.csproj`, `NewScript.cs`, `project.godot`, `build.sh`.
+
+**Findings written up** in `notes/04-abstract-model-hook-surface.md` and
+`notes/05-build-pipeline.md`.
+
+**Headline conclusions**:
+1. **AbstractModel can't substitute the player's choice.** Its 200 virtual
+   methods cover content modification (cards, prices, damage, rewards) and
+   observation (Before/After), but none give us "click X for the player".
+   We need Harmony patches for our six v0.1 votes.
+2. **Sealed deck is the one v0.1 feature that AbstractModel handles cleanly**
+   — `ShouldAddToDeck` and `TryModifyCardBeingAddedToDeck` are made for it.
+3. **Mod registration is via `ModHelper`** —
+   `SubscribeForRunStateHooks(id, delegate)` and the combat equivalent.
+4. **Build pipeline goes through Godot 4.5.1 Mono**, not vanilla `dotnet build`.
+   The csproj uses `Godot.NET.Sdk/4.5.1` and Godot's headless mode does the
+   compile + asset packaging. Output is `<id>.dll` + optional `<id>.pck` +
+   `<id>.json` dropped in `<game-install>/mods/<id>/`.
+5. **Godot 4.5.1 Mono needs to be installed** for the build pipeline. New
+   prerequisite for next session.
+6. **Runtime debugging works** — Godot's remote debug server attaches over
+   TCP via `--remote-debug tcp://127.0.0.1:6007` launch flag. Big upgrade
+   over StS1 modding.
+
+**Genuinely at a clean wrap point now**:
+- All four originally-scoped research items done (original mod, modding API,
+  AbstractModel hooks, build pipeline).
+- Concrete v0.1 architecture is starting to emerge:
+  - Monolithic mod, `Godot.NET.Sdk`, `[ModInitializer("Initialize")]` entry
+  - ~6 Harmony patches (one per vote)
+  - Optional AbstractModel layer for sealed deck (if v0.1 keeps it)
+  - IRC client + vote engine as separate internal services
+- The next session is *design phase*, not more research. Brainstorming
+  + writing-plans for v0.1.
+
+**Outstanding small research tasks** (worth picking up at design time, not now):
+- Identify specific Harmony patch targets for each of the six votes (search
+  decompile for Neow class, card reward screen, shop confirm, etc.)
+- Confirm `has_pck: false` works for code-only mods.
+- Identify exact game log file location on Windows.

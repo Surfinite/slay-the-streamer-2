@@ -441,9 +441,10 @@ public class VoteSessionTests : VoteSessionTestBase {
             Chat.SimulateState(ChatConnectionState.Disconnected);
             // Construct a session anyway — open receipt will be attempted on a disconnected chat.
             var s = StartVote();
-            // Wait briefly for the continuation to run. Since FakeChatService.SendMessageAsync
-            // returns Task.FromException synchronously when CanSend == false, the continuation
-            // runs on the same thread (default TaskScheduler) before we assert.
+            // FakeChatService.SendMessageAsync returns Task.FromException synchronously when
+            // CanSend == false, and SendReceipt's ContinueWith uses ExecuteSynchronously, so the
+            // fault-log continuation runs inline before this assert. Removing ExecuteSynchronously
+            // would queue the continuation to the threadpool and race this assert.
             Assert.Contains(captured, e => e.Level == LogLevel.Error && e.Msg.Contains("receipt send failed"));
         } finally {
             TiLog.Sink = prior;

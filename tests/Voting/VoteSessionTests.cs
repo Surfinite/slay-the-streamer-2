@@ -401,8 +401,53 @@ public class VoteSessionTests : VoteSessionTestBase {
     public void Cancel_DoesNotSendCloseReceipt() {
         var s = StartVote();
         var openCount = Chat.SentMessages.Count;
+        Assert.Equal(1, openCount);   // sanity: open receipt was sent so this isn't a vacuous pass
         s.Cancel();
         Assert.Equal(openCount, Chat.SentMessages.Count);
+    }
+
+    [Fact]
+    public void CloseNow_OnCancelledSession_Throws() {
+        var s = StartVote();
+        s.Cancel();
+        var ex = Assert.Throws<InvalidOperationException>(() => s.CloseNow());
+        Assert.Contains("Cancelled", ex.Message);
+    }
+
+    [Fact]
+    public void CloseNow_OnDisposedSession_Throws() {
+        var s = StartVote();
+        s.Dispose();
+        Assert.Throws<InvalidOperationException>(() => s.CloseNow());
+    }
+
+    [Fact]
+    public void DisconnectGap_IncludesInProgressOutage_WhenCloseFiresDuringOutage() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(20));
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        Chat.SimulateState(ChatConnectionState.Reconnecting);  // never comes back online
+        Scheduler.Advance(TimeSpan.FromSeconds(6));
+        s.CloseNow();   // close while still offline — CloseNowInternal finalises the gap
+        Assert.Equal(TimeSpan.FromSeconds(6), s.Snapshot().DisconnectGap);
+    }
+
+    [Fact]
+    public void ReceiptSend_LogsErrorOnFault() {
+        var captured = new List<(LogLevel Level, string Msg, Exception? Ex)>();
+        var prior = TiLog.Sink;
+        TiLog.Sink = (l, m, e) => captured.Add((l, m, e));
+        try {
+            // Force the fake chat to fault on the open receipt.
+            Chat.SimulateState(ChatConnectionState.Disconnected);
+            // Construct a session anyway — open receipt will be attempted on a disconnected chat.
+            var s = StartVote();
+            // Wait briefly for the continuation to run. Since FakeChatService.SendMessageAsync
+            // returns Task.FromException synchronously when CanSend == false, the continuation
+            // runs on the same thread (default TaskScheduler) before we assert.
+            Assert.Contains(captured, e => e.Level == LogLevel.Error && e.Msg.Contains("receipt send failed"));
+        } finally {
+            TiLog.Sink = prior;
+        }
     }
 
     [Fact]

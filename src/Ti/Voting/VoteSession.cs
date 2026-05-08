@@ -35,7 +35,7 @@ public sealed class VoteSession : IDisposable {
 
     private readonly System.Threading.Tasks.TaskCompletionSource<int> _winnerTcs =
         new(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
-    private bool _anyoneAwaited;
+    private volatile bool _anyoneAwaited;
 
     public string Id { get; }
     public string Label { get; }
@@ -146,8 +146,11 @@ public sealed class VoteSession : IDisposable {
     }
 
     public int CloseNow() {
-        if (_state is VoteSessionState.Closed or VoteSessionState.Cancelled or VoteSessionState.Disposed)
-            return WinnerIndex ?? 0;
+        if (_state == VoteSessionState.Closed)
+            return WinnerIndex!.Value;
+        if (_state is VoteSessionState.Cancelled or VoteSessionState.Disposed)
+            throw new InvalidOperationException(
+                $"Cannot close VoteSession {Id} in state {_state}.");
         return CloseNowInternal(byTimer: false);
     }
 
@@ -263,13 +266,16 @@ public sealed class VoteSession : IDisposable {
         var tallyKey = string.Join(",", _tallies.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
         if (tallyKey == _lastPeriodicTallyKey) return;
         _lastPeriodicTallyKey = tallyKey;
-        var text = FormatReceipt(ReceiptKind.PeriodicTally);
-        _ = _chat.SendMessageAsync(text, OutgoingMessagePriority.Low);
+        _ = SendReceipt(ReceiptKind.PeriodicTally, OutgoingMessagePriority.Low);
     }
 
     private System.Threading.Tasks.Task SendReceipt(ReceiptKind kind, OutgoingMessagePriority priority) {
         var text = FormatReceipt(kind);
-        return _chat.SendMessageAsync(text, priority);
+        var t = _chat.SendMessageAsync(text, priority);
+        return t.ContinueWith(
+            x => TiLog.Error($"VoteSession {Id}: {kind} receipt send failed", x.Exception?.GetBaseException()),
+            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted
+                | System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously);
     }
 
     private string FormatReceipt(ReceiptKind kind) {

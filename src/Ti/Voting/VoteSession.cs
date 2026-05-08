@@ -17,6 +17,9 @@ public sealed class VoteSession : IDisposable {
     private readonly VoteReceiptPolicy _receipts;
     private readonly Func<VoteSnapshot, ReceiptKind, string>? _formatReceipt;
 
+    private const int MaxVoters = 10_000;
+    private bool _voterCapWarnLogged;
+
     private readonly DateTimeOffset _openedAt;
     private readonly Dictionary<int, int> _tallies;
     private readonly Dictionary<string, int> _votersByKey = new();
@@ -125,7 +128,15 @@ public sealed class VoteSession : IDisposable {
         if (idx < 0 || idx >= Options.Count) return;
 
         var key = msg.VoterKey;
-        if (_votersByKey.TryGetValue(key, out var prior)) {
+        var existing = _votersByKey.TryGetValue(key, out var prior);
+        if (!existing && _votersByKey.Count >= MaxVoters) {
+            if (!_voterCapWarnLogged) {
+                TiLog.Warn($"VoteSession {Id}: voter cap of {MaxVoters} reached; dropping further unique voters.");
+                _voterCapWarnLogged = true;
+            }
+            return;
+        }
+        if (existing) {
             if (prior == idx) return;
             _tallies[prior]--;
         }

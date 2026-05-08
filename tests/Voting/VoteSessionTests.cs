@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
@@ -535,5 +536,35 @@ public class VoteSessionTests : VoteSessionTestBase {
         Scheduler.Advance(TimeSpan.FromSeconds(5));
         s.CloseNow();
         Assert.Equal(TimeSpan.FromSeconds(5), s.Snapshot().DisconnectGap);
+    }
+
+    [Fact]
+    public void VoterDict_DropsBeyond10k_LogsWarnOnce() {
+        var captured = new List<(LogLevel, string)>();
+        var prior = TiLog.Sink;
+        TiLog.Sink = (l, m, _) => captured.Add((l, m));
+        try {
+            var s = StartVote();
+            for (int i = 0; i < 10_005; i++)
+                Inject($"u{i}", "#0", userId: $"id-{i}");
+
+            Assert.Equal(10_000, s.Tallies[0]);
+            var warns = captured.Where(c => c.Item1 == LogLevel.Warn && c.Item2.Contains("voter cap")).ToList();
+            Assert.Single(warns);   // only one warn no matter how many overflows
+        } finally {
+            TiLog.Sink = prior;
+        }
+    }
+
+    [Fact]
+    public void VoterDict_ExistingVoterCanStillChangeVote_WhenAtCap() {
+        var s = StartVote();
+        for (int i = 0; i < 10_000; i++)
+            Inject($"u{i}", "#0", userId: $"id-{i}");
+
+        // u0 changes vote — should still be honoured because they're already in the dict
+        Inject("u0", "#1", userId: "id-0");
+        Assert.Equal(9_999, s.Tallies[0]);
+        Assert.Equal(1, s.Tallies[1]);
     }
 }

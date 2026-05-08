@@ -23,8 +23,8 @@ public abstract class VoteSessionTestBase {
         TimeSpan? duration = null,
         VoteParsingPolicy? parsing = null,
         VoteReceiptPolicy? receipts = null,
-        params string[] options) {
-        var opts = options.Length == 0 ? new[] { "Bash", "Defend", "Strike" } : options;
+        string[]? options = null) {
+        var opts = options ?? new[] { "Bash", "Defend", "Strike" };
         var optionList = new List<VoteOption>();
         for (int i = 0; i < opts.Length; i++) optionList.Add(new VoteOption(i, opts[i]));
 

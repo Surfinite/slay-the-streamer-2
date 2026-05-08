@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SlayTheStreamer2.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Source-reference the non-Godot Ti/* folders. Plan A only touches these. -->
+  <ItemGroup>
+    <Compile Include="..\src\Ti\Internal\**\*.cs" />
+    <Compile Include="..\src\Ti\Chat\**\*.cs" />
+    <Compile Include="..\src\Ti\Voting\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+</Project>

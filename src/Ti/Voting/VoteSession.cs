@@ -27,6 +27,8 @@ public sealed class VoteSession : IDisposable {
     private VoteSessionState _state = VoteSessionState.Open;
     private int? _tieAmong;
     private bool _noVotesReceived;
+    private TimeSpan _disconnectGapAccum;
+    private DateTimeOffset? _disconnectStartedAt;
 
     private readonly System.Threading.Tasks.TaskCompletionSource<int> _winnerTcs =
         new(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,6 +76,8 @@ public sealed class VoteSession : IDisposable {
         _voteRegex = BuildRegex(parsingPolicy);
 
         _chat.MessageReceived += OnChatMessage;
+        _chat.ConnectionStateChanged += OnChatConnectionStateChanged;
+        if (!IsChatOnline(_chat.State)) _disconnectStartedAt = clock.UtcNow;
         _closeTimer = scheduler.Schedule(duration, () => _dispatcher.Post(() => CloseNowInternal(byTimer: true)));
 
         // Periodic tally cadence (adaptive default)
@@ -95,6 +99,22 @@ public sealed class VoteSession : IDisposable {
             _ => ""
         };
         return new Regex($@"^{prefix}(\d+)(?:\s|$)", RegexOptions.Compiled);
+    }
+
+    private static bool IsChatOnline(ChatConnectionState state) =>
+        state == ChatConnectionState.ConnectedReadOnly ||
+        state == ChatConnectionState.ConnectedReadWrite;
+
+    private void OnChatConnectionStateChanged(object? sender, ChatConnectionChangedEventArgs e) {
+        if (_state != VoteSessionState.Open) return;
+        var nowOnline = IsChatOnline(e.NewState);
+        var wasOnline = IsChatOnline(e.OldState);
+        if (wasOnline && !nowOnline) {
+            _disconnectStartedAt = _clock.UtcNow;
+        } else if (!wasOnline && nowOnline && _disconnectStartedAt is { } start) {
+            _disconnectGapAccum += _clock.UtcNow - start;
+            _disconnectStartedAt = null;
+        }
     }
 
     private void OnChatMessage(object? sender, ChatMessage msg) {
@@ -122,12 +142,19 @@ public sealed class VoteSession : IDisposable {
 
     private int CloseNowInternal(bool byTimer) {
         if (_state != VoteSessionState.Open) return WinnerIndex ?? 0;
+        // Finalise any in-progress disconnect gap before computing the snapshot
+        // used by the close receipt.
+        if (_disconnectStartedAt is { } start) {
+            _disconnectGapAccum += _clock.UtcNow - start;
+            _disconnectStartedAt = null;
+        }
         _state = VoteSessionState.Closing;
         var (winner, tieAmong, noVotes) = ComputeWinner();
         WinnerIndex = winner;
         _tieAmong = tieAmong;
         _noVotesReceived = noVotes;
         _chat.MessageReceived -= OnChatMessage;
+        _chat.ConnectionStateChanged -= OnChatConnectionStateChanged;
         _closeTimer.Dispose();
         _periodicTimer?.Dispose();
         _state = VoteSessionState.Closed;
@@ -144,6 +171,7 @@ public sealed class VoteSession : IDisposable {
     public void Cancel() {
         if (_state != VoteSessionState.Open) return;
         _chat.MessageReceived -= OnChatMessage;
+        _chat.ConnectionStateChanged -= OnChatConnectionStateChanged;
         _closeTimer.Dispose();
         _periodicTimer?.Dispose();
         _state = VoteSessionState.Cancelled;
@@ -178,13 +206,18 @@ public sealed class VoteSession : IDisposable {
         return (tied[_random.Next(tied.Count)], tied.Count, false);
     }
 
-    public VoteSnapshot Snapshot() => new(
-        Id: Id, Label: Label, Options: Options,
-        Duration: Duration, TimeRemaining: TimeRemaining,
-        Tallies: new Dictionary<int, int>(_tallies),
-        State: _state, WinnerIndex: WinnerIndex,
-        RandomTieAmong: _tieAmong, NoVotesReceived: _noVotesReceived,
-        DisconnectGap: TimeSpan.Zero);
+    public VoteSnapshot Snapshot() {
+        var liveGap = _disconnectGapAccum;
+        if (_disconnectStartedAt is { } s && _state == VoteSessionState.Open)
+            liveGap += _clock.UtcNow - s;
+        return new VoteSnapshot(
+            Id: Id, Label: Label, Options: Options,
+            Duration: Duration, TimeRemaining: TimeRemaining,
+            Tallies: new Dictionary<int, int>(_tallies),
+            State: _state, WinnerIndex: WinnerIndex,
+            RandomTieAmong: _tieAmong, NoVotesReceived: _noVotesReceived,
+            DisconnectGap: liveGap);
+    }
 
     public void Dispose() {
         if (_state == VoteSessionState.Disposed) return;

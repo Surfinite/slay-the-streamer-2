@@ -468,4 +468,72 @@ public class VoteSessionTests : VoteSessionTestBase {
             TiLog.Sink = prior;
         }
     }
+
+    [Fact]
+    public void DisconnectGap_Zero_WhenChatStaysConnected() {
+        var s = StartVote();
+        Inject("alice", "#0");
+        s.CloseNow();
+        Assert.Equal(TimeSpan.Zero, s.Snapshot().DisconnectGap);
+    }
+
+    [Fact]
+    public void DisconnectGap_AccumulatesOfflineTime_DuringMidVoteOutage() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(30));
+        Inject("alice", "#0");
+
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        Chat.SimulateState(ChatConnectionState.Reconnecting);   // offline starts here
+        Scheduler.Advance(TimeSpan.FromSeconds(8));
+        Chat.SimulateState(ChatConnectionState.ConnectedReadWrite);   // back online
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        s.CloseNow();
+        Assert.Equal(TimeSpan.FromSeconds(8), s.Snapshot().DisconnectGap);
+    }
+
+    [Fact]
+    public void DisconnectGap_AccumulatesAcrossMultipleOutages() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(60));
+        Inject("alice", "#0");
+
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        Chat.SimulateState(ChatConnectionState.Reconnecting);
+        Scheduler.Advance(TimeSpan.FromSeconds(3));
+        Chat.SimulateState(ChatConnectionState.ConnectedReadWrite);
+
+        Scheduler.Advance(TimeSpan.FromSeconds(10));
+        Chat.SimulateState(ChatConnectionState.Disconnected);
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
+        Chat.SimulateState(ChatConnectionState.ConnectedReadWrite);
+
+        s.CloseNow();
+        Assert.Equal(TimeSpan.FromSeconds(10), s.Snapshot().DisconnectGap);
+    }
+
+    [Fact]
+    public void CloseReceipt_MentionsOfflineGap_WhenPresent() {
+        var s = StartVote();
+        Inject("alice", "#0");
+        Chat.SimulateState(ChatConnectionState.Reconnecting);
+        Scheduler.Advance(TimeSpan.FromSeconds(8));
+        Chat.SimulateState(ChatConnectionState.ConnectedReadWrite);
+        s.CloseNow();
+        var closeReceipt = Chat.SentMessages[^1].Text;
+        Assert.Contains("offline", closeReceipt);
+        Assert.Contains("8s", closeReceipt);
+    }
+
+    [Fact]
+    public void DisconnectGap_AccumulatesFromStart_WhenChatNotConnectedAtStart() {
+        // Override the base class's auto-Connect so the vote opens while chat
+        // is in a non-online state. Documents the IsChatOnline() contract:
+        // Connecting / Reconnecting / Disconnected all count as offline.
+        Chat.SimulateState(ChatConnectionState.Connecting);
+        var s = StartVote(duration: TimeSpan.FromSeconds(20));
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        Chat.SimulateState(ChatConnectionState.ConnectedReadWrite);
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        s.CloseNow();
+        Assert.Equal(TimeSpan.FromSeconds(5), s.Snapshot().DisconnectGap);
+    }
 }

@@ -33,7 +33,7 @@ public static class ModEntry {
                 $"main loop type: {Engine.GetMainLoop()?.GetType().Name ?? "<null>"}");
             Log.Info($"[slay_the_streamer_2] log file location: " +
                 $"{System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData)}" +
-                $"/Godot/app_userdata/Slay the Spire 2/logs/");
+                $"/SlayTheSpire2/logs/godot.log");
 
             // 1. Resolve SceneTree once with explicit cast and null check.
             var tree = Engine.GetMainLoop() as SceneTree;
@@ -45,9 +45,14 @@ public static class ModEntry {
             }
 
             // 2. Attach dispatcher node (primary mechanism).
+            // Use CallDeferred("add_child", ...) instead of direct AddChild because
+            // [ModInitializer] runs during NGame._EnterTree, when the root is busy
+            // building the scene tree — direct AddChild errors out with "Parent node
+            // is busy setting up children." Deferring queues the attach for the next
+            // idle frame, by which time the tree is ready.
             var autoload = new DispatcherAutoload { Name = "DispatcherAutoload" };
-            tree.Root.AddChild(autoload);
-            Log.Info("[slay_the_streamer_2] dispatcher node added to SceneTree.Root");
+            tree.Root.CallDeferred("add_child", autoload);
+            Log.Info("[slay_the_streamer_2] dispatcher node deferred-attach queued (CallDeferred add_child)");
 
             // 3. Optional instrumentation: register as engine singleton.
             try {

@@ -12,11 +12,10 @@ namespace SlayTheStreamer2.Smoke;
 internal static class SmokeBlockingPatch {
     private static int _fired = 0;
 
+    // Harmony calls Prepare twice: once class-level (original=null) and once per
+    // target (original=MethodBase). Returning false on null skips the entire class.
     static bool Prepare(MethodBase original) {
-        if (original is null) {
-            Log.Warn("[smoke-C] Prepare: target NSettingsScreen._Ready not found; smoke disabled.");
-            return false;
-        }
+        if (original is null) return true;   // class-level: allow processing
         Log.Info($"[smoke-C] Prepare: target resolved as {original.DeclaringType?.FullName}.{original.Name}");
         return true;
     }

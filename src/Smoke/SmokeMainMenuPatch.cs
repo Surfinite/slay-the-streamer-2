@@ -11,12 +11,15 @@ namespace SlayTheStreamer2.Smoke;
 internal static class SmokeMainMenuPatch {
     private static int _fired = 0;
 
-    /// <summary>Validates Harmony picked up the patch attribute and resolved the target.</summary>
+    /// <summary>
+    /// Harmony calls Prepare twice: once at class-level with original=null
+    /// ("should I process this patch class?"), once per resolved target. Returning
+    /// false on the class-level call kills the entire patch class before Harmony
+    /// even tries to resolve _Ready — so we must return true for the null case.
+    /// On the second call, log the resolved target so we can confirm patch binding.
+    /// </summary>
     static bool Prepare(MethodBase original) {
-        if (original is null) {
-            Log.Warn("[smoke-B] Prepare: target NMainMenu._Ready not found; smoke disabled.");
-            return false;
-        }
+        if (original is null) return true;   // class-level: allow processing
         Log.Info($"[smoke-B] Prepare: target resolved as {original.DeclaringType?.FullName}.{original.Name}");
         return true;
     }

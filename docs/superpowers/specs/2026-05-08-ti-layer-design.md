@@ -25,11 +25,11 @@
 | 1 | Two-tier API: `ChatService` (lower) + `VoteSession` (upper) + optional UI | Cleanest extraction unit at `ChatService`; YAGNI says no `ChatCommandRouter` middle tier yet. |
 | 2 | Strictly one vote open at a time | Matches StS's one-screen-at-a-time flow; `Voter.Start` throws if a session is open. |
 | 3 | Receipts: open + periodic tally + close | Closes the streamer-vs-viewer lag gap; default tally cadence 7 s. Safe under Twitch's 100 msg / 30 s rate limit. |
-| 4 | One vote per user, latest `#N` wins | Lets viewers correct typos and react to the running tally; matches robojumper's StS1 base mod. |
+| 4 | One vote per user, latest `#N` wins | Lets viewers correct typos and react to the running tally. (Note: the original StS1 base mod was actually *first*-vote-wins; we deliberately diverge for better UX.) |
 | 5 | Handcrafted minimal Twitch IRC client | ~200 LOC, zero NuGet deps. Cleanest extraction; Twitch's IRC subset is small. |
 | 6 | Tie-break: uniform random across tied options | Simple, fair, "chat decides" stays intact. Receipt announces the random pick honestly. |
 | 7 | No-voter edge: pick uniformly at random across all options | Game-side never gets `null`; receipts say so explicitly. |
-| 8 | Vote-command parser: strict `#N` only | Reduces false positives from natural chat (no `!1`, no bare `1`). |
+| 8 | Vote-command parser: hash optional, at start of message, terminated by space or end | Regex `^#?(\d+)(?:\s\|$)`. Accepts both `#1` and `1`; the `^` anchor and the trailing-boundary keep ordinals (`1st`, `2nd`), decimals (`1.5`), and inline numbers (`I have 3 cards`) from being miscounted. The original StS1 base mod required a strict `^#N` anchor; we relax the leading `#` for discoverability (matches Noita TI conventions), keep the start-of-message anchor and add the trailing boundary to keep false positives near zero. |
 
 ## Architecture
 
@@ -158,11 +158,12 @@ public static class Voter {
 
 ### Command parsing
 
-- Regex: `#(\d+)`, applied to the raw message text. (Case-insensitivity is moot since the captured group is digits.)
-- First match per message wins. `"#1 oops #2"` counts as `#1`; the user can post a clean `#2` later to change.
-- Out-of-range index (e.g. `#5` when only 3 options) → silently ignored.
-- Non-numeric or empty (`#`, `#abc`) → silently ignored.
-- Strict `#N` only — no `!N`, no bare `N`. Fewer false positives from regular chat.
+- Regex: `^#?(\d+)(?:\s|$)`, applied to the raw message text.
+- Anchored to the start of the message and terminated by a whitespace character or end-of-message. The leading `#` is optional.
+- Examples that match: `#1`, `1`, `#1 lol`, `1 lol`, `01` (captures `1`).
+- Examples that don't match: `lol #1` (not at start), `1st time` (digit followed by a letter), `1.5 sec` (digit followed by `.`), `12` when there are 4 options (parses to 12, out-of-range, ignored).
+- Out-of-range index (e.g. `5` when only 3 options) → silently ignored.
+- This is intentionally looser than robojumper's StS1 base mod (which required `^#N`) but stricter than "anywhere in message" — discoverable for new viewers, near-zero false positives.
 
 ### Tally rules
 
@@ -191,7 +192,7 @@ When `Duration` elapses (or `Dispose` is called early):
 
 ### Receipts (default policy)
 
-- Open: `"Vote: <label>! Type #1, #2, #3 — <duration>s left."`
+- Open: `"Vote: <label>! Type 1, 2 or 3 — <duration>s left."` (bare numbers in the announcement since they're valid input; viewers may also prefix with `#`)
 - Periodic (every `PeriodicTallyEvery`, default 7 s): `"Vote: #1=12 #2=8 #3=3, <remaining>s left."` Skipped if all tallies are zero (avoids spam during dead air).
 - Close (winner): `"Chat picked #<n>: <label>."`
 - Close (tie): `"Tied between #<a> <label_a> and #<b> <label_b> — chose #<n> <label_n> by random pick."`

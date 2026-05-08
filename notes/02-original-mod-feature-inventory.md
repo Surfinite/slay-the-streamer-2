@@ -267,3 +267,37 @@ internal seam pre-drawn so extraction is cheap.
 
 None of these compromise the licensing position on Tempus's mod —
 feature spec / behaviour spec only, never code copies.
+
+### Verified vote-engine mechanics (decompiled robojumper)
+
+Tempus's repo doesn't itself parse votes — that's all in the underlying
+`de.robojumper.ststwitch` base mod, which was distributed as a JAR (no
+public GitHub repo). Decompiled mirrors are visible on GitHub via code
+search (e.g. `headmaster0v0/Python-The-Spire`'s `decompiled_src/...`).
+
+Reading `TwitchVoter.java` directly:
+
+- **Vote regex** is `^#i.*$` per option `i`. Hash is required, must be at
+  the *start* of the message, can be followed by anything.
+- **Options are zero-indexed** (`#0, #1, #2, ...`). The bot's open
+  announcement is `"VOTE NOW: #0: <label>; #1: <label>; ..."`.
+- **First-vote-wins**: a `votedUsernames` `Set<String>` blocks any
+  subsequent vote from a user once they've cast one. There is no
+  vote-change support in the original.
+- **Tie-break** on close: iterates options; on equal-max with the current
+  leader, coin-flips 50/50 to keep or replace. End result is a uniform
+  random distribution across all options sharing the max.
+- **No periodic announcements**: `publishOptions()` runs once at start.
+  The "lag-vs-real-time-chat" gap was not addressed in StS1.
+
+**Implications for our spec** (settled in session 2 brainstorming):
+- We use `^#?(\d+)(?:\s|$)` — relax the leading `#` to optional (matches
+  Noita TI conventions; more discoverable for new viewers), keep the
+  start-of-message anchor, add a trailing-boundary requirement so
+  ordinals/decimals (`1st`, `1.5`) and inline numbers (`I have 3 cards`)
+  don't false-positive.
+- We use **latest-wins**, deliberately diverging from the original's
+  first-wins. Better UX for typo correction and reactive voting.
+- We **add periodic running-tally announcements** (default 7 s cadence) to
+  close the streamer-vs-viewer video-lag confirmation gap that the
+  original ignored.

@@ -19,9 +19,12 @@ public sealed class VoteSession : IDisposable {
 
     private readonly DateTimeOffset _openedAt;
     private readonly Dictionary<int, int> _tallies;
-    private readonly Dictionary<string, int> _votersByKey = new();   // VoterKey -> last option chosen
+    private readonly Dictionary<string, int> _votersByKey = new();
     private readonly Regex _voteRegex;
+    private readonly IDisposable _closeTimer;
     private VoteSessionState _state = VoteSessionState.Open;
+    private int? _tieAmong;
+    private bool _noVotesReceived;
 
     public string Id { get; }
     public string Label { get; }
@@ -33,19 +36,14 @@ public sealed class VoteSession : IDisposable {
     public IReadOnlyDictionary<int, int> Tallies => new Dictionary<int, int>(_tallies);
 
     public event EventHandler<VoteSession>? TallyChanged;
+    public event EventHandler<VoteSession>? Closed;
+    public event EventHandler<VoteSession>? Cancelled;
 
     internal VoteSession(
-        string id,
-        string label,
-        IReadOnlyList<VoteOption> options,
-        TimeSpan duration,
-        IChatService chat,
-        IClock clock,
-        ITimerScheduler scheduler,
-        IMainThreadDispatcher dispatcher,
-        Random random,
-        VoteParsingPolicy parsingPolicy,
-        VoteReceiptPolicy receiptPolicy,
+        string id, string label, IReadOnlyList<VoteOption> options, TimeSpan duration,
+        IChatService chat, IClock clock, ITimerScheduler scheduler,
+        IMainThreadDispatcher dispatcher, Random random,
+        VoteParsingPolicy parsingPolicy, VoteReceiptPolicy receiptPolicy,
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt) {
 
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id required", nameof(id));
@@ -70,6 +68,7 @@ public sealed class VoteSession : IDisposable {
         _voteRegex = BuildRegex(parsingPolicy);
 
         _chat.MessageReceived += OnChatMessage;
+        _closeTimer = scheduler.Schedule(duration, () => _dispatcher.Post(() => CloseNowInternal(byTimer: true)));
     }
 
     private static Regex BuildRegex(VoteParsingPolicy p) {
@@ -91,7 +90,7 @@ public sealed class VoteSession : IDisposable {
 
         var key = msg.VoterKey;
         if (_votersByKey.TryGetValue(key, out var prior)) {
-            if (prior == idx) return;          // same vote: no-op, no event
+            if (prior == idx) return;
             _tallies[prior]--;
         }
         _votersByKey[key] = idx;
@@ -99,35 +98,59 @@ public sealed class VoteSession : IDisposable {
         TallyChanged?.Invoke(this, this);
     }
 
-    public VoteSnapshot Snapshot() => new(
-        Id: Id, Label: Label, Options: Options,
-        Duration: Duration, TimeRemaining: TimeRemaining,
-        Tallies: new Dictionary<int, int>(_tallies),
-        State: _state, WinnerIndex: WinnerIndex,
-        RandomTieAmong: null, NoVotesReceived: false,
-        DisconnectGap: TimeSpan.Zero);
+    public int CloseNow() {
+        if (_state is VoteSessionState.Closed or VoteSessionState.Cancelled or VoteSessionState.Disposed)
+            return WinnerIndex ?? 0;
+        return CloseNowInternal(byTimer: false);
+    }
 
-    /// <summary>(Index, RandomTieAmong, NoVotesReceived). Test-only entry point; Task 5.4 wires this into CloseNow.</summary>
+    private int CloseNowInternal(bool byTimer) {
+        if (_state != VoteSessionState.Open) return WinnerIndex ?? 0;
+        _state = VoteSessionState.Closing;
+        var (winner, tieAmong, noVotes) = ComputeWinner();
+        WinnerIndex = winner;
+        _tieAmong = tieAmong;
+        _noVotesReceived = noVotes;
+        _chat.MessageReceived -= OnChatMessage;
+        _closeTimer.Dispose();
+        _state = VoteSessionState.Closed;
+        Closed?.Invoke(this, this);
+        return winner;
+    }
+
+    public void Cancel() {
+        if (_state != VoteSessionState.Open) return;
+        _chat.MessageReceived -= OnChatMessage;
+        _closeTimer.Dispose();
+        _state = VoteSessionState.Cancelled;
+        Cancelled?.Invoke(this, this);
+    }
+
     internal (int Winner, int? TieAmong, bool NoVotes) ComputeWinnerForTest() => ComputeWinner();
 
     private (int Winner, int? TieAmong, bool NoVotes) ComputeWinner() {
         var voted = _tallies.Where(kv => kv.Value > 0).ToList();
         if (voted.Count == 0) {
-            // No-voter random across all options.
             var idx = _random.Next(Options.Count);
             return (idx, null, true);
         }
         var maxCount = voted.Max(kv => kv.Value);
         var tied = voted.Where(kv => kv.Value == maxCount).Select(kv => kv.Key).ToList();
-        if (tied.Count == 1)
-            return (tied[0], null, false);
-        var pick = tied[_random.Next(tied.Count)];
-        return (pick, tied.Count, false);
+        if (tied.Count == 1) return (tied[0], null, false);
+        return (tied[_random.Next(tied.Count)], tied.Count, false);
     }
+
+    public VoteSnapshot Snapshot() => new(
+        Id: Id, Label: Label, Options: Options,
+        Duration: Duration, TimeRemaining: TimeRemaining,
+        Tallies: new Dictionary<int, int>(_tallies),
+        State: _state, WinnerIndex: WinnerIndex,
+        RandomTieAmong: _tieAmong, NoVotesReceived: _noVotesReceived,
+        DisconnectGap: TimeSpan.Zero);
 
     public void Dispose() {
         if (_state == VoteSessionState.Disposed) return;
-        _chat.MessageReceived -= OnChatMessage;
+        if (_state == VoteSessionState.Open) Cancel();
         _state = VoteSessionState.Disposed;
     }
 

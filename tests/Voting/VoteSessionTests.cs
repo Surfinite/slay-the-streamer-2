@@ -209,4 +209,105 @@ public class VoteSessionTests : VoteSessionTestBase {
         Assert.Null(tieAmong);
         Assert.True(noVotes);
     }
+
+    [Fact]
+    public void CloseNow_SetsStateClosed_WinnerIndex_FiresClosedEvent() {
+        var s = StartVote();
+        Inject("alice", "#2");
+        VoteSession? closedSeen = null;
+        s.Closed += (_, sess) => closedSeen = sess;
+
+        var winner = s.CloseNow();
+        Assert.Equal(2, winner);
+        Assert.Equal(VoteSessionState.Closed, s.State);
+        Assert.Equal(2, s.WinnerIndex);
+        Assert.Same(s, closedSeen);
+    }
+
+    [Fact]
+    public void Cancel_SetsStateCancelled_NoWinner_FiresCancelledEvent() {
+        var s = StartVote();
+        Inject("alice", "#1");
+        VoteSession? cancelSeen = null;
+        s.Cancelled += (_, sess) => cancelSeen = sess;
+
+        s.Cancel();
+        Assert.Equal(VoteSessionState.Cancelled, s.State);
+        Assert.Null(s.WinnerIndex);
+        Assert.Same(s, cancelSeen);
+    }
+
+    [Fact]
+    public void DisposeOfOpenSessionCancels() {
+        var s = StartVote();
+        var cancelFired = false;
+        s.Cancelled += (_, _) => cancelFired = true;
+        s.Dispose();
+        Assert.Equal(VoteSessionState.Disposed, s.State);
+        Assert.True(cancelFired);
+    }
+
+    [Fact]
+    public void DisposeOfClosedSessionIsNoop() {
+        var s = StartVote();
+        s.CloseNow();
+        var cancelFired = false;
+        s.Cancelled += (_, _) => cancelFired = true;
+        s.Dispose();
+        Assert.Equal(VoteSessionState.Disposed, s.State);
+        Assert.False(cancelFired);
+    }
+
+    [Fact]
+    public void DoubleDisposeIsNoop() {
+        var s = StartVote();
+        s.Dispose();
+        s.Dispose();   // doesn't throw
+        Assert.Equal(VoteSessionState.Disposed, s.State);
+    }
+
+    [Fact]
+    public void VotesAfterCloseAreIgnored() {
+        var s = StartVote();
+        Inject("alice", "#1");
+        s.CloseNow();
+        Inject("bob", "#1");          // post-close
+        Assert.Equal(1, s.Tallies[1]);   // unchanged from pre-close
+    }
+
+    [Fact]
+    public void DurationElapsesTriggersClose() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(10));
+        Inject("alice", "#0");
+        var closed = false;
+        s.Closed += (_, _) => closed = true;
+
+        Scheduler.Advance(TimeSpan.FromSeconds(10));
+        Assert.True(closed);
+        Assert.Equal(VoteSessionState.Closed, s.State);
+        Assert.Equal(0, s.WinnerIndex);
+    }
+
+    [Fact]
+    public void CloseNowTwiceReturnsSameWinnerWithoutRefiring() {
+        var s = StartVote();
+        Inject("alice", "#1");
+        var closedFires = 0;
+        s.Closed += (_, _) => closedFires++;
+        var w1 = s.CloseNow();
+        var w2 = s.CloseNow();
+        Assert.Equal(w1, w2);
+        Assert.Equal(1, closedFires);
+    }
+
+    [Fact]
+    public void CancelOfClosedSessionIsNoop() {
+        var s = StartVote();
+        s.CloseNow();
+        var cancelFired = false;
+        s.Cancelled += (_, _) => cancelFired = true;
+        s.Cancel();
+        Assert.Equal(VoteSessionState.Closed, s.State);
+        Assert.False(cancelFired);
+    }
 }

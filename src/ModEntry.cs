@@ -1,11 +1,14 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using SlayTheStreamer2.Godot;
+using SlayTheStreamer2.Smoke;
+using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
 
@@ -14,6 +17,10 @@ namespace SlayTheStreamer2;
 [ModInitializer("Init")]
 public static class ModEntry {
     internal static int GodotMainThreadId;
+
+    // SMOKE-TEST: DELETE AFTER VALIDATION.
+    internal static FakeChatService SmokeChat = null!;
+    internal static Task SmokeATask = Task.CompletedTask;
 
     public static void Init() {
         try {
@@ -63,8 +70,18 @@ public static class ModEntry {
                 }
             };
 
-            // 6. (Smoke wiring will be added in Task 4.1; intentionally absent here so
-            //     this snapshot of ModEntry can serve as a clean Plan-B-ready skeleton.)
+            // 6. Smoke wiring (DISPOSABLE — delete after smoke success).
+            // SMOKE-ONLY: FakeChatService.ConnectAsync completes synchronously.
+            // Do NOT copy this .GetAwaiter().GetResult() pattern to TwitchIrcChatService —
+            // sync-over-async on the main thread is the exact deadlock source we're trying
+            // to rule out. Plan B must use the connection-state callback instead.
+            var clock = new SystemClock();
+            var scheduler = new SystemTimerScheduler();
+            SmokeChat = new FakeChatService();
+            SmokeChat.ConnectAsync("smoke", new ChatCredentials("smokebot", "abc"))
+                     .GetAwaiter().GetResult();
+            var coord = new VoteCoordinator(SmokeChat, clock, scheduler, dispatcher);
+            Voter.Default = coord;
 
             // 7. Apply Harmony patches with diagnostic logging.
             var harmony = new Harmony("slay_the_streamer_2");
@@ -79,8 +96,15 @@ public static class ModEntry {
                     "[HarmonyPatch] attributes target valid methods.");
             }
 
-            // 8. Sanity check: Voter.Default should be set (will be in Task 4.1).
-            //    For now (no smoke wiring), this is intentionally not yet checked here.
+            // 8. Sanity check before declaring success.
+            if (Voter.Default is null) {
+                Log.Error("[slay_the_streamer_2] FATAL: Voter.Default is null after wiring; " +
+                    "smoke cannot run. Aborting.");
+                return;
+            }
+
+            // 9. Smoke A: fire-and-forget vote from this startup context (DISPOSABLE).
+            SmokeATask = SmokeRunner.RunSmokeA(SmokeChat);
 
             Log.Info("[slay_the_streamer_2] Init complete.");
         } catch (Exception e) {

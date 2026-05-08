@@ -108,4 +108,65 @@ public class TwitchIrcParserTests {
         var msg = Assert.IsType<PrivmsgEvent>(TwitchIrcParser.Parse(line)!).Message;
         Assert.Equal("a;b c\\d\re\nf", msg.DisplayName);
     }
+
+    [Fact]
+    public void Parse_Notice_AuthFailed_ExtractsTextAndMsgId() {
+        var line = "@msg-id=msg_login_unsuccessful :tmi.twitch.tv NOTICE * :Login authentication failed";
+        var n = Assert.IsType<NoticeEvent>(TwitchIrcParser.Parse(line));
+        Assert.Equal("msg_login_unsuccessful", n.MsgId);
+        Assert.Equal("Login authentication failed", n.Text);
+    }
+
+    [Fact]
+    public void Parse_Notice_ChannelTargeted_ExtractsChannel() {
+        var line = "@msg-id=msg_banned :tmi.twitch.tv NOTICE #foo :You are permanently banned from this channel";
+        var n = Assert.IsType<NoticeEvent>(TwitchIrcParser.Parse(line));
+        Assert.Equal("#foo", n.Channel);
+        Assert.Equal("msg_banned", n.MsgId);
+    }
+
+    [Fact]
+    public void Parse_CapAck_ExtractsCapabilities() {
+        var line = ":tmi.twitch.tv CAP * ACK :twitch.tv/tags twitch.tv/commands";
+        var ack = Assert.IsType<CapAckEvent>(TwitchIrcParser.Parse(line));
+        Assert.Equal(2, ack.Capabilities.Count);
+        Assert.Contains("twitch.tv/tags", ack.Capabilities);
+    }
+
+    [Fact]
+    public void Parse_CapNak_ExtractsCapabilities() {
+        var line = ":tmi.twitch.tv CAP * NAK :twitch.tv/membership";
+        var nak = Assert.IsType<CapNakEvent>(TwitchIrcParser.Parse(line));
+        Assert.Single(nak.Capabilities);
+        Assert.Equal("twitch.tv/membership", nak.Capabilities[0]);
+    }
+
+    [Fact]
+    public void Parse_UserState_ExtractsDisplayName() {
+        var line = "@display-name=Bot :tmi.twitch.tv USERSTATE #foo";
+        var us = Assert.IsType<UserStateEvent>(TwitchIrcParser.Parse(line));
+        Assert.Equal("#foo", us.Channel);
+        Assert.Equal("Bot", us.DisplayName);
+    }
+
+    [Fact]
+    public void Parse_RoomState_ExposesAllTags() {
+        var line = "@emote-only=0;subs-only=0;slow=10 :tmi.twitch.tv ROOMSTATE #foo";
+        var rs = Assert.IsType<RoomStateEvent>(TwitchIrcParser.Parse(line));
+        Assert.Equal("#foo", rs.Channel);
+        Assert.Equal("10", rs.Tags["slow"]);
+    }
+
+    [Fact]
+    public void Parse_TruncatedLine_ReturnsUnknown() {
+        Assert.IsType<UnknownIrcEvent>(TwitchIrcParser.Parse("@incomplete"));
+        Assert.IsType<UnknownIrcEvent>(TwitchIrcParser.Parse(":server"));
+    }
+
+    [Fact]
+    public void Parse_MultiByteUserText_PreservesText() {
+        var line = ":alice!a@a PRIVMSG #foo :こんにちは 🎉";
+        var msg = Assert.IsType<PrivmsgEvent>(TwitchIrcParser.Parse(line)!).Message;
+        Assert.Equal("こんにちは 🎉", msg.Text);
+    }
 }

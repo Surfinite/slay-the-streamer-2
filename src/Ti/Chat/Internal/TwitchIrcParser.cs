@@ -38,6 +38,10 @@ public static class TwitchIrcParser {
         switch (command) {
             case "RECONNECT": return new ReconnectEvent();
             case "PRIVMSG": return ParsePrivmsg(prefix, paramsAndTrailing, tags);
+            case "NOTICE": return ParseNotice(paramsAndTrailing, tags);
+            case "CAP": return ParseCap(paramsAndTrailing);
+            case "USERSTATE": return ParseUserState(paramsAndTrailing, tags);
+            case "ROOMSTATE": return ParseRoomState(paramsAndTrailing, tags);
             default: return new UnknownIrcEvent(line);
         }
     }
@@ -82,6 +86,41 @@ public static class TwitchIrcParser {
             Text: text,
             ReceivedAt: receivedAt,
             IsSubscriber: sub, IsModerator: mod, IsVip: vip));
+    }
+
+    private static IrcEvent? ParseNotice(string paramsAndTrailing, IReadOnlyDictionary<string, string> tags) {
+        // "<target> :<text>" — target is `*` (server-targeted) or `#channel`.
+        var colon = paramsAndTrailing.IndexOf(" :", StringComparison.Ordinal);
+        if (colon < 0) return new UnknownIrcEvent(paramsAndTrailing);
+        var target = paramsAndTrailing.Substring(0, colon);
+        var text = paramsAndTrailing.Substring(colon + 2);
+        var channel = target.StartsWith("#", StringComparison.Ordinal) ? target : null;
+        tags.TryGetValue("msg-id", out var msgId);
+        return new NoticeEvent(channel, text, msgId);
+    }
+
+    private static IrcEvent? ParseCap(string paramsAndTrailing) {
+        // Format: "* ACK :cap1 cap2" or "* NAK :cap1"
+        var parts = paramsAndTrailing.Split(' ', 3);
+        if (parts.Length < 3) return new UnknownIrcEvent(paramsAndTrailing);
+        var verb = parts[1];
+        var caps = parts[2].TrimStart(':').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return verb switch {
+            "ACK" => new CapAckEvent(caps),
+            "NAK" => new CapNakEvent(caps),
+            _ => new UnknownIrcEvent(paramsAndTrailing),
+        };
+    }
+
+    private static IrcEvent? ParseUserState(string paramsAndTrailing, IReadOnlyDictionary<string, string> tags) {
+        var channel = paramsAndTrailing.Trim();
+        tags.TryGetValue("display-name", out var displayName);
+        return new UserStateEvent(channel, string.IsNullOrEmpty(displayName) ? null : displayName);
+    }
+
+    private static IrcEvent? ParseRoomState(string paramsAndTrailing, IReadOnlyDictionary<string, string> tags) {
+        var channel = paramsAndTrailing.Trim();
+        return new RoomStateEvent(channel, tags);
     }
 
     private static IReadOnlyDictionary<string, string> ParseTags(string tagSegment) {

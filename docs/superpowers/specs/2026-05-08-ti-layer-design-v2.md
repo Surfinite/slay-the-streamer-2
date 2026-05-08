@@ -1,7 +1,7 @@
 # TI layer design — IRC + vote engine boundary (v2)
 
-**Date**: 2026-05-08 (v2: 2026-05-08, post-meta-review)
-**Status**: Draft v2 — must-do + should-do changes from external review applied; consider-tier items listed as Optional Enhancements at the end.
+**Date**: 2026-05-08 (v2: 2026-05-08, post-meta-review; v2.1: 2026-05-08, optional enhancements 1/6/9/10/11/12/13/14/15 folded in)
+**Status**: Draft v2.1 — must-do + should-do changes from external review applied; 9 of 15 optional enhancements folded in; remaining 6 listed at the end for future consideration.
 **Scope**: the Twitch-integration layer of `slay-the-streamer-2`. Defines the boundary between the reusable chat-IO machinery and the StS2-specific vote bindings.
 **Predecessor**: [`2026-05-08-ti-layer-design.md`](./2026-05-08-ti-layer-design.md). See [`META-REVIEW-2026-05-08-ti-layer-design.md`](./META-REVIEW-2026-05-08-ti-layer-design.md) for the rationale behind every `<!-- CHANGED -->` mark below.
 
@@ -139,7 +139,18 @@ public sealed record ChatMessage(                               // <!-- CHANGED:
     string VoterKey                     // = UserId ?? $"login:{Login}"; the stable key used by tallies. <!-- CHANGED: new — defuses ambiguity — R3,R4 -->
 );
 
-public sealed record ChatCredentials(string Username, string OauthToken) {
+public sealed record ChatCredentials {
+    public string Username { get; }
+    public string OauthToken { get; }    // always stored without the "oauth:" prefix; TwitchIrcChatService prepends on PASS
+
+    public ChatCredentials(string username, string oauthToken) {
+        Username = username?.ToLowerInvariant() ?? throw new ArgumentNullException(nameof(username));
+        // Accept either "oauth:abc123" or bare "abc123"; normalise to bare internally.    <!-- CHANGED: oauth: prefix normalisation — Optional Enhancement #11 -->
+        OauthToken = oauthToken?.StartsWith("oauth:", StringComparison.OrdinalIgnoreCase) == true
+            ? oauthToken.Substring(6)
+            : oauthToken ?? throw new ArgumentNullException(nameof(oauthToken));
+    }
+
     public override string ToString() => $"ChatCredentials[{Username}, oauth:<REDACTED>]";   // <!-- CHANGED: ToString redacts — R4,R5 -->
 }
 
@@ -153,7 +164,7 @@ public sealed record ChatConnectionChangedEventArgs(ChatConnectionState OldState
 
 - TCP framing via `StreamReader.ReadLineAsync` over the TLS stream — handles fragmentation correctly. <!-- CHANGED: Was assumed-correct framing; spec now explicit — R2 -->
 - Capabilities requested: `twitch.tv/tags` (display-name + user-id + badges + `tmi-sent-ts`) + `twitch.tv/commands` (NOTICE / RECONNECT / etc).
-- Login: `PASS oauth:<token>` + `NICK <username>` + `JOIN #<channel>`. Channel input is normalised: accepts `foo`, `#foo`, `https://twitch.tv/foo`, lowercased. <!-- CHANGED: channel normalization — R4 -->
+- Login: `PASS oauth:<token>` + `NICK <username>` + `JOIN #<channel>`. Channel input is normalised: accepts `foo`, `#foo`, `https://twitch.tv/foo`, `http://twitch.tv/foo`, `https://www.twitch.tv/foo/`, with optional trailing path segments stripped, lowercased. <!-- CHANGED: channel normalization — R4 + URL parsing — Optional Enhancement #14 -->
 - Anonymous-read mode: `creds == null` → connect with `NICK justinfan{rand6}`. State transitions to `ConnectedReadOnly`; `CanSend` is `false`; `SendMessageAsync` returns a failed task (does *not* warn-spam — `VoteSession` checks `CanSend` first). <!-- CHANGED: Anonymous + receipts behavior fully specified — R3,R4 -->
 - Read loop on a background `Task`. Lines pass through `TwitchIrcParser` to a `ChatMessage` (or are routed by command type per the protocol-handling table below). Self-echo guard: messages where `parsed.UserId == self.UserId` are silently dropped before `MessageReceived` fires. <!-- CHANGED: Self-echo filter — R5 -->
 - Outgoing send queue: every send goes through `OutgoingMessageQueue` which enforces a token-bucket rate limit (default 90/30s; 18/30s when broadcaster/mod/VIP can't be confirmed) and priority ordering (`High > Normal > Low`). Stale `Low`-priority sends (e.g. periodic tallies) coalesce or drop when the queue is backed up. <!-- CHANGED: Rate limiter + priority queue — R3,R4,R5,R6 -->
@@ -268,7 +279,7 @@ public sealed class VoteSession : IDisposable {
     public event EventHandler<VoteSession>? Closed;
     public event EventHandler<VoteSession>? Cancelled;    // <!-- CHANGED: distinct from Closed — R5 -->
 
-    public Task<int> AwaitWinnerAsync(CancellationToken ct = default);
+    public Task<int> AwaitWinnerAsync(CancellationToken ct = default);   // logs Warn on Closed if never called  <!-- CHANGED: no-await Warn — Optional Enhancement #12 -->
     public int CloseNow();                                // <!-- CHANGED: explicit early-close — R3,R4,R5 -->
     public void Cancel();                                 // <!-- CHANGED: abort without winner — R3,R4,R5 -->
     public void Dispose();                                // idempotent cleanup; calls Cancel() if state == Open
@@ -284,14 +295,21 @@ public enum VoteSessionState {                            // <!-- CHANGED: expli
     Disposed,
 }
 
-public sealed record VoteOption(int Index, string Label);  // Index is 0-based and equals position in Options list
+public sealed record VoteOption {
+    public int Index { get; }      // 0-based; always equals position in Options list
+    public string Label { get; }
+    internal VoteOption(int index, string label) { Index = index; Label = label; }   // <!-- CHANGED: constructor internal — only VoteCoordinator builds the list, defusing "VoteOption(5, "wrong")" misuse — Optional Enhancement #15 -->
+}
 
 public sealed record VoteReceiptPolicy(
     bool AnnounceOnOpen = true,
-    TimeSpan? PeriodicTallyEvery = null,
+    TimeSpan? PeriodicTallyEvery = null,         // null  = adaptive: max(5s, duration/5)         <!-- CHANGED: adaptive cadence — Optional Enhancement #1 -->
+                                                  // Zero  = no periodic tally
+                                                  // value = fixed cadence
     bool AnnounceOnClose = true) {
-    public static VoteReceiptPolicy Default => new(true, TimeSpan.FromSeconds(7), true);
-    public static VoteReceiptPolicy Silent => new(false, null, false);
+    public static VoteReceiptPolicy Default => new();                                            // adaptive default
+    public static VoteReceiptPolicy Silent => new(false, TimeSpan.Zero, false);
+    public static VoteReceiptPolicy WithFixedCadence(TimeSpan cadence) => new(true, cadence, true);
 }
 
 public sealed record VoteParsingPolicy(                    // <!-- CHANGED: New — toggleable !N — R1,R3,R5 -->
@@ -331,6 +349,7 @@ public interface IVoteReceiptFormatter {                   // <!-- CHANGED: New 
 ```
 
 - `Open`: accepts votes; periodic tally fires; tally events fire. Legal transitions: → `Closing` (duration elapsed or `CloseNow()`), → `Cancelled` (`Cancel()`), → `Disposed` (`Dispose()` calls `Cancel()` first).
+- **No-await detection**: `VoteSession` tracks whether `AwaitWinnerAsync` has been called by anyone. If the session reaches `Closed` (or `Cancelled`) without ever being awaited, log at `Warn`: `"VoteSession <id> closed with winner <n> but AwaitWinnerAsync was never called — caller likely forgot to consume the result."` Helps catch a class of bug where a Harmony patch fires `Voter.Start(...)` but discards the returned session. <!-- CHANGED: no-await Warn — Optional Enhancement #12 -->
 - `Closing`: a brief intermediate during winner computation + close-receipt enqueue. Not exposed to consumers in events; included for completeness.
 - `Closed`: terminal-with-winner. `WinnerIndex` set; `Closed` event has fired; `Cancelled` event will not fire.
 - `Cancelled`: terminal-without-winner. `WinnerIndex` is null; `Cancelled` event has fired; awaiting `AwaitWinnerAsync` tasks complete with `OperationCanceledException`.
@@ -404,17 +423,21 @@ If `IChatService.CanSend == false` at `Start` time (anonymous justinfan or disco
 ### Receipts (default English formatter)
 
 - Open: `"Vote: <label>! Type 0, 1 or 2 — <duration>s left."` (compact labels variant: `"Vote: <label>! 0 <a>, 1 <b>, 2 <c> — <duration>s."`). <!-- CHANGED: 0-indexed + compact labels — R4 + 0-indexed -->
-- Periodic (default every 7s): `"Vote: 0=12 1=8 2=3, <remaining>s left."` Skipped if all tallies are zero (avoids spam). Skipped if identical to the previous tally message (avoids redundant chat noise). <!-- CHANGED: identical-tally skip — R5 -->
+- Periodic (cadence per `VoteReceiptPolicy.PeriodicTallyEvery`; default adaptive `max(5s, duration/5)` so a 30s vote ticks every 6s, a 60s vote every 12s, a 15s vote every 5s): `"Vote: 0=12 1=8 2=3, <remaining>s left."` Skipped if all tallies are zero (avoids spam). Skipped if identical to the previous tally message (avoids redundant chat noise). <!-- CHANGED: adaptive cadence — Optional Enhancement #1; identical-tally skip — R5 -->
 - Close (winner): `"Chat chose 1: <label>."`  <!-- CHANGED: "chose" not "picked" — R3 -->
-- Close (tie): `"Tie! Chat chose 1: <label> randomly among <k> tied options."` <!-- CHANGED: shorter — R3 -->
+- Close (2-way tie): `"Tie! Chat chose 1: <label> randomly between <k> tied options."` <!-- CHANGED: shorter — R3 -->
+- Close (3+ way tie): `"<k>-way tie! Chat chose 1: <label> randomly."` <!-- CHANGED: distinct format for 3+ ties — Optional Enhancement #13 -->
 - Close (no votes): `"No votes received — chat got 1: <label> randomly."`
 - Close (with disconnect gap): `"Chat chose 1: <label> (chat was offline 8s during voting)."`
 
 ### Rate-limit math
 
-Default cadence on a 30-second vote: 1 open + ~4 periodic + 1 close = 6 messages.
-On a 60-second vote: 1 + ~8 + 1 = 10 messages.
-Worst-case back-to-back 15s votes (event → card reward → shop): 3 votes × 4 messages each = 12 messages in ~45 seconds. Well under both 90/30s and 18/30s limits. <!-- CHANGED: math shown — R6 -->
+With adaptive cadence (`max(5s, duration/5)`):
+- 15s vote: cadence = 5s → 1 open + ~2 periodic + 1 close = 4 messages.
+- 30s vote: cadence = 6s → 1 + ~4 + 1 = 6 messages.
+- 60s vote: cadence = 12s → 1 + ~4 + 1 = 6 messages.
+
+Worst-case back-to-back 15s votes (event → card reward → shop): 3 votes × 4 messages each = 12 messages in ~45 seconds. Well under both 90/30s and 18/30s limits. <!-- CHANGED: math shown — R6; updated for adaptive cadence — Optional Enhancement #1 -->
 
 The rate limiter inside `TwitchIrcChatService` enforces the ceiling regardless; this section is just to demonstrate that the default policy doesn't approach the limit.
 
@@ -435,6 +458,42 @@ public sealed partial class VoteOverlayControl : Control {
 - On `Closed`: highlights winner, fades out after `AutoHideDelaySeconds`, self-detaches.
 - On `Cancelled`: fades out immediately, self-detaches.
 - `_ExitTree` unsubscribes defensively.
+
+## `ChatStatusControl` (UI, optional, diagnostic)              <!-- CHANGED: New — Optional Enhancement #9 -->
+
+A small Godot `Control` consuming `IChatService` for at-a-glance connection diagnostics.
+
+```csharp
+public sealed partial class ChatStatusControl : Control {
+    public void AttachTo(IChatService chat);
+    public void Detach();
+}
+```
+
+- Renders a single line of status text, redrawn from `_Process`:
+  - `ChatConnectionState.ConnectedReadWrite` + recent traffic: `"Chat: connected (last msg 3s ago)"`
+  - `ConnectedReadOnly`: `"Chat: connected (read-only)"`
+  - `Reconnecting`: `"Chat: reconnecting…"`
+  - `AuthenticationFailed`: `"Chat: auth failed (check oauth)"` in error colour
+  - `JoinFailed`: `"Chat: can't join channel"`
+  - `Disconnected` / `Disposed`: `"Chat: disconnected"`
+- Uses `IChatService.LastMessageReceivedAt` to compute the "last msg Ns ago" suffix.
+- Subscribes to `ConnectionStateChanged` for instant text updates; `_Process` only updates the "ago" timestamp.
+- Optional in v0.1 — game-side code can choose whether to show it. Strong recommendation: ship it on by default so streamers can self-diagnose during runs.
+
+## `ImmediateDispatcher` (public, in `Ti/Internal/`)         <!-- CHANGED: ImmediateDispatcher elevated to public — Optional Enhancement #10 -->
+
+```csharp
+public sealed class ImmediateDispatcher : IMainThreadDispatcher {
+    public void Post(Action action) => action();
+    public Task DrainAsync() => Task.CompletedTask;
+}
+```
+
+- Synchronous pass-through. The action runs on the calling thread.
+- Default impl for **tests** (lets `VoteSession` tests assert on event timing without queueing).
+- Also useful for **non-Godot harness** consumers — e.g. the IRC test-fixture generator tool, or a future headless integration-test suite. They construct `IChatService` + `ImmediateDispatcher` and never touch Godot.
+- Public type rather than `internal`-only because consumer mods extracting the TI layer to a non-Godot context might want to use it directly.
 
 ## Logging via `ITiLogger`                                  <!-- CHANGED: New section — R2,R4,R5 -->
 
@@ -508,6 +567,19 @@ public sealed class DefaultTiLogger : ITiLogger {
 - Source-referenced (not DLL-referenced) so internals are testable without `InternalsVisibleTo` gymnastics. (Reviewer 4 questioned this; for a greenfield mod with no public API contract yet, source-referenced is lighter and the compilation-divergence risk is theoretical. Revisit if it bites.)
 - Inject `IClock`, `ITimerScheduler`, `IMainThreadDispatcher`, `Random`, `ITiLogger` so every component is deterministically testable.
 
+### IRC test-fixture generator                              <!-- CHANGED: New — Optional Enhancement #6 -->
+
+A small console tool living in `tools/irc-fixture-generator/` (separate csproj, NOT shipped in the mod assembly):
+
+- Takes a Twitch channel name as a CLI arg.
+- Connects via `TwitchIrcChatService` in passive mode (`creds == null`, anonymous justinfan).
+- Captures every raw IRC line received for a configurable duration (e.g. 30 minutes).
+- Writes the lines to a JSON file at `slay-the-streamer-2.tests/Fixtures/irc-corpus-YYYY-MM-DD.json`, with metadata (channel, capture window, Twitch IRC server fingerprint).
+- The parser test corpus loads these JSONs and asserts the parser handles every line correctly.
+- Run once when bootstrapping the parser tests, then ad-hoc whenever Twitch ships an IRCv3 quirk that breaks our parser.
+
+This hardens the parser without us having to hand-curate edge-case fixtures. ~50 LOC of throwaway tooling.
+
 ## Lifecycle / ModEntry wiring                              <!-- CHANGED: New section — R3,R4,R5 -->
 
 ```csharp
@@ -568,20 +640,15 @@ public static class ModEntry {
 
 These were "Consider"-tier items from the meta-review — good ideas but not urgent. Tell me which numbers (if any) to fold into the spec, or leave them for future iterations.
 
+**Folded in (v2.1)**: 1, 6, 9, 10, 11, 12, 13, 14, 15. See `<!-- CHANGED: ... — Optional Enhancement #N -->` markers throughout v2.1 for the exact shifts.
+
+**Remaining for future consideration**:
+
 | # | Change | Reviewers | Effort | Recommendation |
 |---|---|---|---|---|
-| 1 | **Adaptive tally cadence** — `PeriodicTallyEvery = max(5s, duration/5)` so 15s votes get 5s ticks and 60s votes get 12s ticks. Configurable. | R3, R5 | Trivial | Lean yes — better UX across vote durations |
 | 2 | **Reply-parent-msg-id per-voter receipts** — bot @-replies first-time voters with `"@viewer counted 1."` as a threaded reply on the open message. Closes the lag gap individually without chat-floor pollution. | R3 | Small | Lean no for v0.1 (volume scales with brigade size); strong candidate for v0.2 |
-| 3 | **Receipt "quiet period"** — skip a periodic tally if it's byte-identical to the previously sent one (e.g., lopsided votes where #0 dominates and no one's switching). | R5 | Trivial | Lean yes — already half-done with the "skip if all zero" rule |
-| 4 | **Heartbeat reconnect** — proactive disconnect + reconnect if no IRC traffic of any kind for 5 minutes. (v2 already includes this — see the Reconnect section. It's listed here only because the meta-review categorised it.) | R5 | Already in v2 | n/a |
-| 5 | **Observability dashboard** — basic counters (messages received, votes accepted, votes out-of-range, reconnects) are in v2; a fuller dashboard with per-stream stats is post-MVP. | R5 | Medium | Neutral — depends whether a streamer ever asks |
-| 6 | **IRC test-fixture generator** — a small console tool that connects to a public test channel and writes raw IRC lines to JSON for the parser test corpus. Run once per major Twitch IRC update. | R3 | Small | Lean yes — hardens parser tests cheaply |
-| 7 | **`TimeProvider` (BCL)** instead of custom `IClock`/`ITimerScheduler` — .NET 8+ ships a standard time abstraction. Adds one tiny NuGet dep (`Microsoft.Bcl.TimeProvider`) but trades ~30 lines of custom code for a maintained type. | R4, R5 | Small | Neutral — both shapes work; the v2 custom one is fine |
+| 3 | **Receipt "quiet period"** — skip a periodic tally if it's byte-identical to the previously sent one (e.g., lopsided votes where #0 dominates and no one's switching). | R5 | Trivial | Lean yes — already half-done with the "skip if all zero" rule. *(Not picked in v2.1; revisit if chat-floor noise becomes a complaint.)* |
+| 4 | **Heartbeat reconnect** — proactive disconnect + reconnect if no IRC traffic of any kind for 5 minutes. *(Already in v2.1 — see Reconnect section.)* | R5 | Already in v2 | n/a |
+| 5 | **Observability dashboard** — basic counters (messages received, votes accepted, votes out-of-range, reconnects) are in v2.1; a fuller dashboard with per-stream stats is post-MVP. | R5 | Medium | Neutral — depends whether a streamer ever asks |
+| 7 | **`TimeProvider` (BCL)** instead of custom `IClock`/`ITimerScheduler` — .NET 8+ ships a standard time abstraction. Adds one tiny NuGet dep (`Microsoft.Bcl.TimeProvider`) but trades ~30 lines of custom code for a maintained type. | R4, R5 | Small | Neutral — both shapes work; the v2.1 custom one is fine. Revisit if a NuGet dep becomes acceptable |
 | 8 | **Vendor a single-file Twitch IRC library** (Plan B from decision #5) — only if the handcrafted client proves problematic during implementation. | R1, R5 | Medium | Neutral — Plan B; revisit during implementation |
-| 9 | **Channel-state UI** — show "Chat: connected (last msg 3s ago)" / "reconnecting…" via `LastMessageReceivedAt` + `ChatConnectionState`. UI is post-MVP polish. | R3, R5 | Small | Lean yes — `LastMessageReceivedAt` is already exposed in v2; the UI is one more `Control` |
-| 10 | **`ImmediateDispatcher` for tests as a public type** instead of `internal`-only — useful if a future consumer wants to use the TI layer in a non-Godot context (CLI tool, headless server). | R1 | Trivial | Lean yes |
-| 11 | **`oauth:`-prefix normalization on `ChatCredentials`** — accept either `oauth:abc123` or `abc123`; normalize internally. | R4 | Trivial | Lean yes |
-| 12 | **`AwaitWinnerAsync` no-await warning** — if the session closes and no one ever awaited, log a Warn (potential bug — caller forgot to consume the result). | R4 | Trivial | Neutral |
-| 13 | **3+ option tie-break receipt format** — define the exact wording when 3+ options tie (current spec only shows the 2-tie example). | R4 | Trivial | Lean yes |
-| 14 | **Channel URL parsing** — accept `https://twitch.tv/foo` in `ConnectAsync` (currently v2 normalises `foo`/`#foo`/uppercase but not URLs). | R4 | Trivial | Neutral |
-| 15 | **`VoteOption` constructor internal-only** — defuses R3's "what if someone constructs `VoteOption(5, "wrong index")`" concern. Force construction through `VoteCoordinator.Start` which builds the list with correct indices. | R3 | Trivial | Lean yes |

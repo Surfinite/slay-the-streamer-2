@@ -200,3 +200,70 @@ finalising design if act-boss voting and no-skip-boss-relic are in v0.1:
    selection might already give us hooks that didn't exist in StS1).
 4. **Outgoing chat messages**: per session 1, default to none. Confirmed.
 5. **Localisation in v0.1**: probably English-only, structure for i18n from day 1.
+
+## Session 2 update (2026-05-08)
+
+Surfinite's answers to the four open questions from session 1's closing:
+
+1. **Sealed deck in v0.1** — *tentative yes*: "It's a strong cold-open for a
+   stream, great to drive engagement, so I'd hope for yes — but it depends
+   how long each feature takes." Treat as in-scope unless effort balloons.
+2. **Act-boss voting in v0.1** — *tentative yes*, same reasoning as #1.
+3. **i18n in v0.1** — **English only**. Translations welcome from
+   contributors, but not from Surfinite. Build with i18n structure so PRs are
+   cheap; ship en-only.
+4. **Shop/map/event vote granularity** — Surfinite asked what the *original*
+   actually did before answering. Verified answer (this note's tables): the
+   original mod didn't have shop / map / event / sac-event handling at all
+   — those came from Twitch Integration *or weren't there*. Specifically:
+   - **Card removal at shrines**: not in the original (TI didn't expose it,
+     Tempus didn't add it).
+   - **Map path / event vote**: handled by TI's generic in-game vote
+     overlays, not by Slay the Streamer.
+   - **Sacrifice events** (e.g. Old Beggar trading max-HP for gold,
+     mirroring StS2's Living Wall / Designer-In-Spire-style trades): the
+     original mod doesn't intercept events at all — they play normally for
+     the streamer. So if we want chat to vote on sac events (or cap their
+     repeat-abuse), it's a *new* design problem, not a port.
+   - Implication: our v0.1 MVP scope (shop/map/event votes) is broader than
+     anything that ever shipped in StS1's chat-vs-streamer ecosystem.
+     Worth re-confirming each is in-scope before designing.
+
+### TI-extraction goal (new constraint)
+
+Surfinite wants the Twitch-integration layer designed so it can be lifted
+later into a reusable base mod for StS2 (analogous to robojumper's
+`de.robojumper.ststwitch` for StS1). **Single repo for now** — no
+separate package, no cross-mod dependency resolution to deal with — but
+internal boundaries should be game-agnostic:
+
+- IRC client + vote engine + chat-source abstraction expressed in
+  game-neutral vocabulary ("open a vote with N labelled options for T
+  seconds; tally; winner").
+- StS2-specific glue (Harmony patches, decision-to-vote bindings,
+  AbstractModel hooks) lives in a separate folder/namespace.
+- Future lift = "move TI files to a new csproj + add a small registration
+  shim", not "untangle game types from IRC types".
+
+This changes decision #1 above: still monolithic in v0.1, but with the
+internal seam pre-drawn so extraction is cheap.
+
+### Other reference projects looked at
+
+- **Crowd Control pack for StS2** (`SlayTheSpire2-CC-110.zip`) — Warp
+  World's universal-streamer-input layer. Manifest is sparse; effect
+  catalog lives inside `CrowdControl.dll` + `CrowdControl.pck`. Useful as
+  a *capability reference* (proves which game systems Warp World managed
+  to mod-reach). Not a code reference (closed source, third-party).
+- **spire-scryer** (`github.com/Sezmol/spire-scryer`) — open-source C#
+  StS2 mod, **read-only**: pushes `RunManager` state to a Cloudflare
+  Worker → Twitch PubSub → Twitch Extension overlay. Useful as a
+  *reading game state* reference. Different scope (overlay-flavour, not
+  chat-vote-flavour). No declared license.
+- **spire-codex** (`github.com/ptrlrd/spire-codex`) — *not a mod*. Web
+  data service that decompiles game files into a REST API + Next.js
+  frontend. PolyForm Noncommercial. Useful as a *card/relic/event data
+  reference* if we ever need full lookups, not a hooks reference.
+
+None of these compromise the licensing position on Tempus's mod —
+feature spec / behaviour spec only, never code copies.

@@ -3,6 +3,26 @@
 Source: `decompiled/sts2/MegaCrit/sts2/Core/Models/AbstractModel.cs` (1,038
 lines, ~200 virtual methods).
 
+> **Stable-branch drift (verified 2026-05-08).** `AbstractModel` had real
+> signature changes between beta and stable. The note's hook *names* are
+> still valid (we never documented signatures), but if you reach for these
+> hooks, use the stable signatures, not the beta ones:
+>
+> | Method | Beta signature | Stable signature |
+> |---|---|---|
+> | `AfterAttack` | `(PlayerChoiceContext, AttackCommand)` | `(AttackCommand)` |
+> | `AfterCardGeneratedForCombat` | `(CardModel, Player?)` | `(CardModel, bool addedByPlayer)` |
+> | `AfterPowerAmountChanged` | `(PlayerChoiceContext, PowerModel, decimal, Creature?, CardModel?)` | `(PowerModel, decimal, Creature?, CardModel?)` |
+> | combat-state params | `ICombatState` | `CombatState` (interface deleted) |
+>
+> **Removed entirely**: `AfterAutoPostPlayPhaseEntered`,
+> `AfterAutoPrePlayPhaseEntered{,Early,Late}` (the four "auto-play-phase"
+> callbacks). **Added**: `BeforePlayPhaseStart{,Late}(PlayerChoiceContext,
+> Player)`. The `ICombatState` / `NullCombatState` / `PlayerTurnPhase`
+> types were deleted from `Combat/`; use the concrete `CombatState`
+> directly. This affects any v0.2+ combat-side hooks but doesn't change the
+> v0.1 Harmony-heavy plan in this doc.
+
 ## What AbstractModel actually is
 
 ```csharp

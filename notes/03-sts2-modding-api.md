@@ -3,6 +3,16 @@
 Read in session 1.5: `decompiled/sts2/MegaCrit/sts2/Core/Modding/` (whole namespace,
 13 files) plus partial reads of `decompiled/sts2/MegaCrit/sts2/Core/Hooks/Hook.cs`.
 
+> **Stable-branch drift (verified 2026-05-08).** `Mod.cs`, `ModManifest.cs`,
+> `ModInitializerAttribute.cs`, and `Logger.cs` are byte-identical between
+> beta and stable — the modding contract is unchanged. `ModManager.cs` got
+> internal hardening only: a new circular-dependency detection pass and a
+> "all mods have dependencies" warning when the priority queue starts empty.
+> No mod-author-facing API changes. `Logger`/`Log` thread-safety is
+> confirmed (static `_lockObj` around `_logPrinter.Print` + `LogCallback`),
+> so `TiLog.Sink` can be a direct passthrough to `Log.Info`/`Warn`/`Error`
+> without a dispatcher hop or buffering layer.
+
 ## Summary in one paragraph
 
 Mods are .NET 9 assemblies (with optional Godot PCK files for assets) dropped

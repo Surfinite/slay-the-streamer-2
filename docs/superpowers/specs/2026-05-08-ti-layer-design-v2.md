@@ -1,7 +1,7 @@
 # TI layer design — IRC + vote engine boundary (v2)
 
-**Date**: 2026-05-08 (v2: 2026-05-08, post-meta-review; v2.1: 2026-05-08, optional enhancements 1/6/9/10/11/12/13/14/15 folded in)
-**Status**: Draft v2.1 — must-do + should-do changes from external review applied; 9 of 15 optional enhancements folded in; remaining 6 listed at the end for future consideration.
+**Date**: 2026-05-08 (v2: 2026-05-08, post-meta-review; v2.1: 2026-05-08, optional enhancements 1/6/9/10/11/12/13/14/15 folded in; v2.2: 2026-05-08, rolled back IVoteReceiptFormatter / ITiLogger interfaces to static helpers and removed heartbeat reconnect per author judgment that two of those were borderline-YAGNI for v0.1 and the third defended an unverified failure mode)
+**Status**: Draft v2.2 — extraction-friendly static helpers (`TiLog`, `EnglishReceipts`) replace the constructor-injected interfaces from v2.1.
 **Scope**: the Twitch-integration layer of `slay-the-streamer-2`. Defines the boundary between the reusable chat-IO machinery and the StS2-specific vote bindings.
 **Predecessor**: [`2026-05-08-ti-layer-design.md`](./2026-05-08-ti-layer-design.md). See [`META-REVIEW-2026-05-08-ti-layer-design.md`](./META-REVIEW-2026-05-08-ti-layer-design.md) for the rationale behind every `<!-- CHANGED -->` mark below.
 
@@ -66,16 +66,14 @@ src/
 │   │   ├── VoteSessionState.cs               <!-- CHANGED: New enum — Open / Closing / Closed / Cancelled / Disposed — R3,R4,R5 -->
 │   │   ├── VoteReceiptPolicy.cs
 │   │   ├── VoteParsingPolicy.cs              <!-- CHANGED: New — toggles !N acceptance — R1,R3,R5 -->
-│   │   ├── IVoteReceiptFormatter.cs          <!-- CHANGED: New — i18n + testability — R3,R4,R5 -->
-│   │   └── DefaultEnglishReceiptFormatter.cs
+│   │   └── EnglishReceipts.cs                <!-- CHANGED v2.2: static helper instead of IVoteReceiptFormatter — collapsed to defuse YAGNI; future i18n adds peer static helpers -->
 │   ├── Ui/                                   optional, Godot-dependent
 │   │   └── VoteOverlayControl.cs             redraws driven by _Process — R6
 │   ├── Internal/
 │   │   ├── IMainThreadDispatcher.cs          <!-- CHANGED: Interface introduced — R1,R2,R4,R5 -->
 │   │   ├── IClock.cs + SystemClock + FakeClock
 │   │   ├── ITimerScheduler.cs + SystemTimerScheduler + FakeTimerScheduler   <!-- CHANGED: New — R3,R4,R5 -->
-│   │   ├── ITiLogger.cs                      <!-- CHANGED: New — decouples from MegaCrit Log — R2,R4,R5 -->
-│   │   └── DefaultTiLogger.cs                wraps MegaCrit.Sts2.Core.Logging.Log
+│   │   └── TiLog.cs                          <!-- CHANGED v2.2: static class replaces ITiLogger; one shim site, no DI ceremony — wraps MegaCrit.Sts2.Core.Logging.Log + scrubs oauth tokens -->
 │   └── Godot/                                <!-- CHANGED: New sub-namespace — clearly marked Godot binding — R1,R2,R4,R5 -->
 │       ├── GodotMainThreadDispatcher.cs      ConcurrentQueue drained from _Process
 │       └── DispatcherAutoload.cs             autoload Node that owns the dispatcher
@@ -83,7 +81,7 @@ src/
 │   ├── DecisionVotes/                        one Harmony patch per voted decision
 │   ├── Models/                               [TBD if sealed-deck uses AbstractModel]
 │   └── Bootstrap/
-│       └── ModServices.cs                    locator: VoteCoordinator, IChatService, ITiLogger, IMainThreadDispatcher
+│       └── ModServices.cs                    locator: VoteCoordinator, IChatService, IMainThreadDispatcher (logging is via static TiLog)
 └── ModEntry.cs                               [ModInitializer], wires everything
 ```
 
@@ -94,7 +92,7 @@ src/
 - `Ti/Ui/` may reference: BCL + Godot.
 - `Ti/Godot/` may reference: BCL + Godot. Houses every type that calls Godot directly outside of UI.
 - `Ti/Chat/Internal/` follows `Ti/Chat/`'s rules (BCL only).
-- Logging: routed through `ITiLogger` (interface in `Ti/Internal/`); the default impl in `Ti/Internal/DefaultTiLogger.cs` is the *only* place that touches `MegaCrit.Sts2.Core.Logging.Log`. When extracted, the default impl gets replaced with a no-op or different logger; the rest of `Ti/*` is untouched.
+- Logging: routed through static `TiLog` (`Ti/Internal/TiLog.cs`); call-sites use `TiLog.Info(...)` etc. directly. `TiLog` is the *only* place that touches `MegaCrit.Sts2.Core.Logging.Log`. When extracted, swap that one file's implementation; the rest of `Ti/*` is untouched. <!-- CHANGED v2.2: static helper instead of DI'd interface — reverts the v2.1 abstraction; the extraction win is preserved without per-class constructor ceremony -->
 - `Game/*` may reference everything.
 - `Game/*` must not be referenced from `Ti/*`. Code-review enforcement for v0.1; a Roslyn analyzer is post-MVP.
 
@@ -198,7 +196,7 @@ public sealed record ChatConnectionChangedEventArgs(ChatConnectionState OldState
 - Network-level failures (read timeout, socket close, TLS error): exponential backoff with jitter — base sequence 5s, 10s, 20s, 40s, capped at 60s; ±20% random jitter applied per attempt. <!-- CHANGED: jitter added — R5 -->
 - Auth failures (per protocol matrix): no retry; terminal `AuthenticationFailed`.
 - Each attempt re-emits `ConnectionStateChanged` (Disconnected → Reconnecting → Connected* or AuthenticationFailed).
-- Heartbeat: if no IRC traffic of any kind for 5 minutes, force a disconnect+reconnect proactively (Twitch IRC has been observed to wedge silently). <!-- CHANGED: heartbeat — R5 -->
+<!-- CHANGED v2.2: heartbeat-reconnect (5-min idle → reconnect) removed. Defended an unverified failure mode (Twitch IRC silently wedging); add later only if observed in practice. -->
 
 ### Lifecycle
 
@@ -226,8 +224,8 @@ public sealed class VoteCoordinator : IDisposable {
         IMainThreadDispatcher dispatcher,
         ITimerScheduler scheduler,
         IClock clock,
-        ITiLogger logger,
-        IVoteReceiptFormatter formatter,
+        Func<VoteSession, ReceiptKind, string>? formatReceipt = null,   // <!-- CHANGED v2.2: was IVoteReceiptFormatter; default = EnglishReceipts.* dispatch -->
+        // logging is via static TiLog — no parameter   <!-- CHANGED v2.2: was ITiLogger logger -->
         Random? random = null);
 
     public VoteSession Start(
@@ -318,10 +316,15 @@ public sealed record VoteParsingPolicy(                    // <!-- CHANGED: New 
     public static VoteParsingPolicy Default => new();
 }
 
-public interface IVoteReceiptFormatter {                   // <!-- CHANGED: New — i18n + testability — R3,R4,R5 -->
-    string FormatOpen(VoteSession session);
-    string FormatPeriodicTally(VoteSession session);
-    string FormatClose(VoteSession session);                  // includes tie/no-voter cases
+// Receipt text lives in a static helper; v0.1 ships English only.
+// Future translations add peer static helpers (e.g. SpanishReceipts.cs);
+// VoteCoordinator.Start(...) takes a delegate `Func<VoteSession, ReceiptKind, string>`
+// for callers that want non-default text. Not an interface — just a function pointer.
+// <!-- CHANGED v2.2: was IVoteReceiptFormatter / DefaultEnglishReceiptFormatter — collapsed to a static helper + delegate to defuse v0.1 YAGNI; testable by calling the static methods directly -->
+public static class EnglishReceipts {
+    public static string FormatOpen(VoteSession session);
+    public static string FormatPeriodicTally(VoteSession session);
+    public static string FormatClose(VoteSession session);   // dispatches winner / 2-tie / 3+-tie / no-vote / disconnect-gap
 }
 ```
 
@@ -495,26 +498,25 @@ public sealed class ImmediateDispatcher : IMainThreadDispatcher {
 - Also useful for **non-Godot harness** consumers — e.g. the IRC test-fixture generator tool, or a future headless integration-test suite. They construct `IChatService` + `ImmediateDispatcher` and never touch Godot.
 - Public type rather than `internal`-only because consumer mods extracting the TI layer to a non-Godot context might want to use it directly.
 
-## Logging via `ITiLogger`                                  <!-- CHANGED: New section — R2,R4,R5 -->
+## Logging via `TiLog`                                  <!-- CHANGED v2.2: was ITiLogger interface; collapsed to static helper -->
 
 ```csharp
-public interface ITiLogger {
-    void Debug(string msg);
-    void Info(string msg);
-    void Warn(string msg);
-    void Error(string msg, Exception? ex = null);
-}
+public static class TiLog {
+    public static void Debug(string msg);
+    public static void Info(string msg);
+    public static void Warn(string msg);
+    public static void Error(string msg, Exception? ex = null);
 
-public sealed class DefaultTiLogger : ITiLogger {
-    // Wraps MegaCrit.Sts2.Core.Logging.Log on each call.
-    // OauthToken or ChatCredentials-shaped strings are scrubbed before forwarding.    <!-- CHANGED: token scrubbing — R4,R5 -->
+    // Tests use this to redirect output. Default forwards to MegaCrit.Sts2.Core.Logging.Log.
+    public static Action<LogLevel, string, Exception?> Sink { get; set; }
 }
+public enum LogLevel { Debug, Info, Warn, Error }
 ```
 
-- `Ti/*` types take `ITiLogger` via constructor injection (or use the static `Voter.Default.Logger` for trivial call sites).
-- The default impl wraps `MegaCrit.Sts2.Core.Logging.Log`; that's the only place in `Ti/*` that touches StS2 logging.
-- When `Ti/*` is extracted to a base mod, `DefaultTiLogger` is replaced with an impl appropriate to the new context (likely just a different wrapper of the same `Log` API).
-- All log calls scrub anything matching the oauth token before forwarding (defense-in-depth on top of `ChatCredentials.ToString` redaction).
+- Call-sites use `TiLog.Info(...)` directly — no constructor injection ceremony.
+- The default `Sink` wraps `MegaCrit.Sts2.Core.Logging.Log`; that's the only place in `Ti/*` that touches StS2 logging. Tests override `TiLog.Sink` to capture log lines for assertions.
+- When `Ti/*` is extracted to a base mod, replace the one default `Sink` body; the rest of `Ti/*` is untouched.
+- All log calls scrub anything matching `oauth:[a-z0-9]+` before forwarding (defense-in-depth on top of `ChatCredentials.ToString` redaction).
 
 **Log levels**:
 - `Debug` for parser drops, out-of-range votes, redundant-tally skips.
@@ -546,7 +548,7 @@ public sealed class DefaultTiLogger : ITiLogger {
   - voter-dict overflow → 10,001st voter dropped with one Warn
   - self-echo: bot's own message dropped at IRC layer
 - **`ChatCredentials.ToString`** test: token never appears in output.
-- **`DefaultTiLogger`** test: oauth-shaped strings are scrubbed.
+- **`TiLog`** test: oauth-shaped strings are scrubbed before reaching the `Sink`.   <!-- CHANGED v2.2 -->
 
 ### Integration / harder
 
@@ -565,7 +567,7 @@ public sealed class DefaultTiLogger : ITiLogger {
 
 - Tests live in `slay-the-streamer-2.tests/` (xUnit, `net9.0`).
 - Source-referenced (not DLL-referenced) so internals are testable without `InternalsVisibleTo` gymnastics. (Reviewer 4 questioned this; for a greenfield mod with no public API contract yet, source-referenced is lighter and the compilation-divergence risk is theoretical. Revisit if it bites.)
-- Inject `IClock`, `ITimerScheduler`, `IMainThreadDispatcher`, `Random`, `ITiLogger` so every component is deterministically testable.
+- Inject `IClock`, `ITimerScheduler`, `IMainThreadDispatcher`, `Random` so every component is deterministically testable. Logging uses static `TiLog`; tests override `TiLog.Sink` to capture output.   <!-- CHANGED v2.2 -->
 
 ### IRC test-fixture generator                              <!-- CHANGED: New — Optional Enhancement #6 -->
 
@@ -595,10 +597,10 @@ public static class ModEntry {
         DispatcherAutoload.Register(dispatcher);
 
         // 3. Build TI services
-        var logger = new DefaultTiLogger();
+        // logging via static TiLog — Sink defaults to MegaCrit.Sts2.Core.Logging.Log
         var clock = new SystemClock();
         var scheduler = new SystemTimerScheduler(clock);
-        var formatter = new DefaultEnglishReceiptFormatter();
+        // Receipt text comes from static EnglishReceipts; pass a delegate to override.   <!-- CHANGED v2.2 -->
         var chat = new TwitchIrcChatService(dispatcher, logger);
         var coordinator = new VoteCoordinator(chat, dispatcher, scheduler, clock, logger, formatter);
 
@@ -616,7 +618,7 @@ public static class ModEntry {
 
 ## Open items deferred to implementation / later
 
-- **`MegaCrit.Sts2.Core.Logging.Log` thread-safety** — the IRC background task and timer threads call into the logger before reaching the dispatcher. If `Log` isn't thread-safe, `DefaultTiLogger` will need to buffer and flush on the main thread. Verify before implementation. <!-- CHANGED: explicit TODO — R3,R5 -->
+- **`MegaCrit.Sts2.Core.Logging.Log` thread-safety** — the IRC background task and timer threads call into the logger before reaching the dispatcher. If `Log` isn't thread-safe, `TiLog`'s default `Sink` will need to buffer and flush on the main thread. Verify before implementation. <!-- CHANGED: explicit TODO — R3,R5 -->
 - **Godot autoload registration from a mod assembly** — `AddAutoloadSingleton` requires a path or Node reference. The implementation needs to validate that runtime registration via `ProjectSettings.SetSetting("autoload/...", ...)` works from `[ModInitializer]`. Plan B: `DispatcherAutoload` is a hidden singleton `Node` added to the scene tree by the first `VoteOverlayControl` (or a hidden `Node` spawned by `ModEntry`). <!-- CHANGED: explicit TODO — R3 -->
 - **Streamer-configurable receipt policy** — ship `VoteReceiptPolicy.Default` for v0.1; expose configuration when the broader settings UI is designed.
 - **Reconnect retry budget** — v0.1 retries indefinitely with capped backoff and jitter for transport failures. Auth and join failures are terminal. If transport-retry-forever turns out annoying, add a `MaxRetryDuration` knob.
@@ -631,7 +633,7 @@ public static class ModEntry {
 - Whisper / Twitch Extension overlays.
 - Lifting `Ti/*` into a separate base-mod assembly. Plan: when the lift happens, `Ti/Chat/`, `Ti/Voting/`, `Ti/Internal/` (minus `Ti/Godot/`) move to a new csproj; `Ti/Ui/` either moves with them or stays as a slay-the-streamer-2-specific control; `Ti/Godot/` stays with each consumer (or gets refactored into a non-Godot-defaulted impl).
 - Subscriber/mod/VIP-only voting filters — data is exposed in `ChatMessage` already; filter logic is a `where` clause in `VoteCoordinator.Start` consumers when added.
-- Localised receipts via additional `IVoteReceiptFormatter` impls.
+- Localised receipts via additional static helpers (e.g. `SpanishReceipts.cs`) plus a `Func<VoteSession, ReceiptKind, string>` passed to `VoteCoordinator.Start`.
 - Multi-channel/multi-streamer support — now possible at the API level (instance-based `VoteCoordinator`); full StS2 co-op integration is a v0.2+ design pass.
 
 ---
@@ -648,7 +650,7 @@ These were "Consider"-tier items from the meta-review — good ideas but not urg
 |---|---|---|---|---|
 | 2 | **Reply-parent-msg-id per-voter receipts** — bot @-replies first-time voters with `"@viewer counted 1."` as a threaded reply on the open message. Closes the lag gap individually without chat-floor pollution. | R3 | Small | Lean no for v0.1 (volume scales with brigade size); strong candidate for v0.2 |
 | 3 | **Receipt "quiet period"** — skip a periodic tally if it's byte-identical to the previously sent one (e.g., lopsided votes where #0 dominates and no one's switching). | R5 | Trivial | Lean yes — already half-done with the "skip if all zero" rule. *(Not picked in v2.1; revisit if chat-floor noise becomes a complaint.)* |
-| 4 | **Heartbeat reconnect** — proactive disconnect + reconnect if no IRC traffic of any kind for 5 minutes. *(Already in v2.1 — see Reconnect section.)* | R5 | Already in v2 | n/a |
+| 4 | **Heartbeat reconnect** — proactive disconnect + reconnect if no IRC traffic of any kind for 5 minutes. *(Was in v2/v2.1; removed in v2.2 — defended an unverified failure mode. Add only if Twitch IRC silent-wedge is observed in practice.)* | R5 | Removed in v2.2 | revisit if observed |
 | 5 | **Observability dashboard** — basic counters (messages received, votes accepted, votes out-of-range, reconnects) are in v2.1; a fuller dashboard with per-stream stats is post-MVP. | R5 | Medium | Neutral — depends whether a streamer ever asks |
 | 7 | **`TimeProvider` (BCL)** instead of custom `IClock`/`ITimerScheduler` — .NET 8+ ships a standard time abstraction. Adds one tiny NuGet dep (`Microsoft.Bcl.TimeProvider`) but trades ~30 lines of custom code for a maintained type. | R4, R5 | Small | Neutral — both shapes work; the v2.1 custom one is fine. Revisit if a NuGet dep becomes acceptable |
 | 8 | **Vendor a single-file Twitch IRC library** (Plan B from decision #5) — only if the handcrafted client proves problematic during implementation. | R1, R5 | Medium | Neutral — Plan B; revisit during implementation |

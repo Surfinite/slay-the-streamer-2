@@ -147,6 +147,10 @@ public static class ModEntry {
         try {                                                                                // CHANGED: top-level try/catch — Opus
             GodotMainThreadId = Environment.CurrentManagedThreadId;
             Log.Info($"[slay_the_streamer_2] mod loading... (init thread={GodotMainThreadId})");
+            // Log Godot version + main loop type for cross-version troubleshooting.        // OPT-10 applied: OwlAlpha
+            var godotVer = Engine.GetVersionInfo();
+            Log.Info($"[slay_the_streamer_2] Godot {godotVer["string"]}, " +
+                $"main loop type: {Engine.GetMainLoop()?.GetType().Name ?? "<null>"}");
             Log.Info($"[slay_the_streamer_2] log file location: " +
                 $"{Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)}" +
                 $"/Godot/app_userdata/Slay the Spire 2/logs/");                              // CHANGED: log path hint — DeepSeek
@@ -212,7 +216,14 @@ public static class ModEntry {
                     "[HarmonyPatch] attributes target valid methods.");
             }
 
-            // 8. Smoke A: fire-and-forget vote from this startup context (DISPOSABLE).
+            // 8. Sanity check before declaring success.                                   // OPT-9 applied: Gemma4
+            if (Voter.Default is null) {
+                Log.Error("[slay_the_streamer_2] FATAL: Voter.Default is null after wiring; " +
+                    "smoke cannot run. Aborting.");
+                return;
+            }
+
+            // 9. Smoke A: fire-and-forget vote from this startup context (DISPOSABLE).
             SmokeATask = SmokeRunner.RunSmokeA(SmokeChat);
 
             Log.Info("[slay_the_streamer_2] Init complete.");
@@ -348,7 +359,7 @@ internal static class SmokeBlockingPatch {
 }
 ```
 
-**Note:** The exact target for Smoke C (`NSettingsScreen._Ready` is a placeholder pending decompile verification) should be a benign main-menu-accessible screen distinct from `NMainMenu` so Smokes B and C don't collide on the same `_Ready`. The test plan: launch game → main menu fires Smoke B → click Settings → Settings menu fires Smoke C. If Settings menu hangs, deadlock confirmed.
+**Note:** Smoke C targets `NSettingsScreen._Ready` (verified to exist at `decompiled/sts2/MegaCrit/sts2/Core/Nodes/Screens/Settings/NSettingsScreen.cs`). Settings was chosen over alternatives like a Start-Run / Neow-load click because: (a) a 3-second hang on Settings looks like UI lag, while a 3-second hang on Start-Run looks like a real bug that might have persisted state; (b) Settings has zero gameplay implications, so any failure is unambiguously a smoke-mechanism failure rather than a "did the mod break run-start" question; (c) the smoke is validating the dispatch *mechanism*, not the realistic Plan-B context — the Neow/card-reward/etc. targets land in Plan B proper, applying the same validated mechanism. Test plan: launch game → main menu fires Smoke B → click Settings → Settings menu fires Smoke C. If Settings menu hangs, deadlock confirmed; force-quit, check logs.
 
 ## Flow
 
@@ -543,9 +554,9 @@ These were proposed by reviewers but deemed out of scope for the smoke. If the s
 
 ---
 
-## Optional Enhancements (pick what you want)
+## Optional Enhancements (post-meta-review picks)
 
-The following items were raised by reviewers but were not auto-applied. Specify by number which to incorporate:
+User selected **5, 8, 9, 10** for application. Applied inline above (search for `OPT-N applied` markers and the Smoke C target rationale paragraph). Other items remain unapplied; documented here for reference if future iterations want to revisit:
 
 1. **Project-autoload proxy class.** Pre-register a `DispatcherAutoloadProxy` Node in `project.godot` at build time; the proxy's `_Ready` instantiates the real `DispatcherAutoload`. Sidesteps the runtime-registration question entirely by using Godot's editor-blessed autoload path. — *Reviewer: GPT5.5* — *Effort: medium* — *My recommendation: lean no.* This adds a build-time dependency and a file just to avoid testing what we're explicitly trying to test. The smoke's job IS to validate runtime registration; switching to project-autoload defeats the purpose.
 

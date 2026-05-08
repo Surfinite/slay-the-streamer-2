@@ -37,9 +37,9 @@ public static class TwitchIrcParser {
 
         switch (command) {
             case "RECONNECT": return new ReconnectEvent();
-            case "PRIVMSG": return ParsePrivmsg(prefix, paramsAndTrailing, tags);
-            case "NOTICE": return ParseNotice(paramsAndTrailing, tags);
-            case "CAP": return ParseCap(paramsAndTrailing);
+            case "PRIVMSG": return ParsePrivmsg(prefix, paramsAndTrailing, tags) ?? new UnknownIrcEvent(line);
+            case "NOTICE": return ParseNotice(paramsAndTrailing, tags) ?? new UnknownIrcEvent(line);
+            case "CAP": return ParseCap(paramsAndTrailing) ?? new UnknownIrcEvent(line);
             case "USERSTATE": return ParseUserState(paramsAndTrailing, tags);
             case "ROOMSTATE": return ParseRoomState(paramsAndTrailing, tags);
             default: return new UnknownIrcEvent(line);
@@ -91,7 +91,7 @@ public static class TwitchIrcParser {
     private static IrcEvent? ParseNotice(string paramsAndTrailing, IReadOnlyDictionary<string, string> tags) {
         // "<target> :<text>" — target is `*` (server-targeted) or `#channel`.
         var colon = paramsAndTrailing.IndexOf(" :", StringComparison.Ordinal);
-        if (colon < 0) return new UnknownIrcEvent(paramsAndTrailing);
+        if (colon < 0) return null;
         var target = paramsAndTrailing.Substring(0, colon);
         var text = paramsAndTrailing.Substring(colon + 2);
         var channel = target.StartsWith("#", StringComparison.Ordinal) ? target : null;
@@ -102,13 +102,13 @@ public static class TwitchIrcParser {
     private static IrcEvent? ParseCap(string paramsAndTrailing) {
         // Format: "* ACK :cap1 cap2" or "* NAK :cap1"
         var parts = paramsAndTrailing.Split(' ', 3);
-        if (parts.Length < 3) return new UnknownIrcEvent(paramsAndTrailing);
+        if (parts.Length < 3) return null;
         var verb = parts[1];
         var caps = parts[2].TrimStart(':').Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return verb switch {
             "ACK" => new CapAckEvent(caps),
             "NAK" => new CapNakEvent(caps),
-            _ => new UnknownIrcEvent(paramsAndTrailing),
+            _ => null,
         };
     }
 
@@ -141,7 +141,8 @@ public static class TwitchIrcParser {
         var sb = new System.Text.StringBuilder(raw.Length);
         for (int i = 0; i < raw.Length; i++) {
             var c = raw[i];
-            if (c != '\\' || i + 1 >= raw.Length) { sb.Append(c); continue; }
+            if (c != '\\') { sb.Append(c); continue; }   // literal char
+            if (i + 1 >= raw.Length) continue;            // trailing backslash — drop per IRCv3 spec
             var n = raw[++i];
             sb.Append(n switch {
                 ':' => ';',
@@ -165,6 +166,7 @@ public static class TwitchIrcParser {
                 case "subscriber": case "founder": sub = true; break;
                 case "moderator": mod = true; break;
                 case "vip": vip = true; break;
+                case "broadcaster": break; // implicit mod power; no badge flag (broadcaster ≠ moderator)
             }
         }
         return (sub, mod, vip);

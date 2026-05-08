@@ -61,11 +61,15 @@ public class EnglishReceiptsTests {
 
     [Fact]
     public void CloseTwoWayTieMentionsBetween() {
-        var s = Snap(state: VoteSessionState.Closed, winner: 1, tieAmong: 2);
+        var s = Snap(
+            state: VoteSessionState.Closed, winner: 1, tieAmong: 2,
+            tallies: new Dictionary<int, int> { [0] = 5, [1] = 5, [2] = 0 });
         var text = EnglishReceipts.FormatClose(s);
         Assert.Contains("Tie", text);
         Assert.Contains("between", text);
-        Assert.Contains("Defend", text);
+        Assert.Contains("Bash", text);     // tied option 0
+        Assert.Contains("Defend", text);   // tied option 1 (winner)
+        Assert.DoesNotContain("Strike", text);   // option 2 has 0 votes — not in the tie
     }
 
     [Fact]

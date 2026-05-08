@@ -4050,7 +4050,7 @@ Tag values use IRCv3 escaping: `\:` → `;`, `\s` → space, `\\` → `\`, `\r` 
 
 - [ ] **Step 2: Run to verify failure**
 
-Expected: 7 new tests fail (no PRIVMSG handling yet).
+Expected: 9 new tests fail (no PRIVMSG handling yet).
 
 - [ ] **Step 3: Replace `TwitchIrcParser.cs`**
 

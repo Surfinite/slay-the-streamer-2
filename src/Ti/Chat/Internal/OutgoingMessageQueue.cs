@@ -27,6 +27,7 @@ public sealed class OutgoingMessageQueue : IDisposable {
     private TaskCompletionSource? _drainTcs;
     private bool _drainPending;
     private bool _disposed;
+    private readonly IDisposable _periodicTimer;
 
     public OutgoingMessageQueue(
         int capacity, TimeSpan window,
@@ -39,7 +40,7 @@ public sealed class OutgoingMessageQueue : IDisposable {
         _windowStart = clock.UtcNow;
         _tokens = capacity;
         // Tick at every window boundary (refill) and on enqueue (Pulse).
-        scheduler.SchedulePeriodic(window, RefillAndDrain);
+        _periodicTimer = scheduler.SchedulePeriodic(window, RefillAndDrain);
     }
 
     public void Enqueue(string message, OutgoingMessagePriority priority) {
@@ -83,7 +84,10 @@ public sealed class OutgoingMessageQueue : IDisposable {
             var msg = TryDequeueHighestPriority();
             if (msg is null) break;
             _tokens--;
-            _ = _send(msg);
+            var sendTask = _send(msg);
+            _ = sendTask.ContinueWith(
+                t => TiLog.Warn($"OutgoingMessageQueue: send failed: {t.Exception?.GetBaseException().Message}"),
+                System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted | System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously);
         }
         if (_high.Count + _normal.Count + _low.Count == 0) {
             _drainTcs?.TrySetResult();
@@ -100,6 +104,7 @@ public sealed class OutgoingMessageQueue : IDisposable {
 
     public void Dispose() {
         _disposed = true;
+        _periodicTimer.Dispose();
         _drainTcs?.TrySetCanceled();
     }
 }

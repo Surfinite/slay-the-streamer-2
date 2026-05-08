@@ -26,6 +26,14 @@ public class ImmediateDispatcherTests {
     [Fact]
     public async Task DrainAsyncCompletesImmediately() {
         var dispatcher = new ImmediateDispatcher();
-        await dispatcher.DrainAsync();   // never throws, never blocks
+        var task = dispatcher.DrainAsync();
+        Assert.True(task.IsCompletedSuccessfully, "DrainAsync should complete synchronously");
+        await task;   // sanity: never throws, never blocks
+    }
+
+    [Fact]
+    public void Post_NullAction_ThrowsArgumentNullException() {
+        var d = new ImmediateDispatcher();
+        Assert.Throws<ArgumentNullException>(() => d.Post(null!));
     }
 }

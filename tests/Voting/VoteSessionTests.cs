@@ -82,6 +82,24 @@ public class VoteSessionTests : VoteSessionTestBase {
     }
 
     [Fact]
+    public void Construction_RejectsLabelLongerThan200CharsAfterControlStrip() {
+        var longLabel = new string('A', 201);
+        Assert.Throws<ArgumentException>(() => StartVote(options: new[] { longLabel, "ok" }));
+    }
+
+    [Fact]
+    public void Construction_AcceptsLabelOf200CharsExactly() {
+        var label = new string('A', 200);
+        var s = StartVote(options: new[] { label, "ok" });
+        Assert.Equal(label, s.Options[0].Label);
+    }
+
+    [Fact]
+    public void Construction_RejectsLabelEmptyAfterControlStrip() {
+        Assert.Throws<ArgumentException>(() => StartVote(options: new[] { "\r\n\t", "ok" }));
+    }
+
+    [Fact]
     public void HashVoteIsCounted() {
         var s = StartVote();
         Inject("alice", "#1");

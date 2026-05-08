@@ -102,6 +102,14 @@ public class TwitchIrcParserTests {
     }
 
     [Fact]
+    public void Parse_TagValue_TrailingBackslash_DroppedPerIrcv3Spec() {
+        // Tag value: "abc\" → "abc" (trailing backslash dropped, not appended)
+        var line = "@display-name=abc\\;user-id=1 :alice!a@a PRIVMSG #foo :hi";
+        var msg = Assert.IsType<PrivmsgEvent>(TwitchIrcParser.Parse(line)!).Message;
+        Assert.Equal("abc", msg.DisplayName);
+    }
+
+    [Fact]
     public void Parse_TagValue_Unescapes_ColonSpaceBackslashCRLF() {
         // Tag value: "a\:b\sc\\d\re\nf" → "a;b c\d\re\nf" (the \r and \n are literal control chars)
         var line = "@display-name=a\\:b\\sc\\\\d\\re\\nf;user-id=1 :alice!alice@alice.tmi.twitch.tv PRIVMSG #foo :hi";

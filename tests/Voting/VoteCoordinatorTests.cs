@@ -72,6 +72,13 @@ public class VoteCoordinatorTests {
     }
 
     [Fact]
+    public void Start_WithNullOptions_ThrowsArgumentNullException() {
+        var c = NewCoord();
+        Assert.Throws<ArgumentNullException>(() =>
+            c.Start("v", null!, TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
     public void Dispose_CancelsActiveSession() {
         var c = NewCoord();
         var s = c.Start("v", new[] { "a", "b" }, TimeSpan.FromSeconds(30));

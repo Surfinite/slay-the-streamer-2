@@ -17,6 +17,7 @@ public sealed class FakeTimerScheduler : ITimerScheduler {
     }
 
     public IDisposable SchedulePeriodic(TimeSpan interval, Action callback) {
+        if (interval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(interval));
         var entry = new Entry { NextFire = _clock.UtcNow + interval, Interval = interval, Callback = callback };
         _entries.Add(entry);
         return new Handle(() => _entries.Remove(entry));

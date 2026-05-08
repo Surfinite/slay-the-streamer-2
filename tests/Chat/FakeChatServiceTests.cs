@@ -84,6 +84,35 @@ public class FakeChatServiceTests {
     }
 
     [Fact]
+    public async Task SimulateState_FiresConnectionStateChangedEvent() {
+        var c = new FakeChatService();
+        await c.ConnectAsync("ch", new ChatCredentials("u", "abc"));
+        ChatConnectionChangedEventArgs? captured = null;
+        c.ConnectionStateChanged += (_, e) => captured = e;
+        c.SimulateState(ChatConnectionState.Reconnecting);
+        Assert.NotNull(captured);
+        Assert.Equal(ChatConnectionState.ConnectedReadWrite, captured!.OldState);
+        Assert.Equal(ChatConnectionState.Reconnecting, captured.NewState);
+    }
+
+    [Fact]
+    public async Task Dispose_TransitionsToDisposedState() {
+        var c = new FakeChatService();
+        await c.ConnectAsync("ch", new ChatCredentials("u", "abc"));
+        c.Dispose();
+        Assert.Equal(ChatConnectionState.Disposed, c.State);
+    }
+
+    [Fact]
+    public void SimulateState_SameState_DoesNotFireEvent() {
+        var c = new FakeChatService();
+        var fired = 0;
+        c.ConnectionStateChanged += (_, _) => fired++;
+        c.SimulateState(ChatConnectionState.Disconnected);   // initial state is Disconnected
+        Assert.Equal(0, fired);
+    }
+
+    [Fact]
     public async Task LastMessageReceivedAtUpdatesOnInject() {
         var chat = new FakeChatService();
         await chat.ConnectAsync("foo");

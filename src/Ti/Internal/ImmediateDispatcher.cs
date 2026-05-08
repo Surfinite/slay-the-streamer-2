@@ -9,6 +9,9 @@ namespace SlayTheStreamer2.Ti.Internal;
 /// headless integration tests). Public on purpose — see Optional Enhancement #10.
 /// </summary>
 public sealed class ImmediateDispatcher : IMainThreadDispatcher {
-    public void Post(Action action) => action();
+    public void Post(Action action) {
+        ArgumentNullException.ThrowIfNull(action);
+        action();
+    }
     public Task DrainAsync() => Task.CompletedTask;
 }

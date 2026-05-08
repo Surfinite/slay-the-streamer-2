@@ -57,4 +57,12 @@ public class FakeTimerSchedulerTests {
         var scheduler = new FakeTimerScheduler(clock);
         Assert.Throws<ArgumentOutOfRangeException>(() => scheduler.Advance(TimeSpan.FromSeconds(-1)));
     }
+
+    [Fact]
+    public void SchedulePeriodic_RejectsZeroInterval() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var sched = new FakeTimerScheduler(clock);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            sched.SchedulePeriodic(TimeSpan.Zero, () => { }));
+    }
 }

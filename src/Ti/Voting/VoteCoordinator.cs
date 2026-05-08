@@ -43,6 +43,7 @@ public sealed class VoteCoordinator : IDisposable {
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt = null,
         CancellationToken ct = default) {
 
+        ArgumentNullException.ThrowIfNull(options);
         if (CurrentSession is { State: VoteSessionState.Open })
             throw new InvalidOperationException(
                 $"VoteCoordinator already has an open session ({CurrentSession.Id}); dispose/close it first.");

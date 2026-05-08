@@ -89,6 +89,26 @@ public class OutgoingMessageQueueTests {
     }
 
     [Fact]
+    public void Dispose_StopsPeriodicRefillTimer() {
+        var q = New(capacity: 1, window: TimeSpan.FromSeconds(30));
+        q.Enqueue("a", OutgoingMessagePriority.Normal);
+        _scheduler.Advance(TimeSpan.Zero);
+        Assert.Single(_sent);
+
+        q.Dispose();
+        // After dispose, the periodic refill timer should be disposed too.
+        // FakeTimerScheduler.Advance calls into all live entries; if the
+        // periodic entry was leaked, advancing the window would re-trigger
+        // RefillAndDrain. The disposed flag prevents Enqueue, but the timer
+        // could still fire harmlessly. We can't directly assert on
+        // FakeTimerScheduler internals, so assert behaviour: re-advancing
+        // shouldn't cause anything new to send.
+        var countBefore = _sent.Count;
+        _scheduler.Advance(TimeSpan.FromSeconds(60));
+        Assert.Equal(countBefore, _sent.Count);
+    }
+
+    [Fact]
     public async Task DrainAsync_FlushesPendingMessages_RespectingRateLimit() {
         var q = New(capacity: 2, window: TimeSpan.FromSeconds(30));
         q.Enqueue("a", OutgoingMessagePriority.Normal);

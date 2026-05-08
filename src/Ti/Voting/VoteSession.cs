@@ -62,8 +62,11 @@ public sealed class VoteSession : IDisposable {
         if (options is null || options.Count == 0) throw new ArgumentException("at least one option required", nameof(options));
         if (options.Count > 10) throw new ArgumentException("max 10 options (0..9)", nameof(options));
         for (int i = 0; i < options.Count; i++) {
-            if (string.IsNullOrWhiteSpace(options[i].Label))
-                throw new ArgumentException($"option {i} has empty label", nameof(options));
+            var normalized = StripControlChars(options[i].Label);
+            if (string.IsNullOrWhiteSpace(normalized))
+                throw new ArgumentException($"option {i} has empty label after control-char strip", nameof(options));
+            if (normalized.Length > 200)
+                throw new ArgumentException($"option {i} label is > 200 chars after control-char strip", nameof(options));
             if (options[i].Index != i)
                 throw new ArgumentException($"option {i} has wrong Index ({options[i].Index})", nameof(options));
         }
@@ -289,4 +292,11 @@ public sealed class VoteSession : IDisposable {
     }
 
     private static TimeSpan MaxZero(TimeSpan t) => t < TimeSpan.Zero ? TimeSpan.Zero : t;
+
+    private static string StripControlChars(string s) {
+        if (s.Length == 0) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var c in s) if (!char.IsControl(c)) sb.Append(c);
+        return sb.ToString();
+    }
 }

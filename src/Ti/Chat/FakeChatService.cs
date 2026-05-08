@@ -26,7 +26,7 @@ public sealed class FakeChatService : IChatService {
     public event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;
 
     /// <summary>Outgoing messages recorded for assertions.</summary>
-    public IReadOnlyList<SentMessage> SentMessages => _sent;
+    public IReadOnlyList<SentMessage> SentMessages => _sent.AsReadOnly();
 
     public Task ConnectAsync(string channel, ChatCredentials? creds = null, CancellationToken ct = default) {
         SetState(creds is null ? ChatConnectionState.ConnectedReadOnly : ChatConnectionState.ConnectedReadWrite);

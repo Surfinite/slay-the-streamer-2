@@ -1,7 +1,7 @@
 # TI layer design — IRC + vote engine boundary (v2)
 
-**Date**: 2026-05-08 (v2: 2026-05-08, post-meta-review; v2.1: 2026-05-08, optional enhancements 1/6/9/10/11/12/13/14/15 folded in; v2.2: 2026-05-08, rolled back IVoteReceiptFormatter / ITiLogger interfaces to static helpers and removed heartbeat reconnect per author judgment that two of those were borderline-YAGNI for v0.1 and the third defended an unverified failure mode)
-**Status**: Draft v2.2 — extraction-friendly static helpers (`TiLog`, `EnglishReceipts`) replace the constructor-injected interfaces from v2.1.
+**Date**: 2026-05-08 (v2: 2026-05-08, post-meta-review; v2.1: 2026-05-08, optional enhancements 1/6/9/10/11/12/13/14/15 folded in; v2.2: 2026-05-08, rolled back IVoteReceiptFormatter / ITiLogger interfaces to static helpers and removed heartbeat reconnect; v2.3: 2026-05-08, post-plan-review fixes — adaptive cadence floor bumped 5s→7s, periodic dedup keys on tally state not rendered text, parser stays pure with `MinValue` ReceivedAt sentinel)
+**Status**: Draft v2.3 — three real bugs caught during plan review and pushed back into the spec.
 **Scope**: the Twitch-integration layer of `slay-the-streamer-2`. Defines the boundary between the reusable chat-IO machinery and the StS2-specific vote bindings.
 **Predecessor**: [`2026-05-08-ti-layer-design.md`](./2026-05-08-ti-layer-design.md). See [`META-REVIEW-2026-05-08-ti-layer-design.md`](./META-REVIEW-2026-05-08-ti-layer-design.md) for the rationale behind every `<!-- CHANGED -->` mark below.
 
@@ -426,7 +426,7 @@ If `IChatService.CanSend == false` at `Start` time (anonymous justinfan or disco
 ### Receipts (default English formatter)
 
 - Open: `"Vote: <label>! Type 0, 1 or 2 — <duration>s left."` (compact labels variant: `"Vote: <label>! 0 <a>, 1 <b>, 2 <c> — <duration>s."`). <!-- CHANGED: 0-indexed + compact labels — R4 + 0-indexed -->
-- Periodic (cadence per `VoteReceiptPolicy.PeriodicTallyEvery`; default adaptive `max(5s, duration/5)` so a 30s vote ticks every 6s, a 60s vote every 12s, a 15s vote every 5s): `"Vote: 0=12 1=8 2=3, <remaining>s left."` Skipped if all tallies are zero (avoids spam). Skipped if identical to the previous tally message (avoids redundant chat noise). <!-- CHANGED: adaptive cadence — Optional Enhancement #1; identical-tally skip — R5 -->
+- Periodic (cadence per `VoteReceiptPolicy.PeriodicTallyEvery`; default adaptive `max(7s, duration/5)` so a 15s vote ticks every 7s, a 30s vote every 7s, a 60s vote every 12s — the 7s floor avoids the periodic timer firing simultaneously with the close timer for short votes): `"Vote: 0=12 1=8 2=3, <remaining>s left."` Skipped if all tallies are zero (avoids spam). Skipped if identical to the previous tally **state** — comparison is on the tally dict, not the rendered text, since the rendered text contains "<remaining>s left" and would always differ. A `TimeRemaining < 1s` guard also short-circuits the periodic if a custom fixed cadence happens to coincide with the close instant. <!-- CHANGED: adaptive cadence — Optional Enhancement #1; identical-tally skip — R5; v2.3 — 7s floor and tally-state dedup after author-review caught the rendered-text bug -->
 - Close (winner): `"Chat chose 1: <label>."`  <!-- CHANGED: "chose" not "picked" — R3 -->
 - Close (2-way tie): `"Tie! Chat chose 1: <label> randomly between <k> tied options."` <!-- CHANGED: shorter — R3 -->
 - Close (3+ way tie): `"<k>-way tie! Chat chose 1: <label> randomly."` <!-- CHANGED: distinct format for 3+ ties — Optional Enhancement #13 -->
@@ -435,12 +435,12 @@ If `IChatService.CanSend == false` at `Start` time (anonymous justinfan or disco
 
 ### Rate-limit math
 
-With adaptive cadence (`max(5s, duration/5)`):
-- 15s vote: cadence = 5s → 1 open + ~2 periodic + 1 close = 4 messages.
-- 30s vote: cadence = 6s → 1 + ~4 + 1 = 6 messages.
-- 60s vote: cadence = 12s → 1 + ~4 + 1 = 6 messages.
+With adaptive cadence (`max(7s, duration/5)`):
+- 15s vote: cadence = 7s → 1 open + up to 2 periodic + 1 close = up to 4 messages.
+- 30s vote: cadence = 7s → 1 + up to 4 periodic + 1 = up to 6 messages.
+- 60s vote: cadence = 12s → 1 + up to 4 periodic + 1 = up to 6 messages.
 
-Worst-case back-to-back 15s votes (event → card reward → shop): 3 votes × 4 messages each = 12 messages in ~45 seconds. Well under both 90/30s and 18/30s limits. <!-- CHANGED: math shown — R6; updated for adaptive cadence — Optional Enhancement #1 -->
+Worst-case back-to-back 15s votes (event → card reward → shop): 3 votes × 4 messages each = 12 messages in ~45 seconds. Well under both 90/30s and 18/30s limits. <!-- CHANGED: math shown — R6; updated for adaptive cadence — Optional Enhancement #1; v2.3 cadence floor 5→7 -->
 
 The rate limiter inside `TwitchIrcChatService` enforces the ceiling regardless; this section is just to demonstrate that the default policy doesn't approach the limit.
 

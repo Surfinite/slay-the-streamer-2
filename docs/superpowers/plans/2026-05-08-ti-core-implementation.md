@@ -1558,7 +1558,7 @@ namespace SlayTheStreamer2.Ti.Voting;
 
 /// <summary>
 /// Controls receipt cadence/announcements.
-/// PeriodicTallyEvery semantics: null = adaptive (max(5s, duration/5));
+/// PeriodicTallyEvery semantics: null = adaptive (max(7s, duration/5));
 /// TimeSpan.Zero = no periodic tally; positive value = fixed cadence.
 /// </summary>
 public sealed record VoteReceiptPolicy(
@@ -2785,7 +2785,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ### Task 5.5: Periodic tally timer + adaptive cadence + receipt wiring (TDD)
 
-Open receipt at start; periodic tally at adaptive cadence (`max(5s, duration/5)` when policy is null); close receipt at end. Receipts sent via `IChatService.SendMessageAsync` at the appropriate priority. (Spec §Receipts; Optional Enhancement #1.)
+Open receipt at start; periodic tally at adaptive cadence (`max(7s, duration/5)` when policy is null); close receipt at end. Receipts sent via `IChatService.SendMessageAsync` at the appropriate priority. (Spec §Receipts; Optional Enhancement #1.)
 
 **Files:**
 - Modify: `src/Ti/Voting/VoteSession.cs`
@@ -2803,18 +2803,18 @@ Open receipt at start; periodic tally at adaptive cadence (`max(5s, duration/5)`
     }
 
     [Fact]
-    public void PeriodicTally_AdaptiveCadence_30sVote_Fires_ApproxEvery6s() {
-        var s = StartVote(duration: TimeSpan.FromSeconds(30));   // adaptive: max(5, 30/5) = 6
+    public void PeriodicTally_AdaptiveCadence_30sVote_Fires_ApproxEvery7s() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(30));   // adaptive: max(7, 30/5) = 7
         Inject("alice", "#0");
         // Initial open receipt is at index 0.
         Assert.Single(Chat.SentMessages);
 
-        Scheduler.Advance(TimeSpan.FromSeconds(6));
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
         Assert.Equal(2, Chat.SentMessages.Count);
         Assert.Equal(OutgoingMessagePriority.Low, Chat.SentMessages[1].Priority);
         Assert.Contains("0=1", Chat.SentMessages[1].Text);
 
-        Scheduler.Advance(TimeSpan.FromSeconds(6));
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
         Assert.Equal(3, Chat.SentMessages.Count);
     }
 
@@ -2831,9 +2831,9 @@ Open receipt at start; periodic tally at adaptive cadence (`max(5s, duration/5)`
 
     [Fact]
     public void PeriodicTally_IsSkippedWhenAllZero() {
-        var s = StartVote(duration: TimeSpan.FromSeconds(30));   // adaptive 6s
+        var s = StartVote(duration: TimeSpan.FromSeconds(30));   // adaptive 7s
         // No votes injected.
-        Scheduler.Advance(TimeSpan.FromSeconds(6));
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
         Assert.Single(Chat.SentMessages);  // still just the open receipt — no periodic
     }
 
@@ -2905,15 +2905,19 @@ After `_chat.MessageReceived += OnChatMessage;` (in the constructor), add:
 Add the field:
 ```csharp
     private readonly IDisposable? _periodicTimer;
-    private string? _lastPeriodicSent;
+    private string? _lastPeriodicTallyKey;   // dedup key derived from tally state, not rendered text
 ```
 
 Add helper methods (above `private static TimeSpan MaxZero`):
 ```csharp
     private static TimeSpan ResolveCadence(TimeSpan? configured, TimeSpan duration) {
         if (configured is null) {
-            // adaptive: max(5s, duration/5)
-            var adaptive = TimeSpan.FromSeconds(Math.Max(5.0, duration.TotalSeconds / 5.0));
+            // adaptive: max(7s, duration/5). The 7s floor (rather than 5s)
+            // avoids the periodic timer firing at the same instant as the
+            // close timer for very short votes — for a 5s vote, the periodic
+            // timer at t=7 fires after close has already disposed it (no-op),
+            // sidestepping a brittle scheduler-ordering dependency.
+            var adaptive = TimeSpan.FromSeconds(Math.Max(7.0, duration.TotalSeconds / 5.0));
             return adaptive;
         }
         return configured.Value;   // TimeSpan.Zero disables
@@ -2921,10 +2925,19 @@ Add helper methods (above `private static TimeSpan MaxZero`):
 
     private void SendPeriodicReceipt() {
         if (_state != VoteSessionState.Open) return;
+        // Belt-and-braces guard for the case where a custom fixed cadence
+        // matches the vote duration exactly and the periodic timer fires
+        // before the close timer at the same instant. The 7s adaptive floor
+        // handles the auto case; this handles any custom cadence corner.
+        if (TimeRemaining < TimeSpan.FromSeconds(1)) return;
         if (_tallies.Values.All(c => c == 0)) return;            // skip when all zero
+        // Dedup on the tally STATE, not the rendered text. The rendered text
+        // contains "<remaining>s left" which differs every tick even when the
+        // tallies are identical, so a text-equality dedup would never trigger.
+        var tallyKey = string.Join(",", _tallies.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
+        if (tallyKey == _lastPeriodicTallyKey) return;
+        _lastPeriodicTallyKey = tallyKey;
         var text = FormatReceipt(ReceiptKind.PeriodicTally);
-        if (text == _lastPeriodicSent) return;                   // skip identical
-        _lastPeriodicSent = text;
         _ = _chat.SendMessageAsync(text, OutgoingMessagePriority.Low);
     }
 
@@ -2990,10 +3003,13 @@ git commit -m @'
 plan-a/5.5: VoteSession periodic tally + receipt wiring + adaptive cadence
 
 8 new tests covering: open receipt at Normal priority; adaptive cadence
-max(5s, duration/5); fixed cadence honoured; periodic skipped when all
-tallies zero; periodic skipped when identical to previous; Silent policy
-suppresses everything; close receipt at High priority; Cancel skips
-close receipt. Adaptive cadence is Optional Enhancement #1.
+max(7s, duration/5); fixed cadence honoured; periodic skipped when all
+tallies zero; periodic skipped when identical-by-tally-state (compared
+on the tally dict, not the rendered text — text contains time-remaining
+and would always differ); Silent policy suppresses everything; close
+receipt at High priority; Cancel skips close receipt. Adaptive cadence
+is Optional Enhancement #1; 7s floor avoids periodic-vs-close timer
+collision on short votes.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 '@
@@ -3232,11 +3248,25 @@ Subscribe to `IChatService.ConnectionStateChanged`. Accumulate total offline tim
         Assert.Contains("offline", closeReceipt);
         Assert.Contains("8s", closeReceipt);
     }
+
+    [Fact]
+    public void DisconnectGap_AccumulatesFromStart_WhenChatNotConnectedAtStart() {
+        // Override the base class's auto-Connect so the vote opens while chat
+        // is in a non-online state. Documents the IsChatOnline() contract:
+        // Connecting / Reconnecting / Disconnected all count as offline.
+        Chat.SimulateState(ChatConnectionState.Connecting);
+        var s = StartVote(duration: TimeSpan.FromSeconds(20));
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        Chat.SimulateState(ChatConnectionState.ConnectedReadWrite);
+        Scheduler.Advance(TimeSpan.FromSeconds(5));
+        s.CloseNow();
+        Assert.Equal(TimeSpan.FromSeconds(5), s.Snapshot().DisconnectGap);
+    }
 ```
 
 - [ ] **Step 2: Run to verify failures**
 
-Expected: 4 new tests fail.
+Expected: 5 new tests fail.
 
 - [ ] **Step 3: Add disconnect-tracking to `VoteSession.cs`**
 
@@ -3334,7 +3364,7 @@ Same unsubscribe in `Cancel`:
 - [ ] **Step 4: Run tests to verify pass**
 
 Run: `dotnet test tests/slay_the_streamer_2.tests.csproj --filter "FullyQualifiedName~VoteSessionTests"`
-Expected: `Passed: 51, Failed: 0`.
+Expected: `Passed: 52, Failed: 0`.
 
 - [ ] **Step 5: Commit**
 
@@ -3347,7 +3377,8 @@ VoteSession subscribes to ChatService.ConnectionStateChanged and
 accumulates offline time. Snapshot.DisconnectGap reflects total time
 chat was offline during the vote (including any in-progress gap when
 sampled mid-vote). Close receipt mentions the gap when > zero.
-4 new tests.
+5 new tests; the last one documents the IsChatOnline contract by
+opening a vote while chat is in Connecting state.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 '@
@@ -3440,7 +3471,7 @@ Replace `OnChatMessage` body:
 - [ ] **Step 4: Run tests to verify pass**
 
 Run: `dotnet test tests/slay_the_streamer_2.tests.csproj --filter "FullyQualifiedName~VoteSessionTests"`
-Expected: `Passed: 53, Failed: 0`.
+Expected: `Passed: 54, Failed: 0`.
 
 - [ ] **Step 5: Commit**
 
@@ -3982,6 +4013,25 @@ Tag values use IRCv3 escaping: `\:` → `;`, `\s` → space, `\\` → `\`, `\r` 
     }
 
     [Fact]
+    public void Parse_Privmsg_BadgesAreCaseSensitive_LowercaseOnly() {
+        // Twitch's IRC tag values are always lowercased badge names; this asserts
+        // we don't accidentally match mixed-case variants. Documents the contract.
+        var line = "@badges=Subscriber/12;user-id=1 :alice!alice@alice.tmi.twitch.tv PRIVMSG #foo :hi";
+        var msg = Assert.IsType<PrivmsgEvent>(TwitchIrcParser.Parse(line)!).Message;
+        Assert.False(msg.IsSubscriber);
+    }
+
+    [Fact]
+    public void Parse_Privmsg_ReceivedAtIsMinValue_WhenTmiSentTsAbsent() {
+        // Parser is a pure function from string to data — no clock dependency.
+        // TwitchIrcChatService (Plan B) stamps a real timestamp using its
+        // injected IClock. MinValue is the "stamp me later" sentinel.
+        var line = ":alice!alice@alice.tmi.twitch.tv PRIVMSG #foo :hi";
+        var msg = Assert.IsType<PrivmsgEvent>(TwitchIrcParser.Parse(line)!).Message;
+        Assert.Equal(DateTimeOffset.MinValue, msg.ReceivedAt);
+    }
+
+    [Fact]
     public void Parse_Privmsg_ReceivedAt_FromTmiSentTs_WhenPresent() {
         var line = "@tmi-sent-ts=1715169600000;user-id=1 :alice!alice@alice.tmi.twitch.tv PRIVMSG #foo :hi";
         var msg = Assert.IsType<PrivmsgEvent>(TwitchIrcParser.Parse(line)!).Message;
@@ -4073,7 +4123,11 @@ public static class TwitchIrcParser {
 
         var (sub, mod, vip) = ParseBadges(tags.GetValueOrDefault("badges", ""));
 
-        DateTimeOffset receivedAt = DateTimeOffset.UtcNow;
+        // Parser stays a pure function; if `tmi-sent-ts` is absent, leave
+        // ReceivedAt = DateTimeOffset.MinValue and let TwitchIrcChatService
+        // (Plan B) stamp it from its injected IClock. The parser doesn't need
+        // a clock dependency.
+        DateTimeOffset receivedAt = DateTimeOffset.MinValue;
         if (tags.TryGetValue("tmi-sent-ts", out var ts) && long.TryParse(ts, out var ms)) {
             receivedAt = DateTimeOffset.FromUnixTimeMilliseconds(ms);
         }
@@ -4139,7 +4193,7 @@ public static class TwitchIrcParser {
 - [ ] **Step 4: Run tests to verify pass**
 
 Run: `dotnet test tests/slay_the_streamer_2.tests.csproj --filter "FullyQualifiedName~TwitchIrcParserTests"`
-Expected: `Passed: 11, Failed: 0`.
+Expected: `Passed: 13, Failed: 0`.
 
 - [ ] **Step 5: Commit**
 
@@ -4148,11 +4202,13 @@ git add src/Ti/Chat/Internal/TwitchIrcParser.cs tests/Chat/Internal/TwitchIrcPar
 git commit -m @'
 plan-a/7.2: TwitchIrcParser PRIVMSG + tag parsing + IRCv3 unescaping
 
-7 new tests: extracts login/text from prefix and trailing; user-id +
+9 new tests: extracts login/text from prefix and trailing; user-id +
 display-name from tags; UserId null + DisplayName falls back to login
-when untagged; subscriber/moderator/vip flags from badges; ReceivedAt
-from tmi-sent-ts when present; IRCv3 \: \s \\ \r \n unescaping in tag
-values.
+when untagged; subscriber/moderator/vip flags from badges; badge case
+sensitivity contract (Subscriber-with-capital-S does NOT set the flag);
+ReceivedAt from tmi-sent-ts when present; ReceivedAt = MinValue when
+absent (parser stays pure; TwitchIrcChatService stamps from its clock
+in Plan B); IRCv3 \: \s \\ \r \n unescaping in tag values.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 '@
@@ -4286,7 +4342,7 @@ Add helper methods:
 - [ ] **Step 4: Run tests to verify pass**
 
 Run: `dotnet test tests/slay_the_streamer_2.tests.csproj --filter "FullyQualifiedName~TwitchIrcParserTests"`
-Expected: `Passed: 19, Failed: 0`.
+Expected: `Passed: 21, Failed: 0`.
 
 - [ ] **Step 5: Commit**
 
@@ -4354,26 +4410,28 @@ public class OutgoingMessageQueueTests {
     }
 
     [Fact]
-    public async Task SingleEnqueue_SendsImmediately_WhenTokensAvailable() {
+    public void SingleEnqueue_SendsAfterScheduledDrain_WhenTokensAvailable() {
         var q = New();
-        await q.EnqueueAsync("hi", OutgoingMessagePriority.Normal);
-        _scheduler.Advance(TimeSpan.Zero);
+        q.Enqueue("hi", OutgoingMessagePriority.Normal);
+        _scheduler.Advance(TimeSpan.Zero);   // fires the deferred drain scheduled by Enqueue
         Assert.Single(_sent);
         Assert.Equal("hi", _sent[0]);
     }
 
     [Fact]
-    public async Task PriorityOrder_HighBeforeNormalBeforeLow() {
+    public void PriorityOrder_HighBeforeNormalBeforeLow() {
         var q = New(capacity: 1, window: TimeSpan.FromSeconds(30));
-        // Burst: 3 messages enqueued at once (low/normal/high)
-        await q.EnqueueAsync("low",  OutgoingMessagePriority.Low);
-        await q.EnqueueAsync("norm", OutgoingMessagePriority.Normal);
-        await q.EnqueueAsync("high", OutgoingMessagePriority.High);
+        // Burst: 3 messages enqueued before any drain runs (deferred drain is the
+        // key — Enqueue doesn't drain synchronously, so all three queue first and
+        // the priority pick happens against the full set).
+        q.Enqueue("low",  OutgoingMessagePriority.Low);
+        q.Enqueue("norm", OutgoingMessagePriority.Normal);
+        q.Enqueue("high", OutgoingMessagePriority.High);
         _scheduler.Advance(TimeSpan.Zero);
         Assert.Single(_sent);
         Assert.Equal("high", _sent[0]);     // first token spent on highest-priority
 
-        _scheduler.Advance(TimeSpan.FromSeconds(30));   // window resets, 1 more token
+        _scheduler.Advance(TimeSpan.FromSeconds(30));   // window refills, 1 more token
         Assert.Equal(2, _sent.Count);
         Assert.Equal("norm", _sent[1]);
 
@@ -4383,26 +4441,25 @@ public class OutgoingMessageQueueTests {
     }
 
     [Fact]
-    public async Task LowCoalescesStale_WhenAnotherLowEnqueued() {
-        var q = New(capacity: 0, window: TimeSpan.FromSeconds(30));   // 0 tokens — nothing sends yet
-        await q.EnqueueAsync("tally1", OutgoingMessagePriority.Low);
-        await q.EnqueueAsync("tally2", OutgoingMessagePriority.Low);
-        await q.EnqueueAsync("tally3", OutgoingMessagePriority.Low);
-        // Now allow one send.
-        _clock.Advance(TimeSpan.FromSeconds(30));
-        _scheduler.Advance(TimeSpan.Zero);
+    public void LowCoalescesStale_WhenAnotherLowEnqueued() {
+        var q = New(capacity: 1, window: TimeSpan.FromSeconds(30));
+        // Three Low enqueues with no drain in between → first two coalesce away.
+        q.Enqueue("tally1", OutgoingMessagePriority.Low);
+        q.Enqueue("tally2", OutgoingMessagePriority.Low);
+        q.Enqueue("tally3", OutgoingMessagePriority.Low);
+        _scheduler.Advance(TimeSpan.Zero);   // deferred drain fires
         Assert.Single(_sent);
-        Assert.Equal("tally3", _sent[0]);   // stale tally1, tally2 dropped; only latest-Low survives
+        Assert.Equal("tally3", _sent[0]);   // only the latest-Low survives
     }
 
     [Fact]
-    public async Task RateLimit_NeverExceedsCapacityPerWindow() {
+    public void RateLimit_NeverExceedsCapacityPerWindow() {
         var q = New(capacity: 3, window: TimeSpan.FromSeconds(30));
         for (int i = 0; i < 10; i++)
-            await q.EnqueueAsync($"m{i}", OutgoingMessagePriority.Normal);
+            q.Enqueue($"m{i}", OutgoingMessagePriority.Normal);
 
         _scheduler.Advance(TimeSpan.FromSeconds(0));
-        Assert.Equal(3, _sent.Count);   // capacity exhausted
+        Assert.Equal(3, _sent.Count);   // capacity exhausted on first drain
 
         _scheduler.Advance(TimeSpan.FromSeconds(30));
         Assert.Equal(6, _sent.Count);
@@ -4417,9 +4474,9 @@ public class OutgoingMessageQueueTests {
     [Fact]
     public async Task DrainAsync_FlushesPendingMessages_RespectingRateLimit() {
         var q = New(capacity: 2, window: TimeSpan.FromSeconds(30));
-        await q.EnqueueAsync("a", OutgoingMessagePriority.Normal);
-        await q.EnqueueAsync("b", OutgoingMessagePriority.Normal);
-        await q.EnqueueAsync("c", OutgoingMessagePriority.Normal);
+        q.Enqueue("a", OutgoingMessagePriority.Normal);
+        q.Enqueue("b", OutgoingMessagePriority.Normal);
+        q.Enqueue("c", OutgoingMessagePriority.Normal);
         _scheduler.Advance(TimeSpan.Zero);
         Assert.Equal(2, _sent.Count);
 
@@ -4466,6 +4523,7 @@ public sealed class OutgoingMessageQueue : IDisposable {
     private DateTimeOffset _windowStart;
     private int _tokens;
     private TaskCompletionSource? _drainTcs;
+    private bool _drainPending;
     private bool _disposed;
 
     public OutgoingMessageQueue(
@@ -4482,15 +4540,27 @@ public sealed class OutgoingMessageQueue : IDisposable {
         scheduler.SchedulePeriodic(window, RefillAndDrain);
     }
 
-    public Task EnqueueAsync(string message, OutgoingMessagePriority priority) {
-        if (_disposed) return Task.CompletedTask;
+    public void Enqueue(string message, OutgoingMessagePriority priority) {
+        if (_disposed) return;
         switch (priority) {
             case OutgoingMessagePriority.High:   _high.Enqueue(message); break;
             case OutgoingMessagePriority.Normal: _normal.Enqueue(message); break;
             case OutgoingMessagePriority.Low:    _low.Clear(); _low.Enqueue(message); break;
         }
+        // Defer drain to the next scheduler tick rather than draining synchronously.
+        // This lets a burst of enqueues coalesce and order by priority before any
+        // send happens — close-receipt-of-vote-N firing back-to-back with open-
+        // receipt-of-vote-N+1 from a Closed handler must produce close-then-open
+        // regardless of code-order, which sync-drain breaks.
+        if (!_drainPending) {
+            _drainPending = true;
+            _scheduler.Schedule(TimeSpan.Zero, RunDeferredDrain);
+        }
+    }
+
+    private void RunDeferredDrain() {
+        _drainPending = false;
         Drain();
-        return Task.CompletedTask;
     }
 
     public Task DrainAsync() {
@@ -4554,12 +4624,12 @@ Expected: all tests across all phases passing. Roughly:
 | 2 | `ChatMessageTests` | 2 |
 | 3 | `FakeChatServiceTests` | 8 |
 | 4 | `EnglishReceiptsTests` | 7 |
-| 5 | `VoteSessionTests` | 53 |
+| 5 | `VoteSessionTests` | 54 |
 | 6 | `VoteCoordinatorTests` | 7 |
 | 6 | `VoterTests` | 2 |
-| 7 | `TwitchIrcParserTests` | 19 |
+| 7 | `TwitchIrcParserTests` | 21 |
 | 8 | `OutgoingMessageQueueTests` | 5 |
-| **Total** | | **125** |
+| **Total** | | **128** |
 
 Actual count may shift by a few as you discover edge cases worth covering, but the order of magnitude is right.
 
@@ -4570,11 +4640,14 @@ git add src/Ti/Chat/Internal/OutgoingMessageQueue.cs tests/Chat/Internal/Outgoin
 git commit -m @'
 plan-a/8.1: OutgoingMessageQueue — token bucket + priority + Low coalescing
 
-5 tests covering: single enqueue with available tokens sends immediately;
-priority ordering (High > Normal > Low) when bursting; new Low entries
-evict older Low (stale-tally coalescing); rate limit never exceeds
-capacity per window across many enqueues; DrainAsync waits for pending
-sends respecting the rate limit.
+5 tests covering: single enqueue + scheduled drain sends; priority
+ordering (High > Normal > Low) holds across an enqueue burst because
+drain is deferred to the scheduler tick, not synchronous; new Low
+entries evict older Low (stale-tally coalescing); rate limit never
+exceeds capacity per window across many enqueues; DrainAsync waits for
+pending sends respecting the rate limit. Synchronous-drain would have
+broken priority ordering on bursts; deferred drain via
+scheduler.Schedule(TimeSpan.Zero) is the fix.
 
 Plan A: full TI core library with deterministic test coverage. Plan B
 will build TwitchIrcChatService on top of this + TwitchIrcParser.

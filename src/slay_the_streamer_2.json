@@ -1,0 +1,11 @@
+{
+    "id": "slay_the_streamer_2",
+    "name": "Slay the Streamer 2",
+    "author": "Surfinite",
+    "description": "Twitch chat votes on the streamer's choices. Inspired by Tempus's StS1 mod of the same name.",
+    "version": "0.1.0",
+    "has_pck": false,
+    "has_dll": true,
+    "dependencies": [],
+    "affects_gameplay": true
+}

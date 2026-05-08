@@ -25,3 +25,6 @@ Thumbs.db
 
 # Claude Code per-user state (commands/skills/shared settings DO get committed)
 .claude/settings.local.json
+
+# sts2.dll is copied per-build from the game install; never commit it
+src/sts2.dll

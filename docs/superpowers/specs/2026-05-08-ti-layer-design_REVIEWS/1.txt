@@ -1,0 +1,43 @@
+1. **One-line verdict** — A highly disciplined, professionally architected design that prioritizes long-term maintainability and "liftability" through a clear separation of concerns, though it accepts significant implementation risk by eschewing standard libraries.
+
+2. **What's good**
+* **The "Seam" Strategy**: The separation between `Ti/` and `Game/` is excellent. Using `IChatService` as the abstraction layer for extraction is the correct move.
+* **Testing Infrastructure**: The inclusion of `FakeChatService`, `FakeClock`, and `IClock` shows high maturity. This design allows for a "headless" test suite that can validate complex race conditions (like mid-vote disconnects) without a single network packet or Godot window.
+* **Lag Mitigation**: The `VoteReceiptPolicy` (open $\rightarrow$ periodic $\rightarrow$ close) is a brilliant UX solution to the specific problem of streamer-to-viewer video latency. It transforms a technical limitation into a functional feature.
+* **Fail-Fast Concurrency**: Using an exception in `Voter.Start` if a session is already active is much better than silent failure or queuing, as it forces the mod developer to respect the "one-vote" invariant.
+
+3. **Concerns & risks**
+* **[High] Handcrafted IRC implementation**: While the goal is "zero-dep extraction," writing a custom TLS-capable IRC client is a high-risk endeavor. You are not just parsing text; you are managing a stateful TCP/TLS connection, handling PING/PONG heartbeats, and negotiating CAP REQs. A bug here won't just break your mod; it could cause connection instability for the user or failed authentication.
+* **[Medium] The "Infinite Retry" Loop**: As noted in your open items, an incorrect OAuth token will result in an infinite exponential backoff loop. In a modded environment, this can lead to "silent failure" where the user thinks the mod is working, but the background task is just spinning and flooding logs indefinitely.
+* **[Medium] Tight Dispatcher Coupling**: While the spec says `Ti/*` can reference Godot, the `GameThreadDispatcher` is currently hard-coded to `CallDeferred`. If a future developer wants to lift `Ti/*` into a non-Godot environment (e.g., a CLI tool for Twitch stats or a different engine), the "lift" will fail at the dispatcher.
+* **[Low] Parser Rigidity**: The `#N` strictness is a valid trade-off, but in the "chaos" of Twitch chat, users are prone to typos. If a user types `!1` or `1`, they may feel the mod is "broken" rather than "strict."
+
+4. **Suggested changes**
+* **Implement a "Retry Budget"**: In `ConnectionRetryPolicy`, add a `MaxRetryAttempts` or a `MaxRetryDuration`. After the budget is exhausted, the service should move to a `Failed` state and stop attempting to reconnect, allowing the `ModEntry` to log a definitive "Authentication Failed" error.
+* **Abstract the Dispatcher**: Change `GameThreadDispatcher` from a concrete class to an `IDispatcher` interface. 
+    * `Ti/Internal/IDispatcher.cs`
+    * `Ti/Internal/GodotDispatcher.cs` (implements `CallDeferred`)
+    * This makes the "lift" to a non-Godot project a trivial task of providing a different implementation.
+* **Introduce "Soft" Command Parsing**: Instead of a single Regex, consider a priority-based parser. 
+    1. Try `#N` (Highest priority, most certain).
+    2. Try `!N` (Secondary, common convention).
+    3. This maintains your "low false-positive" goal while increasing user satisfaction.
+
+5. **Alternatives**
+* **The "Source-Included" Library**: Instead of writing a 200 LOC client from scratch, consider finding a "micro-IRC" library that is distributed as single-file source code. This allows you to "vendor" the code into your `Ti/Chat/` folder. You get the "zero-NuGet-dependency" benefit for extraction, but you benefit from someone else's edge-case handling for TLS and IRC protocol nuances.
+
+6. **Additions**
+* **CancellationToken support in `Voter.Start`**: The `Voter.Start` method should accept a `CancellationToken`. If the game enters a loading screen or the user quits, the `Game/` layer should be able to trigger a cancellation that immediately closes the session and cleans up the `Voter.CurrentSession`.
+* **`VoteSession.TallySnapshot`**: Add a property that returns the current tally as a plain object/dictionary. This allows UI elements (like the Overlay) to perform "diffing" or animations more easily without subscribing to every single change.
+
+7. **Removals**
+* **None**: The scope is well-defined, and the "Non-goals" section successfully prevents scope creep.
+
+8. **Minor / nits**
+* **Namespace Clarity**: `Ti` is a clever nod to `ststwitch`, but in a large C# project, `Ti` can look like a typo or a generic "Type Information" prefix. `TwitchIntegration` is more explicit, though `Ti` is acceptable if the team remains consistent.
+* **Log Leveling**: Ensure that `TallyChanged` events are not logged at `Info` level, or you will flood the user's logs during a high-activity vote.
+
+9. **Assumptions you're making**
+* **Assumption 1**: I am assuming that "extracting the layer" implies the destination project will also be a Godot-based StS2 mod. If the goal is to lift this to a *non-Godot* tool, the `Ti/Ui` and `GameThreadDispatcher` will need to be treated as optional/conditional components.
+* **Assumption 2**: I am assuming that `MegaCrit.Sts2.Core.Logging.Log` is available as a static singleton or via a simple static call that doesn't require complex dependency injection, which makes the `Ti/` layer's dependency on the game very "shallow."
+* **Assumption 3**: I am assuming that the `TwitchIrcParser` is a "pure function" (as stated in the architecture) and does not rely on any external state, which is critical for the unit testing strategy mentioned.

@@ -1,0 +1,52 @@
+Here is the critical evaluation of the TI layer design spec, based solely on the provided context document.
+
+### 1. One-line verdict
+The architecture successfully delineates the game logic from the Twitch integration, but the extraction boundary is currently compromised by explicit Godot threading dependencies, and the handcrafted IRC approach underestimates TCP stream realities.
+
+### 2. What's good
+*   **Two-tier division (`ChatService` vs. `VoteSession`):** This is a highly effective seam. Stripping the semantics of "voting" out of the raw chat stream prevents code entanglement and guarantees reusability for alternative mods.
+*   **Latest-wins semantic:** One vote per viewer overriding their previous vote is the optimal UX for live chat, accommodating typos and shifting opinions naturally.
+*   **Event/Async duality:** Supplying both `AwaitWinnerAsync` and `event Closed` prevents the game-side codebase from twisting itself to fit your API. 
+*   **Determinism via DI:** Testing via `FakeChatService` and `FakeClock` with injected `Random` is an excellent architecture choice that will save hours of painful thread-timing debugging.
+*   **Resolution policy clarity:** The strategy for ties and zero-vote scenarios (uniform random + transparent chat receipt) is fair and bulletproof.
+
+### 3. Concerns & risks
+*   **Severity High: Dependency Contradiction / Leaky Abstraction.** 
+    Under *Architecture -> Allowed dependencies*, the spec states: *"Godot (in `Ti/Ui/*` only)"*. However, under *Threading*, it states: *"`GameThreadDispatcher` queues actions and flushes them via Godot's `CallDeferred`."* If `Ti/Internal` references Godot's `CallDeferred`, then the core non-UI layer depends on Godot. This poisons the extraction seam. 
+*   **Severity High: Handcrafted IRC & TCP Stream Fragmentation.** 
+    The spec assumes: *"Lines are CRLF-delimited; pass each through TwitchIrcParser"*. Because IRC runs over TCP, `Receive` calls do not guarantee you get complete lines. One read might slice a message perfectly in half. Without an explicit buffer (like a `StreamReader` or `PipeReader`), `TwitchIrcParser` will crash or drop messages.
+*   **Severity Medium: Godot Main Thread Event Storms.** 
+    Routing every IRC read and internal timer tick through `GameThreadDispatcher` using Godot's `CallDeferred` per-message risks frame stuttering. If a popular streamer receives 150 messages in 2 seconds, firing 150 independent `CallDeferred` closures could saturate Godot's dispatch queue.
+*   **Severity Medium: Static Singleton (`Voter.CurrentSession`).** 
+    Using a static property to enforce the "strictly one vote" rule ties the state to the AppDomain. This prevents running a background test suite concurrently, or isolating different UI components. It's an anti-pattern when a simple instance-level check works better.
+*   **Severity Medium: Overly Strict Parsing (`#N` only).** 
+    Twitch chat heavily relies on muscle memory. Refusing `!1` or `1` will cause a high volume of missed votes and viewer frustration. The minor reduction in false positives isn't worth the UX penalty.
+
+### 4. Suggested changes
+*   **Fix the dependency contradiction:** Redesign `GameThreadDispatcher` to accept an `Action<Action> marshalAction` (or an `ISynchronizationContext`) in its constructor. `ModEntry` should pass in `action => Godot.Callable.From(action).CallDeferred()`. This completely purges the Godot dependency from `Ti/Internal`.
+*   **Buffer your TCP reads:** Explicitly specify that `TwitchIrcChatService` will wrap its `NetworkStream` in a `StreamReader`. Use `await reader.ReadLineAsync()` to let the framework handle TCP fragmentation for you.
+*   **Batch dispatching:** Instead of a `CallDeferred` per message, have `GameThreadDispatcher` push events into a `System.Collections.Concurrent.ConcurrentQueue<Action>`. Expose a `Flush()` method that the game (or an Autoload node) ticks once per frame `_Process` loop.
+*   **Relax the Regex:** Change the parser to `(?:^|\s)[#!]?(\d+)(?:\s|$)`. This captures `1`, `#1`, and `!1` reliably, but ignores standard text like "I have 100 hours" (because "100" won't match the valid single-digit option cap anyway).
+*   **Decouple the logging:** Do not allow `MegaCrit.Sts2.Core.Logging.Log` as an exception in `Ti/*`. Define a simple `public interface ITiLogger { void Log(LogLevel level, string msg); }` in `Ti/Internal`, and implement it in `Game/*`. This makes the `Ti` layer 100% StS2-agnostic.
+*   **Add a CancellationToken to `Voter.Start`:** If the player abandons the run mid-vote, the game needs a clean way to abort `AwaitWinnerAsync` without just firing an arbitrary `Dispose`.
+
+### 5. Alternatives
+*   **Tally Cadence:** Instead of a hard-coded 7-second default, dynamically calculate the interval as `Math.Max(5, Duration.TotalSeconds / 5)`. A 60-second vote feels better with 12s updates; a 15-second vote needs 5s updates.
+*   **Handcrafted IRC vs. Micro-Libraries:** Before writing from scratch, evaluate if there is a single-file drop-in `.cs` IRC client you could embed. If not, the homegrown `StreamReader` approach is acceptable.
+
+### 6. Additions
+*   **Credentials Masking:** Explicitly specify that `ChatCredentials.OauthToken` must *never* be printed by the logger, even on `Error` or `Trace` levels. E.g., override `ToString()` on the record to return `"<REDACTED>"`.
+*   **Message Truncation Defense:** Define a max-length cutoff for `ChatMessage.Text` before parsing. Twitch has limits, but safeguarding your regex from processing a massive wall of pasted text prevents ReDoS (Regular Expression Denial of Service) freezes.
+
+### 7. Removals
+*   **Remove `Voter.CurrentSession`**: Delete the static singleton. `Voter.Start` should just return the `VoteSession` instance. If you must restrict concurrency, handle it via an internal `Interlocked.Exchange` flag, but don't force consumers to use static state to fetch the active session.
+
+### 8. Minor / nits
+*   *Validation rules vs UX:* The spec throws on `more than 9 options`. Ensure the StS2 game-side glue gracefully handles scenarios where 10 options exist (e.g., a massive shop or specific UI anomaly).
+*   *Out of range silently ignored:* Log these at the `Debug`/`Trace` level. When streamers complain "chat is voting but it's not working," those logs will be your only diagnostic tool.
+*   *File layout:* `FakeChatService` shouldn't be deployed in the released mod assembly. Consider keeping it in the `slay-the-streamer-2.tests/` project, or conditionally compiling it out, to keep the prod payload clean.
+
+### 9. Assumptions you're making
+*   I am assuming `MegaCrit.Sts2.Core.Logging.Log` is a static class. If it's instance-based, the dependency exception in your architecture is even messier than stated.
+*   I am assuming Godot 4.5.1 Mono handles C# `Task` continuations intelligently when interleaved with `CallDeferred`. If a subscriber to `Closed` throws an exception, I assume it won't crash the entire Godot event pump. 
+*   I am assuming StS2 doesn't pause its main `_Process` loop during modal popups—if it does, your `GameThreadDispatcher` backing up could stall the vote tally out entirely.

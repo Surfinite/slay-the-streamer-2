@@ -1,0 +1,123 @@
+# Review of `2026-05-08-ti-layer-design.md`
+
+## 1. One-line verdict
+
+Solid, well-reasoned design with a clean seam, but several under-specified edges (auth-failure handling, outgoing rate limits, disposable timing, test scheduler vs. clock) will bite during implementation and should be nailed down before code starts.
+
+## 2. What's good
+
+- **The two-tier split at `IChatService`** is genuinely the right extraction point. Resisting the middle-tier `ChatCommandRouter` as YAGNI is the right call; adding it later is additive, not a refactor.
+- **Strictly-one-vote-at-a-time + throw on misuse** is the right invariant for StS2's one-screen flow. Loud-failure >> silent misroute.
+- **`AwaitWinnerAsync` alongside events, with no API fork** is correctly scoped: consumers pick the style; you don't branch implementations.
+- **`IClock` + `FakeClock` + seeded `Random` injection** is the right testability spine.
+- **Handcrafted IRC *rationale*** (extraction cleanliness) is defensible even if I'll push back on the LOC estimate below.
+- **Disconnect-tolerance semantics** (session survives IRC drop, gap announced) are well-thought-through.
+- **Dependency-direction rule** (`Game/*` → `Ti/*`, not the reverse) with code-review enforcement for v0.1 is pragmatic — don't over-engineer a Roslyn analyzer for this yet.
+- **"Skip periodic tally when all zero"** avoids the most annoying spam pattern.
+
+## 3. Concerns & risks (ranked)
+
+### C1 — **Infinite-retry-on-bad-oauth is a real footgun, not a minor open item** (high)
+The spec acknowledges this in "Open items" but buries it. Twitch signals auth failure via a `NOTICE * :Login authentication failed` followed by a server disconnect. Your current retry policy ("on read failure or socket close, exponential backoff … each retry re-emits ConnectionStateChanged") will loop forever against a wrong token, spamming the streamer's event log and the Twitch server. **This needs to be a named failure mode handled in the IRC client, not deferred.** Detect the auth-failed `NOTICE`, emit a distinct terminal-failure event (e.g. `AuthenticationFailed`), and stop retrying. Same for `Improperly formatted auth`.
+
+### C2 — **Outgoing rate-limit enforcement is missing from `IChatService`** (high)
+`SendMessageAsync(string text)` has no queueing or rate-limit awareness. `VoteSession`'s 7s cadence is safe on its own, but:
+- A future second consumer of `ChatService` (your stated extraction goal) has no guardrail.
+- During reconnect storms, open/close receipts can bunch up.
+- If a streamer ever runs two `Ti`-based mods concurrently (inevitable if extraction succeeds), they share the bucket and will exceed it.
+
+Put a token-bucket rate limiter inside `TwitchIrcChatService` (default 20/30s; configurable up to 100/30s if mod/broadcaster creds are detected). Never rely on consumer discipline for rate-limit safety — that's exactly what burns in extracted reuse.
+
+### C3 — **`ChatMessage` is missing `UserId` but the tally keys on user-id** (high)
+Spec text says "Backed by a `Dictionary<string, int>` keyed by Twitch user-id (from CAP tags)", but `ChatMessage` exposes only `User`, `DisplayName`, `Text`, `ReceivedAt`. Either `User` means user-id (then rename for clarity) or `UserId` is missing. If `User` is the login name, you have a bug waiting (name changes are rare but real, and the login vs. user-id distinction matters for name/badge changes). **Add an explicit `string UserId` field; prefer user-id for tally keying; keep `User`/login as a display/debug aid.** Also: `ChatCredentials` as a `record` will auto-generate `ToString()` that dumps the oauth token into any log — override `ToString` or make it not-a-record.
+
+### C4 — **`FakeClock` alone is not enough — you need a fake scheduler/timer** (high)
+Your test plan says "advance time deterministically" via `IClock`, but `VoteSession` uses `System.Threading.Timer`, which is driven by real wall-clock, not your clock. Injecting `FakeClock` won't make the timer fire early in tests; you'll end up with `Thread.Sleep` or flaky waits — exactly what you said you wouldn't have. **Introduce an `ITimerScheduler` (or fold `Schedule(TimeSpan, Action)` into `IClock`) with a `ManualTimerScheduler` for tests.** This is a small abstraction with outsized test-leverage payoff.
+
+### C5 — **`GameThreadDispatcher` testability and shutdown ordering** (medium-high)
+The spec flushes via Godot `CallDeferred` on an autoload node. Two problems:
+- **Tests**: anything running through the dispatcher is untestable outside a Godot scene. Fix with an `IMainThreadDispatcher` interface and an `ImmediateDispatcher` test implementation that invokes synchronously.
+- **Shutdown**: if the autoload node is freed before the IRC background task exits, queued `CallDeferred` calls hit a disposed target. Spec hand-waves this ("OS cleans up socket"). Spell out the shutdown order: (1) signal IRC loop to exit, (2) `await` its completion with a short timeout, (3) drain dispatcher queue or drop, (4) null out the autoload reference. Otherwise you'll get crashes on game quit that will be nearly impossible to repro.
+
+### C6 — **Receipt text is hardcoded English inside `VoteSession`** (medium)
+If you extract this layer for reuse, non-English streamers and style-sensitive mods have to fork or monkey-patch. This is a cheap fix: introduce an `IVoteReceiptFormatter` with a `DefaultReceiptFormatter`. Also makes the receipts themselves unit-testable without mocking an `IChatService`.
+
+### C7 — **`Voter` as static global collides with parallel tests and extraction cleanliness** (medium)
+Static singletons are the #1 source of test-order flakiness in C# and the #1 thing you curse when extracting a library. Make `Voter` an instance (`VoteCoordinator`?) with a single per-mod instance created at `ModEntry.Initialize`, and expose a static facade *only* if ergonomic for Harmony-patch call sites. The extraction story is visibly cleaner when there's no global "the" session.
+
+### C8 — **`AwaitWinnerAsync` has unspecified cancellation/disposal semantics** (medium)
+What happens if:
+- The session is `Dispose`d before `Duration` elapses? (Spec says "Dispose is called early" triggers close, but with what winner? The no-voter path? A special `Disposed` result?)
+- The `CancellationToken` fires? Does the session keep running? Does it close?
+- The caller never awaits? Is there a warning/log if `Closed` fires without consumption?
+
+Also: use `TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)` to avoid main-thread reentrancy when consumers `await` from a Harmony patch.
+
+### C9 — **Handcrafted IRC LOC estimate is low by ~2–3×** (medium)
+~200 LOC is the happy-path echo-bot estimate. Realistic line count covering: TLS handshake with proper cert validation, CAP negotiation + ACK handling, tag parsing (escaping rules: `\:` `\s` `\\` `\r` `\n`), PRIVMSG/NOTICE/RECONNECT/USERSTATE/GLOBALUSERSTATE/ROOMSTATE, PING/PONG under load, 500-char message truncation, outgoing rate limiter, reconnect-with-JOIN-replay, auth-failure detection, justinfan mode — you're closer to 500–700 LOC, before tests. **Don't let the 200-LOC number in the spec rationale become a stick to beat implementation with when it grows.** Bump the estimate and reaffirm the decision — it's still correct, just not as small as stated.
+
+### C10 — **Malformed-line handling is under-specified** (low-medium)
+Spec says "malformed/truncated lines" are in the parser test corpus. What does the parser return? `null`? An explicit `ParseError`? Silently dropping is fine operationally, but you'll want the count in logs (`Warn` per 100 drops, not per line) to diagnose protocol drift if Twitch changes something.
+
+## 4. Suggested changes
+
+- **Add `UserId` to `ChatMessage`**; document tally keys on user-id; make `ChatCredentials` redact on `ToString`.
+- **Promote "detect auth failure, don't retry"** from an open item to a named `TwitchIrcChatService` requirement with an `AuthenticationFailed` terminal event on `IChatService`.
+- **Add `IMainThreadDispatcher`** interface; `GameThreadDispatcher` becomes the Godot impl; tests get `ImmediateDispatcher`.
+- **Add `ITimerScheduler` / `IScheduler`** (or extend `IClock`) so vote timers are fake-advanceable in tests.
+- **Add outgoing rate limiter** inside `TwitchIrcChatService` (token bucket, configurable ceiling).
+- **Introduce `IVoteReceiptFormatter`** with `DefaultReceiptFormatter` holding the English text; `VoteSession` takes one in its ctor/`Voter.Start`.
+- **Convert `Voter` from static to instance** (rename `VoteCoordinator` or keep `Voter` as an instance). ModEntry constructs one; Harmony patches reach it via a small `ModServices` locator.
+- **Spell out disposal/cancellation contract** for `AwaitWinnerAsync` and `VoteSession.Dispose()` (what winner is produced; what tasks complete how).
+- **Spell out shutdown order** for IRC thread / dispatcher / autoload in the Lifecycle section.
+- **Bump LOC estimate** for handcrafted IRC to 500–700 in the rationale, keep the decision.
+- **Record `TaskCompletionSource.RunContinuationsAsynchronously`** explicitly to prevent main-thread reentrancy surprises.
+- **Add a "Security / secrets" section** covering: never log oauth; scrub it from `Exception.ToString()`; redact in `ChatCredentials.ToString`.
+- **Clarify the `Ti` namespace name**: `Ti` reads oddly in code (`using SlayTheStreamer2.Ti.Voting;`) and isn't greppable. Consider `TwitchIntegration` or simply `Chat` + `Voting` at the top level. If you keep `Ti`, document the expansion prominently in the top-level README so future readers don't have to guess.
+
+## 5. Alternatives worth considering
+
+- **Middle-ground for IRC**: instead of either TwitchLib (heavy) or full handcrafted (risky), vendor a single-file Twitch IRC client from a permissive MIT source (or write one but treat it as a vendored unit with its own small test suite). You get the zero-NuGet-dep extraction benefit *and* don't carry the "did I handle every CAP edge case" risk as uniquely yours.
+- **Adaptive tally cadence**: `max(5s, duration/5)` gives 1-per-5s for short 25s votes and 1-per-12s for 60s votes. More useful than a fixed 7s across wildly different durations. Default still configurable.
+- **Accept `!N` behind a feature flag**: default strict `#N`; allow `VoteReceiptPolicy` (or a new `VoteParsingPolicy`) to opt in to `!N`. Low cost, recovers the most common natural-chat variant without introducing bare-`N` false positives.
+- **Receipt "quiet period" after last change**: instead of (or in addition to) skip-if-all-zero, skip a tally announcement if the tally is byte-identical to the last one sent. Reduces chat spam in lopsided votes.
+- **Per-session `IChatService` scope** instead of shared: makes the test setup more self-contained and clarifies ownership. The shared service is nicer operationally, but worth weighing.
+
+## 6. Additions (things missing that should be there)
+
+- **Observability/metrics** (even just counters written to log): messages received, messages dropped by parser, votes accepted, votes out-of-range, reconnect attempts, rate-limit deferrals. Invaluable when a streamer reports "chat voting didn't work."
+- **Heartbeat timeout**: if no IRC traffic (not even PING) in, say, 5 minutes, proactively reconnect. Twitch occasionally wedges silently.
+- **Upper bound on viewer-id dict size**: defensive cap (e.g. 10k) to prevent a griefer botnet from OOM'ing the tally. Drop new voters past cap with a Warn log.
+- **Explicit `ChatMessage.IsSelf` or source flag**: you're echoing your own tally announcements back via IRC; the parser will see them. Either filter by nick at the IRC layer or put an `IsSelf` bool on the message. Otherwise the vote command regex can match your own tally (`"#1=12 #2=8"` contains `#1` and `#2` — check: first-match-per-message means this becomes `#1`, attributed to the bot user, which will poison the tally if the bot's user-id isn't filtered).
+- **Integration test against Twitch's test IRC server** or a minimal mock server script in `tests/` — the manual harness is fine for v0.1 but capture the harness's protocol expectations now.
+- **A `VoteSession.Cancelled` terminal state** distinct from `Closed` for explicit aborts (streamer ESC's out, game state changes mid-vote). Currently collapsing both into `Closed` loses information.
+- **Docstrings / contract notes** on `IChatService` calling out: threading guarantees, whether events can fire after `Disconnect`, whether `SendMessageAsync` throws or returns failure on disconnected state.
+
+## 7. Removals / things to reconsider
+
+- **`VoteReceiptPolicy.Silent` static**: cute, but two named presets on a 3-field record is borderline gratuitous. Either drop `Silent` (callers can construct `new(false, null, false)` trivially) or add more presets (`Verbose`, `AnnounceOnlyClose`) to justify the pattern.
+- **`[Export] AnchorPosition` on `VoteOverlayControl`**: Godot `Control` already has anchor/position properties. Exposing a parallel `AnchorPosition` is redundant and will confuse anyone editing the scene. Delete; rely on Godot's built-ins.
+- **`Voter.CurrentSession` as a public getter**: only useful for debugging; exposing it publicly invites misuse (external code poking at state). Make it internal or remove; return the session from `Voter.Start` and let callers hold it.
+- **"9 options max"** is fine but the justification ("chat can only single-digit `#1`–`#9`") is the wrong reason — `#10` parses fine under `#(\d+)`. The real reason is *UX* (nobody wants a 10-way chat vote). State it that way and leave room for future relaxation.
+
+## 8. Minor / nits
+
+- Use `DateTimeOffset` rather than `DateTime` on `ChatMessage.ReceivedAt` — unambiguous wrt timezone for logs.
+- `ConnectAsync(string channel, ChatCredentials? creds = null, CancellationToken ct = default)` — the `channel` arg should probably live on the service ctor or a `ChatChannel` value object, since changing channel without disconnecting isn't supported.
+- "Periodic tally every 7 s" — state whether that's wall-clock from vote-open or from last tally sent. Matters for the first tally after a `TallyChanged` burst.
+- `ConnectionStateChanged` as `EventHandler<bool>` is opaque at the call site; introduce a small `ConnectionState` enum (`Disconnected`, `Connecting`, `Connected`, `AuthenticationFailed`) — more self-documenting and gives you the terminal-failure signal from C1 for free.
+- Spec says `has_pck: false` is unvalidated — not this spec's job, but note that `Ti/Ui/VoteOverlayControl` being Godot-based may force `has_pck: true` if you want scene/theme assets rather than pure-code Control. Flag to resolve before UI work.
+- The "TI" vs "Ti" casing bounces in the doc (`TI layer` in headings, `Ti/` in code). Pick one and normalize.
+- `FakeChatService.Inject` — give it an optional `DateTimeOffset` parameter (falling back to `IClock`) so timing-sensitive tests are fully deterministic.
+- "exponential backoff (5 s → 10 s → 20 s → 40 s, cap 60 s)" — add jitter. Synchronized reconnect storms if the mod is ever used by many streamers at once are a real (if mild) thing.
+
+## 9. Assumptions I'm making (please validate)
+
+1. **`MegaCrit.Sts2.Core.Logging.Log`** exposes level-based methods (`Info`, `Warn`, `Error`) — spec implies this but I haven't seen the signature. If it's just `Log.Print(string)` with no levels, the "log levels" section of the spec is aspirational and needs a shim after all.
+2. **Godot's `CallDeferred` preserves call order** within a single frame. If it doesn't, the dispatcher queue semantics change. I'm assuming it does (standard Godot behavior) but worth a quick sanity check.
+3. **`ModInitializer` is called before any scene tree exists**, meaning the `GameThreadDispatcher` autoload can't register itself during `Initialize`. You may need to defer dispatcher wiring to the first frame via a `SceneTree.Idle` callback. I don't know StS2's exact mod-init timing.
+4. **StS2 does not run Harmony patches on a non-main thread** — standard assumption for Godot .NET mods, but worth confirming so that `Voter.Start` called from a patch is guaranteed main-thread.
+5. **`AbstractModel`'s ~200 virtual methods truly can't cover player-choice substitution** — I'm trusting the context doc's characterization; you have the decompiled source to verify there isn't a hook like `OnCardRewardChoiceMade(int index)` hiding somewhere that would remove the need for Harmony on at least some of the six decisions.
+6. **Twitch's justinfan anonymous connection still works** on `irc.chat.twitch.tv:6697` — it did historically but Twitch deprecates things; confirm before relying on it as the "no credentials" mode.
+7. **`sts2.dll`'s logging class accepts calls from background threads** — if it doesn't, the IRC background task's pre-dispatch log calls will crash. I'd guess it's thread-safe but flag because nothing in the spec promises it.
+8. **No existing `ModSettings`/`SettingsSaveMod` path conflicts** with deferring the oauth-token onboarding — the context doc lists these classes but the spec doesn't mention them; I'm assuming the settings design pass will reuse them rather than rolling its own.

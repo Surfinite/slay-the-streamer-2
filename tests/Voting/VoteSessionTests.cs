@@ -170,4 +170,43 @@ public class VoteSessionTests : VoteSessionTestBase {
         Inject("alice", "#1", userId: null);
         Assert.Equal(1, s.Tallies[1]);
     }
+
+    [Fact]
+    public void ComputeWinner_SingleMaxReturnsThatIndex() {
+        var s = StartVote();
+        Inject("alice", "#1"); Inject("bob", "#1"); Inject("carol", "#0");
+        var (winner, tieAmong, noVotes) = s.ComputeWinnerForTest();
+        Assert.Equal(1, winner);
+        Assert.Null(tieAmong);
+        Assert.False(noVotes);
+    }
+
+    [Fact]
+    public void ComputeWinner_TwoWayTie_PicksOneOfTwo_ReportsTie() {
+        var s = StartVote();
+        Inject("alice", "#0"); Inject("bob", "#1");
+        var (winner, tieAmong, noVotes) = s.ComputeWinnerForTest();
+        Assert.True(winner is 0 or 1);
+        Assert.Equal(2, tieAmong);
+        Assert.False(noVotes);
+    }
+
+    [Fact]
+    public void ComputeWinner_ThreeWayTie_PicksOneOfThree_ReportsTie() {
+        var s = StartVote();
+        Inject("alice", "#0"); Inject("bob", "#1"); Inject("carol", "#2");
+        var (winner, tieAmong, noVotes) = s.ComputeWinnerForTest();
+        Assert.True(winner is 0 or 1 or 2);
+        Assert.Equal(3, tieAmong);
+        Assert.False(noVotes);
+    }
+
+    [Fact]
+    public void ComputeWinner_NoVotes_PicksOneOfAllOptions_ReportsNoVotes() {
+        var s = StartVote();
+        var (winner, tieAmong, noVotes) = s.ComputeWinnerForTest();
+        Assert.True(winner is 0 or 1 or 2);
+        Assert.Null(tieAmong);
+        Assert.True(noVotes);
+    }
 }

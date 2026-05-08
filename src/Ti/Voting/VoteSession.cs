@@ -107,6 +107,24 @@ public sealed class VoteSession : IDisposable {
         RandomTieAmong: null, NoVotesReceived: false,
         DisconnectGap: TimeSpan.Zero);
 
+    /// <summary>(Index, RandomTieAmong, NoVotesReceived). Test-only entry point; Task 5.4 wires this into CloseNow.</summary>
+    internal (int Winner, int? TieAmong, bool NoVotes) ComputeWinnerForTest() => ComputeWinner();
+
+    private (int Winner, int? TieAmong, bool NoVotes) ComputeWinner() {
+        var voted = _tallies.Where(kv => kv.Value > 0).ToList();
+        if (voted.Count == 0) {
+            // No-voter random across all options.
+            var idx = _random.Next(Options.Count);
+            return (idx, null, true);
+        }
+        var maxCount = voted.Max(kv => kv.Value);
+        var tied = voted.Where(kv => kv.Value == maxCount).Select(kv => kv.Key).ToList();
+        if (tied.Count == 1)
+            return (tied[0], null, false);
+        var pick = tied[_random.Next(tied.Count)];
+        return (pick, tied.Count, false);
+    }
+
     public void Dispose() {
         if (_state == VoteSessionState.Disposed) return;
         _chat.MessageReceived -= OnChatMessage;

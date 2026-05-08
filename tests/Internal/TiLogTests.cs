@@ -5,6 +5,7 @@ using Xunit;
 
 namespace SlayTheStreamer2.Tests.Internal;
 
+[Collection("TiLog.Sink")]
 public class TiLogTests : IDisposable {
     private readonly Action<LogLevel, string, Exception?> _originalSink;
     private readonly List<(LogLevel Level, string Msg, Exception? Ex)> _captured = new();

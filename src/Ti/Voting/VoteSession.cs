@@ -28,6 +28,10 @@ public sealed class VoteSession : IDisposable {
     private int? _tieAmong;
     private bool _noVotesReceived;
 
+    private readonly System.Threading.Tasks.TaskCompletionSource<int> _winnerTcs =
+        new(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _anyoneAwaited;
+
     public string Id { get; }
     public string Label { get; }
     public IReadOnlyList<VoteOption> Options { get; }
@@ -130,6 +134,9 @@ public sealed class VoteSession : IDisposable {
         if (_receipts.AnnounceOnClose) {
             _ = SendReceipt(ReceiptKind.Close, OutgoingMessagePriority.High);
         }
+        _winnerTcs.TrySetResult(winner);
+        if (!_anyoneAwaited)
+            TiLog.Warn($"VoteSession {Id} closed with winner {winner} but AwaitWinnerAsync was never called — caller likely forgot to consume the result.");
         Closed?.Invoke(this, this);
         return winner;
     }
@@ -140,7 +147,21 @@ public sealed class VoteSession : IDisposable {
         _closeTimer.Dispose();
         _periodicTimer?.Dispose();
         _state = VoteSessionState.Cancelled;
+        _winnerTcs.TrySetCanceled();
         Cancelled?.Invoke(this, this);
+    }
+
+    public async System.Threading.Tasks.Task<int> AwaitWinnerAsync(System.Threading.CancellationToken ct = default) {
+        _anyoneAwaited = true;
+        using var reg = ct.Register(() => { /* token-cancellation cancels only this awaiter, not the session */ });
+        var winnerTask = _winnerTcs.Task;
+        var canceledTask = System.Threading.Tasks.Task.Delay(System.Threading.Timeout.Infinite, ct);
+        var done = await System.Threading.Tasks.Task.WhenAny(winnerTask, canceledTask).ConfigureAwait(false);
+        if (done == canceledTask) ct.ThrowIfCancellationRequested();
+        // Session-cancellation surfaces as TaskCanceledException from the TCS;
+        // normalise to OperationCanceledException for callers that match exactly.
+        if (winnerTask.IsCanceled) throw new System.OperationCanceledException();
+        return await winnerTask.ConfigureAwait(false);
     }
 
     internal (int Winner, int? TieAmong, bool NoVotes) ComputeWinnerForTest() => ComputeWinner();

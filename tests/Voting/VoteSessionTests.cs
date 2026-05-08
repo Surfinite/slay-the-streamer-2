@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using SlayTheStreamer2.Ti.Chat;
+using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
 using Xunit;
 
 namespace SlayTheStreamer2.Tests.Voting;
 
+[Collection("TiLog.Sink")]
 public class VoteSessionTests : VoteSessionTestBase {
     [Fact]
     public void NewSessionStartsInOpenState() {
@@ -399,5 +402,70 @@ public class VoteSessionTests : VoteSessionTestBase {
         var openCount = Chat.SentMessages.Count;
         s.Cancel();
         Assert.Equal(openCount, Chat.SentMessages.Count);
+    }
+
+    [Fact]
+    public async Task AwaitWinnerAsync_CompletesWithWinner_WhenClosed() {
+        var s = StartVote();
+        Inject("alice", "#2");
+        var task = s.AwaitWinnerAsync();
+        s.CloseNow();
+        var winner = await task;
+        Assert.Equal(2, winner);
+    }
+
+    [Fact]
+    public async Task AwaitWinnerAsync_CancelsWhenSessionCancelled() {
+        var s = StartVote();
+        var task = s.AwaitWinnerAsync();
+        s.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task);
+    }
+
+    [Fact]
+    public async Task AwaitWinnerAsync_CallerCancellation_OnlyCancelsThatAwaiter_NotSession() {
+        var s = StartVote();
+        using var cts = new System.Threading.CancellationTokenSource();
+        var task = s.AwaitWinnerAsync(cts.Token);
+        cts.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task);
+        Assert.Equal(VoteSessionState.Open, s.State);   // session still open
+
+        // Another awaiter still works:
+        var task2 = s.AwaitWinnerAsync();
+        Inject("alice", "#1");
+        s.CloseNow();
+        Assert.Equal(1, await task2);
+    }
+
+    [Fact]
+    public void Closed_WithoutAwait_LogsWarn() {
+        var captured = new List<(LogLevel Level, string Msg)>();
+        var prior = TiLog.Sink;
+        TiLog.Sink = (lvl, msg, _) => captured.Add((lvl, msg));
+        try {
+            var s = StartVote();
+            Inject("alice", "#0");
+            s.CloseNow();
+            Assert.Contains(captured, e => e.Level == LogLevel.Warn && e.Msg.Contains("AwaitWinnerAsync was never called"));
+        } finally {
+            TiLog.Sink = prior;
+        }
+    }
+
+    [Fact]
+    public void Closed_WithAwait_DoesNotLogNoAwaitWarn() {
+        var captured = new List<(LogLevel Level, string Msg)>();
+        var prior = TiLog.Sink;
+        TiLog.Sink = (lvl, msg, _) => captured.Add((lvl, msg));
+        try {
+            var s = StartVote();
+            _ = s.AwaitWinnerAsync();   // call once — that's enough
+            Inject("alice", "#0");
+            s.CloseNow();
+            Assert.DoesNotContain(captured, e => e.Level == LogLevel.Warn && e.Msg.Contains("AwaitWinnerAsync"));
+        } finally {
+            TiLog.Sink = prior;
+        }
     }
 }

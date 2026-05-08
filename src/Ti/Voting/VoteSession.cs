@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
 
 namespace SlayTheStreamer2.Ti.Voting;
 
 public sealed class VoteSession : IDisposable {
-    // Dependencies (held for use by later tasks; some unused in 5.1)
     private readonly IChatService _chat;
     private readonly IClock _clock;
     private readonly ITimerScheduler _scheduler;
@@ -19,6 +19,8 @@ public sealed class VoteSession : IDisposable {
 
     private readonly DateTimeOffset _openedAt;
     private readonly Dictionary<int, int> _tallies;
+    private readonly Dictionary<string, int> _votersByKey = new();   // VoterKey -> last option chosen
+    private readonly Regex _voteRegex;
     private VoteSessionState _state = VoteSessionState.Open;
 
     public string Id { get; }
@@ -28,8 +30,9 @@ public sealed class VoteSession : IDisposable {
     public VoteSessionState State => _state;
     public int? WinnerIndex { get; private set; }
     public TimeSpan TimeRemaining => MaxZero(_openedAt + Duration - _clock.UtcNow);
-
     public IReadOnlyDictionary<int, int> Tallies => new Dictionary<int, int>(_tallies);
+
+    public event EventHandler<VoteSession>? TallyChanged;
 
     internal VoteSession(
         string id,
@@ -64,6 +67,36 @@ public sealed class VoteSession : IDisposable {
 
         _openedAt = clock.UtcNow;
         _tallies = options.ToDictionary(o => o.Index, _ => 0);
+        _voteRegex = BuildRegex(parsingPolicy);
+
+        _chat.MessageReceived += OnChatMessage;
+    }
+
+    private static Regex BuildRegex(VoteParsingPolicy p) {
+        var prefix = (p.AcceptHashCommands, p.AcceptBangCommands) switch {
+            (true, true) => "[#!]?",
+            (true, false) => "#?",
+            (false, true) => "!?",
+            _ => ""
+        };
+        return new Regex($@"^{prefix}(\d+)(?:\s|$)", RegexOptions.Compiled);
+    }
+
+    private void OnChatMessage(object? sender, ChatMessage msg) {
+        if (_state != VoteSessionState.Open) return;
+        var match = _voteRegex.Match(msg.Text);
+        if (!match.Success) return;
+        if (!int.TryParse(match.Groups[1].Value, out var idx)) return;
+        if (idx < 0 || idx >= Options.Count) return;
+
+        var key = msg.VoterKey;
+        if (_votersByKey.TryGetValue(key, out var prior)) {
+            if (prior == idx) return;          // same vote: no-op, no event
+            _tallies[prior]--;
+        }
+        _votersByKey[key] = idx;
+        _tallies[idx]++;
+        TallyChanged?.Invoke(this, this);
     }
 
     public VoteSnapshot Snapshot() => new(
@@ -74,7 +107,11 @@ public sealed class VoteSession : IDisposable {
         RandomTieAmong: null, NoVotesReceived: false,
         DisconnectGap: TimeSpan.Zero);
 
-    public void Dispose() { _state = VoteSessionState.Disposed; }
+    public void Dispose() {
+        if (_state == VoteSessionState.Disposed) return;
+        _chat.MessageReceived -= OnChatMessage;
+        _state = VoteSessionState.Disposed;
+    }
 
     private static TimeSpan MaxZero(TimeSpan t) => t < TimeSpan.Zero ? TimeSpan.Zero : t;
 }

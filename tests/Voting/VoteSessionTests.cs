@@ -76,4 +76,98 @@ public class VoteSessionTests : VoteSessionTestBase {
         var bad = new[] { "  ", "" };
         Assert.Throws<ArgumentException>(() => StartVote(options: bad));
     }
+
+    [Fact]
+    public void HashVoteIsCounted() {
+        var s = StartVote();
+        Inject("alice", "#1");
+        Assert.Equal(0, s.Tallies[0]);
+        Assert.Equal(1, s.Tallies[1]);
+        Assert.Equal(0, s.Tallies[2]);
+    }
+
+    [Fact]
+    public void BareNumberVoteIsCounted() {
+        var s = StartVote();
+        Inject("alice", "1");
+        Assert.Equal(1, s.Tallies[1]);
+    }
+
+    [Fact]
+    public void BangVoteIsCountedByDefault() {
+        var s = StartVote();
+        Inject("alice", "!1");
+        Assert.Equal(1, s.Tallies[1]);
+    }
+
+    [Fact]
+    public void BangVoteIsRejectedWhenPolicyDisablesIt() {
+        var s = StartVote(parsing: VoteParsingPolicy.HashOnly);
+        Inject("alice", "!1");
+        Assert.Equal(0, s.Tallies[1]);
+    }
+
+    [Fact]
+    public void LatestVoteFromSameUserReplacesEarlier() {
+        var s = StartVote();
+        Inject("alice", "#1");
+        Inject("alice", "#2");
+        Assert.Equal(0, s.Tallies[1]);
+        Assert.Equal(1, s.Tallies[2]);
+    }
+
+    [Fact]
+    public void OutOfRangeIndexIsIgnored() {
+        var s = StartVote();
+        Inject("alice", "#7");
+        Assert.Equal(0, s.Tallies[0]);
+        Assert.Equal(0, s.Tallies[1]);
+        Assert.Equal(0, s.Tallies[2]);
+    }
+
+    [Fact]
+    public void NonAnchoredMatchIsIgnored() {
+        var s = StartVote();
+        Inject("alice", "lol #1");
+        Assert.Equal(0, s.Tallies[1]);
+    }
+
+    [Fact]
+    public void OrdinalsLikeOneStAreIgnored() {
+        var s = StartVote();
+        Inject("alice", "1st time voter");
+        Inject("bob", "1.5 sec brb");
+        Assert.Equal(0, s.Tallies[1]);
+    }
+
+    [Fact]
+    public void TallyChangedFiresOnVoteChange() {
+        var s = StartVote();
+        var fired = 0;
+        s.TallyChanged += (_, _) => fired++;
+        Inject("alice", "#1");
+        Assert.Equal(1, fired);
+        Inject("alice", "#1");
+        Assert.Equal(1, fired);
+        Inject("alice", "#2");
+        Assert.Equal(2, fired);
+    }
+
+    [Fact]
+    public void DifferentUsersAccumulate() {
+        var s = StartVote();
+        Inject("alice", "#0");
+        Inject("bob", "#0");
+        Inject("carol", "#1");
+        Assert.Equal(2, s.Tallies[0]);
+        Assert.Equal(1, s.Tallies[1]);
+    }
+
+    [Fact]
+    public void VoterKeyFallbackForUntaggedClient() {
+        var s = StartVote();
+        Inject("alice", "#1", userId: null);
+        Inject("alice", "#1", userId: null);
+        Assert.Equal(1, s.Tallies[1]);
+    }
 }

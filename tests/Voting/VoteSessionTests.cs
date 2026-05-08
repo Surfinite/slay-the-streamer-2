@@ -310,4 +310,94 @@ public class VoteSessionTests : VoteSessionTestBase {
         Assert.Equal(VoteSessionState.Closed, s.State);
         Assert.False(cancelFired);
     }
+
+    [Fact]
+    public void OpenReceiptIsSentAtStartWithNormalPriority() {
+        var s = StartVote(label: "card reward");
+        Assert.Single(Chat.SentMessages);
+        Assert.Equal(OutgoingMessagePriority.Normal, Chat.SentMessages[0].Priority);
+        Assert.Contains("card reward", Chat.SentMessages[0].Text);
+    }
+
+    [Fact]
+    public void PeriodicTally_AdaptiveCadence_30sVote_Fires_ApproxEvery7s() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(30));   // adaptive: max(7, 30/5) = 7
+        Inject("alice", "#0");
+        // Initial open receipt is at index 0.
+        Assert.Single(Chat.SentMessages);
+
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
+        Assert.Equal(2, Chat.SentMessages.Count);
+        Assert.Equal(OutgoingMessagePriority.Low, Chat.SentMessages[1].Priority);
+        Assert.Contains("0=1", Chat.SentMessages[1].Text);
+
+        // Change the tally so the next periodic isn't suppressed by the
+        // identical-state dedup (covered separately in
+        // PeriodicTally_IsSkippedWhenIdenticalToPrevious).
+        Inject("bob", "#1");
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
+        Assert.Equal(3, Chat.SentMessages.Count);
+    }
+
+    [Fact]
+    public void PeriodicTally_FixedCadence_HonoursPolicy() {
+        var s = StartVote(
+            duration: TimeSpan.FromSeconds(60),
+            receipts: VoteReceiptPolicy.WithFixedCadence(TimeSpan.FromSeconds(10)));
+        Inject("alice", "#0");
+
+        Scheduler.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(2, Chat.SentMessages.Count);   // open + 1 periodic
+    }
+
+    [Fact]
+    public void PeriodicTally_IsSkippedWhenAllZero() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(30));   // adaptive 7s
+        // No votes injected.
+        Scheduler.Advance(TimeSpan.FromSeconds(7));
+        Assert.Single(Chat.SentMessages);  // still just the open receipt — no periodic
+    }
+
+    [Fact]
+    public void PeriodicTally_IsSkippedWhenIdenticalToPrevious() {
+        var s = StartVote(duration: TimeSpan.FromSeconds(60));   // adaptive 12s
+        Inject("alice", "#0");
+
+        Scheduler.Advance(TimeSpan.FromSeconds(12));   // sends periodic #1 (0=1)
+        var afterFirst = Chat.SentMessages.Count;
+
+        Scheduler.Advance(TimeSpan.FromSeconds(12));   // identical tally → skip
+        Assert.Equal(afterFirst, Chat.SentMessages.Count);
+
+        Inject("bob", "#1");
+        Scheduler.Advance(TimeSpan.FromSeconds(12));   // tally now different → send
+        Assert.Equal(afterFirst + 1, Chat.SentMessages.Count);
+    }
+
+    [Fact]
+    public void PeriodicTally_Disabled_WhenZeroCadence() {
+        var s = StartVote(receipts: VoteReceiptPolicy.Silent);
+        Inject("alice", "#0");
+        Scheduler.Advance(TimeSpan.FromSeconds(60));
+        // Silent policy: no open, no periodic, no close.
+        Assert.Empty(Chat.SentMessages);
+    }
+
+    [Fact]
+    public void CloseReceiptIsSentAtCloseWithHighPriority() {
+        var s = StartVote();
+        Inject("alice", "#1");
+        s.CloseNow();
+        var lastSend = Chat.SentMessages[^1];
+        Assert.Equal(OutgoingMessagePriority.High, lastSend.Priority);
+        Assert.Contains("Defend", lastSend.Text);
+    }
+
+    [Fact]
+    public void Cancel_DoesNotSendCloseReceipt() {
+        var s = StartVote();
+        var openCount = Chat.SentMessages.Count;
+        s.Cancel();
+        Assert.Equal(openCount, Chat.SentMessages.Count);
+    }
 }

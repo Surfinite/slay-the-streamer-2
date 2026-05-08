@@ -22,6 +22,8 @@ public sealed class VoteSession : IDisposable {
     private readonly Dictionary<string, int> _votersByKey = new();
     private readonly Regex _voteRegex;
     private readonly IDisposable _closeTimer;
+    private readonly IDisposable? _periodicTimer;
+    private string? _lastPeriodicTallyKey;   // dedup key derived from tally state, not rendered text
     private VoteSessionState _state = VoteSessionState.Open;
     private int? _tieAmong;
     private bool _noVotesReceived;
@@ -69,6 +71,16 @@ public sealed class VoteSession : IDisposable {
 
         _chat.MessageReceived += OnChatMessage;
         _closeTimer = scheduler.Schedule(duration, () => _dispatcher.Post(() => CloseNowInternal(byTimer: true)));
+
+        // Periodic tally cadence (adaptive default)
+        var cadence = ResolveCadence(_receipts.PeriodicTallyEvery, duration);
+        if (cadence > TimeSpan.Zero)
+            _periodicTimer = scheduler.SchedulePeriodic(cadence, () => _dispatcher.Post(SendPeriodicReceipt));
+
+        // Open receipt
+        if (_receipts.AnnounceOnOpen) {
+            _ = SendReceipt(ReceiptKind.Open, OutgoingMessagePriority.Normal);
+        }
     }
 
     private static Regex BuildRegex(VoteParsingPolicy p) {
@@ -113,7 +125,11 @@ public sealed class VoteSession : IDisposable {
         _noVotesReceived = noVotes;
         _chat.MessageReceived -= OnChatMessage;
         _closeTimer.Dispose();
+        _periodicTimer?.Dispose();
         _state = VoteSessionState.Closed;
+        if (_receipts.AnnounceOnClose) {
+            _ = SendReceipt(ReceiptKind.Close, OutgoingMessagePriority.High);
+        }
         Closed?.Invoke(this, this);
         return winner;
     }
@@ -122,6 +138,7 @@ public sealed class VoteSession : IDisposable {
         if (_state != VoteSessionState.Open) return;
         _chat.MessageReceived -= OnChatMessage;
         _closeTimer.Dispose();
+        _periodicTimer?.Dispose();
         _state = VoteSessionState.Cancelled;
         Cancelled?.Invoke(this, this);
     }
@@ -152,6 +169,52 @@ public sealed class VoteSession : IDisposable {
         if (_state == VoteSessionState.Disposed) return;
         if (_state == VoteSessionState.Open) Cancel();
         _state = VoteSessionState.Disposed;
+    }
+
+    private static TimeSpan ResolveCadence(TimeSpan? configured, TimeSpan duration) {
+        if (configured is null) {
+            // adaptive: max(7s, duration/5). The 7s floor (rather than 5s)
+            // avoids the periodic timer firing at the same instant as the
+            // close timer for very short votes — for a 5s vote, the periodic
+            // timer at t=7 fires after close has already disposed it (no-op),
+            // sidestepping a brittle scheduler-ordering dependency.
+            var adaptive = TimeSpan.FromSeconds(Math.Max(7.0, duration.TotalSeconds / 5.0));
+            return adaptive;
+        }
+        return configured.Value;   // TimeSpan.Zero disables
+    }
+
+    private void SendPeriodicReceipt() {
+        if (_state != VoteSessionState.Open) return;
+        // Belt-and-braces guard for the case where a custom fixed cadence
+        // matches the vote duration exactly and the periodic timer fires
+        // before the close timer at the same instant. The 7s adaptive floor
+        // handles the auto case; this handles any custom cadence corner.
+        if (TimeRemaining < TimeSpan.FromSeconds(1)) return;
+        if (_tallies.Values.All(c => c == 0)) return;            // skip when all zero
+        // Dedup on the tally STATE, not the rendered text. The rendered text
+        // contains "<remaining>s left" which differs every tick even when the
+        // tallies are identical, so a text-equality dedup would never trigger.
+        var tallyKey = string.Join(",", _tallies.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
+        if (tallyKey == _lastPeriodicTallyKey) return;
+        _lastPeriodicTallyKey = tallyKey;
+        var text = FormatReceipt(ReceiptKind.PeriodicTally);
+        _ = _chat.SendMessageAsync(text, OutgoingMessagePriority.Low);
+    }
+
+    private System.Threading.Tasks.Task SendReceipt(ReceiptKind kind, OutgoingMessagePriority priority) {
+        var text = FormatReceipt(kind);
+        return _chat.SendMessageAsync(text, priority);
+    }
+
+    private string FormatReceipt(ReceiptKind kind) {
+        if (_formatReceipt is not null) return _formatReceipt(Snapshot(), kind);
+        return kind switch {
+            ReceiptKind.Open => EnglishReceipts.FormatOpen(Snapshot()),
+            ReceiptKind.PeriodicTally => EnglishReceipts.FormatPeriodicTally(Snapshot()),
+            ReceiptKind.Close => EnglishReceipts.FormatClose(Snapshot()),
+            _ => string.Empty,
+        };
     }
 
     private static TimeSpan MaxZero(TimeSpan t) => t < TimeSpan.Zero ? TimeSpan.Zero : t;

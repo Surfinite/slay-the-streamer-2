@@ -122,7 +122,8 @@ public sealed class TwitchIrcChatService : IChatService {
         }
 
         // Determine post-loop action.
-        if (_disposed || _state is ChatConnectionState.AuthenticationFailed
+        if (_disposed || _state is ChatConnectionState.Disconnected
+                               or ChatConnectionState.AuthenticationFailed
                                or ChatConnectionState.JoinFailed
                                or ChatConnectionState.Disposed) {
             return;   // terminal — no reconnect
@@ -133,6 +134,10 @@ public sealed class TwitchIrcChatService : IChatService {
     }
 
     private void ScheduleReconnect() {
+        if (_disposed || _state is ChatConnectionState.Disconnected
+                                or ChatConnectionState.Disposed
+                                or ChatConnectionState.AuthenticationFailed
+                                or ChatConnectionState.JoinFailed) return;
         TransitionTo(ChatConnectionState.Reconnecting, "transport closed/error");
         var idx = Math.Min(_reconnectAttempt, BackoffSeconds.Length - 1);
         var nominal = BackoffSeconds[idx];
@@ -267,7 +272,11 @@ public sealed class TwitchIrcChatService : IChatService {
     }
 
     public void Disconnect() {
-        // Stub.
+        if (_state is ChatConnectionState.Disposed) return;
+        _cts?.Cancel();
+        try { _transport?.Dispose(); } catch { }
+        _transport = null;
+        TransitionTo(ChatConnectionState.Disconnected, "Disconnect called");
     }
 
     public Task SendMessageAsync(string text, OutgoingMessagePriority priority = OutgoingMessagePriority.Normal, CancellationToken ct = default) {

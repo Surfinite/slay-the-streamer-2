@@ -314,4 +314,24 @@ public class TwitchIrcChatServiceTests {
         Assert.Equal(1, transports.Count);   // no reconnect
         svc.Dispose();
     }
+
+    [Fact]
+    public void Disconnect_WhileConnecting_StopsTransport_NoReconnect() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var sched = new FakeTimerScheduler(clock);
+        var transports = new List<FakeIrcTransport>();
+        var svc = new TwitchIrcChatService(
+            new ImmediateDispatcher(), clock, sched,
+            () => { var t = new FakeIrcTransport(); transports.Add(t); return t; },
+            20, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1));
+
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        _ = svc.ConnectAsync("surfinite", creds);
+        svc.Disconnect();
+
+        Assert.Equal(ChatConnectionState.Disconnected, svc.State);
+        sched.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(1, transports.Count);   // no reconnect after explicit Disconnect
+        svc.Dispose();
+    }
 }

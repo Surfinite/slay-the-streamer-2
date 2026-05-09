@@ -92,10 +92,13 @@ public sealed class TwitchIrcChatService : IChatService {
                 if (line is null) break;   // remote closed
                 ProcessIncomingLine(line);
             }
+        } catch (OperationCanceledException) {
+            // Caller-cancelled or dispose-cancelled; no state transition needed.
+            // The disposer (or Disconnect, in Task 27) is responsible for any state change.
         } catch (Exception ex) {
             LastError = ex;
             TiLog.Error("[TwitchIrcChatService] read loop error", ex);
-            if (_state != ChatConnectionState.Disposed) TransitionTo(ChatConnectionState.Disconnected, "transport error");
+            if (!_disposed) TransitionTo(ChatConnectionState.Disconnected, "transport error");
         }
     }
 

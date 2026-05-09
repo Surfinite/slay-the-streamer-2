@@ -149,4 +149,30 @@ public class TwitchIrcChatServiceTests {
         Assert.Equal("alice", received[0].Login);
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task Send_TwoBackToBack_AreSpacedAtLeast1Second() {
+        var (svc, transport, clock, sched) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        for (int i = 0; i < 10 && svc.State != ChatConnectionState.ConnectedReadWrite; i++) await Task.Delay(20);
+
+        int writesBefore = transport.Writes.Count;
+        await svc.SendMessageAsync("first", OutgoingMessagePriority.High);
+        await svc.SendMessageAsync("second", OutgoingMessagePriority.High);
+
+        sched.Advance(TimeSpan.Zero);
+        await Task.Delay(50);
+        var firstSendTime = clock.UtcNow;
+        int writesAfterFirst = transport.Writes.Count - writesBefore;
+        Assert.True(writesAfterFirst >= 1, "first message should be sent");
+        Assert.True(writesAfterFirst < 2, "second message should NOT be sent yet (gated by minInterval)");
+
+        sched.Advance(TimeSpan.FromMilliseconds(1100));
+        await Task.Delay(50);
+        var totalWrites = transport.Writes.Count - writesBefore;
+        Assert.True(totalWrites >= 2, "second message should be sent after >=1s gap");
+        svc.Dispose();
+    }
 }

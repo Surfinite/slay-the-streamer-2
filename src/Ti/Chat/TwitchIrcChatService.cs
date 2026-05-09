@@ -153,7 +153,31 @@ public sealed class TwitchIrcChatService : IChatService {
     }
 
     private void HandleNotice(NoticeEvent notice) {
-        // TODO Task 15/23: handle terminal notices + rate-limit notices
+        var msgId = notice.MsgId?.ToLowerInvariant();
+        var text = notice.Text;
+
+        // Terminal: auth failure (matches by msg-id when tags enabled, by text otherwise).
+        bool isAuthFailure =
+            msgId is "msg_login_unsuccessful" or "msg_authentication_failed" or "improperly_formatted_auth" ||
+            text.Contains("Login authentication failed", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Error logging in", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Improperly formatted auth", StringComparison.OrdinalIgnoreCase);
+        if (isAuthFailure) {
+            TransitionTo(ChatConnectionState.AuthenticationFailed, $"NOTICE: {text}");
+            _cts?.Cancel();   // stop the read loop; no retry
+            return;
+        }
+
+        // Terminal: channel banned/suspended.
+        bool isJoinFailure =
+            msgId is "msg_banned" or "msg_channel_suspended" or "tos_ban";
+        if (isJoinFailure) {
+            TransitionTo(ChatConnectionState.JoinFailed, $"NOTICE: {text}");
+            _cts?.Cancel();
+            return;
+        }
+
+        // Rate-limit / slow-mode NOTICEs handled in Task 23.
     }
 
     private void TransitionTo(ChatConnectionState next, string? reason = null) {

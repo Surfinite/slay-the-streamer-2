@@ -59,4 +59,19 @@ public class TwitchIrcChatServiceTests {
         Assert.Contains(stateChanges, c => c.New == ChatConnectionState.ConnectedReadWrite);
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task ConnectAsync_AuthFailureNotice_TransitionsToAuthenticationFailed() {
+        var (svc, transport, _, _) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+
+        transport.InjectIncoming(":tmi.twitch.tv NOTICE * :Login authentication failed");
+
+        for (int i = 0; i < 10 && svc.State != ChatConnectionState.AuthenticationFailed; i++) {
+            await Task.Delay(20);
+        }
+        Assert.Equal(ChatConnectionState.AuthenticationFailed, svc.State);
+        svc.Dispose();
+    }
 }

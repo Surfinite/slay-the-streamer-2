@@ -17,6 +17,7 @@ public sealed class OutgoingMessageQueue : IDisposable {
     private readonly IClock _clock;
     private readonly ITimerScheduler _scheduler;
     private readonly Func<string, Task> _send;
+    private readonly TimeSpan _minInterval;
 
     private readonly Queue<string> _high = new();
     private readonly Queue<string> _normal = new();
@@ -28,20 +29,29 @@ public sealed class OutgoingMessageQueue : IDisposable {
     private bool _drainPending;
     private bool _disposed;
     private readonly IDisposable _periodicTimer;
+    private DateTimeOffset? _lastSentAt;
 
     public OutgoingMessageQueue(
         int capacity, TimeSpan window,
         IClock clock, ITimerScheduler scheduler,
-        Func<string, Task> send) {
+        Func<string, Task> send,
+        TimeSpan? minInterval = null) {
         if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity));
         if (window <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(window));
         _capacity = capacity; _window = window;
         _clock = clock; _scheduler = scheduler; _send = send;
+        _minInterval = minInterval ?? TimeSpan.Zero;
         _windowStart = clock.UtcNow;
         _tokens = capacity;
         // Tick at every window boundary (refill) and on enqueue (Pulse).
         _periodicTimer = scheduler.SchedulePeriodic(window, RefillAndDrain);
     }
+
+    public OutgoingMessageQueue(
+        int capacity, TimeSpan window, TimeSpan minInterval,
+        IClock clock, ITimerScheduler scheduler,
+        Func<string, Task> send)
+        : this(capacity, window, clock, scheduler, send, minInterval) { }
 
     public void Enqueue(string message, OutgoingMessagePriority priority) {
         if (_disposed) return;
@@ -81,9 +91,23 @@ public sealed class OutgoingMessageQueue : IDisposable {
 
     private void Drain() {
         while (_tokens > 0) {
+            // Check per-message spacing constraint before dequeuing, so we never
+            // consume a message from the queue without sending it.
+            if (_minInterval > TimeSpan.Zero && _lastSentAt is DateTimeOffset last) {
+                var earliestNext = last + _minInterval;
+                if (_clock.UtcNow < earliestNext) {
+                    // Schedule a deferred drain at the earliest allowed time.
+                    if (!_drainPending) {
+                        _drainPending = true;
+                        _scheduler.Schedule(earliestNext - _clock.UtcNow, RunDeferredDrain);
+                    }
+                    break;
+                }
+            }
             var msg = TryDequeueHighestPriority();
             if (msg is null) break;
             _tokens--;
+            _lastSentAt = _clock.UtcNow;
             var sendTask = _send(msg);
             _ = sendTask.ContinueWith(
                 t => TiLog.Warn($"OutgoingMessageQueue: send failed: {t.Exception?.GetBaseException().Message}"),

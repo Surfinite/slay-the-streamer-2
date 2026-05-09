@@ -122,4 +122,34 @@ public class OutgoingMessageQueueTests {
         await drainTask;
         Assert.Equal(3, _sent.Count);
     }
+
+    [Fact]
+    public async Task Enqueue_WithMinInterval_SpacesSendsAtLeastMinIntervalApart() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var sent = new List<(DateTimeOffset At, string Msg)>();
+        var minInterval = TimeSpan.FromSeconds(1);
+
+        var queue = new OutgoingMessageQueue(
+            capacity: 20, window: TimeSpan.FromSeconds(30),
+            minInterval: minInterval,
+            clock: clock, scheduler: scheduler,
+            send: msg => { sent.Add((clock.UtcNow, msg)); return Task.CompletedTask; });
+
+        queue.Enqueue("first", OutgoingMessagePriority.High);
+        queue.Enqueue("second", OutgoingMessagePriority.High);
+
+        // First send fires at t=0 (or scheduler-zero-tick); second must wait minInterval.
+        scheduler.Advance(TimeSpan.Zero);
+        await Task.Yield();
+        scheduler.Advance(minInterval);
+        await Task.Yield();
+        scheduler.Advance(minInterval);
+        await Task.Yield();
+
+        Assert.Equal(2, sent.Count);
+        var gap = sent[1].At - sent[0].At;
+        Assert.True(gap >= minInterval,
+            $"expected gap >= {minInterval}, got {gap}");
+    }
 }

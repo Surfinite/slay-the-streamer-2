@@ -293,8 +293,15 @@ public sealed class TwitchIrcChatService : IChatService {
         if (_disposed) return;
         _disposed = true;
         _cts?.Cancel();
-        _joinTimeoutTimer?.Dispose();
-        _transport?.Dispose();
+        try { _transport?.Dispose(); } catch { }
+        try { _sendQueue?.Dispose(); } catch { }
+        try { _joinTimeoutTimer?.Dispose(); } catch { }
+        _transport = null;
+        _sendQueue = null;
+        var old = _state;
+        _state = ChatConnectionState.Disposed;
+        var args = new ChatConnectionChangedEventArgs(old, ChatConnectionState.Disposed, "Dispose");
+        try { _dispatcher.Post(() => ConnectionStateChanged?.Invoke(this, args)); } catch { }
     }
 }
 

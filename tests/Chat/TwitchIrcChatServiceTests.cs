@@ -334,4 +334,22 @@ public class TwitchIrcChatServiceTests {
         Assert.Equal(1, transports.Count);   // no reconnect after explicit Disconnect
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task SendMessageAsync_WhenDisconnected_ReturnsFailedTask() {
+        var (svc, _, _, _) = Build();
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await svc.SendMessageAsync("nope"));
+        svc.Dispose();
+    }
+
+    [Fact]
+    public void Dispose_TransitionsToDisposed_AndClosesTransport() {
+        var (svc, transport, _, _) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        _ = svc.ConnectAsync("surfinite", creds);
+        svc.Dispose();
+        Assert.Equal(ChatConnectionState.Disposed, svc.State);
+        Assert.True(transport.Disposed);
+    }
 }

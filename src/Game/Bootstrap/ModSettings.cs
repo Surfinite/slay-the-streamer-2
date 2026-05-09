@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using SlayTheStreamer2.Ti.Chat;
 
 namespace SlayTheStreamer2.Game.Bootstrap;
@@ -17,7 +18,9 @@ public static class ModSettings {
     public const int CurrentSchemaVersion = 1;
 
     public static SettingsResult Load(string path) {
-        // Implementation in subsequent tasks.
-        return new SettingsResult.Missing(path);
+        if (!File.Exists(path)) return new SettingsResult.Missing(path);
+
+        // Subsequent tasks add JSON parsing here.
+        return new SettingsResult.Malformed(path, "not implemented yet");
     }
 }

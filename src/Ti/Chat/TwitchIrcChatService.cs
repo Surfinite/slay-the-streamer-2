@@ -18,6 +18,11 @@ public sealed class TwitchIrcChatService : IChatService {
     private bool _disposed;
     private IDisposable? _joinTimeoutTimer;
     private static readonly TimeSpan JoinConfirmationTimeout = TimeSpan.FromSeconds(10);
+    private int _reconnectAttempt;
+    private static readonly TimeSpan[] BackoffSeconds = {
+        TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10),
+        TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(60)
+    };
 
     private const string TwitchIrcHost = "irc.chat.twitch.tv";
     private const int TwitchIrcPort = 6697;
@@ -110,13 +115,40 @@ public sealed class TwitchIrcChatService : IChatService {
                 ProcessIncomingLine(line);
             }
         } catch (OperationCanceledException) {
-            // Caller-cancelled or dispose-cancelled; no state transition needed.
-            // The disposer (or Disconnect, in Task 27) is responsible for any state change.
+            // Caller-cancelled or dispose-cancelled; no state transition.
         } catch (Exception ex) {
             LastError = ex;
             TiLog.Error("[TwitchIrcChatService] read loop error", ex);
-            if (!_disposed) TransitionTo(ChatConnectionState.Disconnected, "transport error");
         }
+
+        // Determine post-loop action.
+        if (_disposed || _state is ChatConnectionState.AuthenticationFailed
+                               or ChatConnectionState.JoinFailed
+                               or ChatConnectionState.Disposed) {
+            return;   // terminal — no reconnect
+        }
+
+        // Read returned null OR transport threw → schedule reconnect.
+        ScheduleReconnect();
+    }
+
+    private void ScheduleReconnect() {
+        TransitionTo(ChatConnectionState.Reconnecting, "transport closed/error");
+        var idx = Math.Min(_reconnectAttempt, BackoffSeconds.Length - 1);
+        var nominal = BackoffSeconds[idx];
+        var jitterMs = (Random.Shared.NextDouble() - 0.5) * 0.4 * nominal.TotalMilliseconds;
+        var delay = nominal + TimeSpan.FromMilliseconds(jitterMs);
+        _reconnectAttempt++;
+
+        _scheduler.Schedule(delay, () => {
+            if (_disposed) return;
+            // Build a fresh transport + restart the read loop.
+            try { _transport?.Dispose(); } catch { }
+            _transport = _transportFactory();
+            _cts = new CancellationTokenSource();
+            TransitionTo(ChatConnectionState.Connecting, "reconnecting");
+            _readLoopTask = Task.Run(() => RunConnectionAsync(_cts.Token));
+        });
     }
 
     private void ProcessIncomingLine(string line) {
@@ -147,6 +179,7 @@ public sealed class TwitchIrcChatService : IChatService {
                 if (_state is ChatConnectionState.Connecting) {
                     _joinTimeoutTimer?.Dispose();
                     _joinTimeoutTimer = null;
+                    _reconnectAttempt = 0;
                     var nextState = _creds is null
                         ? ChatConnectionState.ConnectedReadOnly
                         : ChatConnectionState.ConnectedReadWrite;
@@ -158,6 +191,7 @@ public sealed class TwitchIrcChatService : IChatService {
                 if (_state is ChatConnectionState.Connecting && Is366Or353(line)) {
                     _joinTimeoutTimer?.Dispose();
                     _joinTimeoutTimer = null;
+                    _reconnectAttempt = 0;
                     var nextState = _creds is null
                         ? ChatConnectionState.ConnectedReadOnly
                         : ChatConnectionState.ConnectedReadWrite;

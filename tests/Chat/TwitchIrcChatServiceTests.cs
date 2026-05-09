@@ -260,4 +260,34 @@ public class TwitchIrcChatServiceTests {
             async () => await svc.SendMessageAsync("nope"));
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task TransportClose_TriggersReconnect_WithBackoff() {
+        // Use a transport factory that hands out a fresh fake on each call.
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var sched = new FakeTimerScheduler(clock);
+        var dispatcher = new ImmediateDispatcher();
+        var transports = new List<FakeIrcTransport>();
+        var svc = new TwitchIrcChatService(
+            dispatcher, clock, sched,
+            transportFactory: () => { var t = new FakeIrcTransport(); transports.Add(t); return t; },
+            sendCapacity: 20, sendWindow: TimeSpan.FromSeconds(30), sendMinInterval: TimeSpan.FromSeconds(1));
+
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+        for (int i = 0; i < 20 && transports.Count < 1; i++) await Task.Delay(20);
+        transports[0].InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        for (int i = 0; i < 20 && svc.State != ChatConnectionState.ConnectedReadWrite; i++) await Task.Delay(20);
+
+        // Simulate remote close.
+        transports[0].Close();
+        for (int i = 0; i < 20 && svc.State != ChatConnectionState.Reconnecting; i++) await Task.Delay(20);
+        Assert.Equal(ChatConnectionState.Reconnecting, svc.State);
+
+        // Advance past first backoff (5s nominal, ±20% jitter — advance 7s to be safe).
+        sched.Advance(TimeSpan.FromSeconds(7));
+        for (int i = 0; i < 20 && transports.Count < 2; i++) await Task.Delay(20);
+        Assert.True(transports.Count >= 2, "second transport should be created on reconnect");
+        svc.Dispose();
+    }
 }

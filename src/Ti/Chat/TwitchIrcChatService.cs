@@ -17,6 +17,16 @@ public sealed class TwitchIrcChatService : IChatService {
     private ChatConnectionState _state = ChatConnectionState.Disconnected;
     private bool _disposed;
 
+    private const string TwitchIrcHost = "irc.chat.twitch.tv";
+    private const int TwitchIrcPort = 6697;
+
+    private IIrcTransport? _transport;
+    private CancellationTokenSource? _cts;
+    private Task? _readLoopTask;
+    private string? _selfLogin;
+    private string? _channel;
+    private ChatCredentials? _creds;
+
     public ChatConnectionState State => _state;
     public bool IsConnected => _state is
         ChatConnectionState.ConnectedReadOnly or
@@ -53,8 +63,107 @@ public sealed class TwitchIrcChatService : IChatService {
     }
 
     public Task ConnectAsync(string channel, ChatCredentials? creds = null, CancellationToken ct = default) {
-        // Stub — real impl in subsequent tasks.
+        if (_disposed) return Task.FromException(new ObjectDisposedException(nameof(TwitchIrcChatService)));
+        if (_state != ChatConnectionState.Disconnected) return Task.CompletedTask;
+
+        _channel = NormaliseChannel(channel);
+        _creds = creds;
+        _selfLogin = creds?.Username ?? "justinfan" + Random.Shared.Next(1000, 9999);
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _transport = _transportFactory();
+
+        TransitionTo(ChatConnectionState.Connecting, "ConnectAsync called");
+        _readLoopTask = Task.Run(() => RunConnectionAsync(_cts.Token));
         return Task.CompletedTask;
+    }
+
+    private async Task RunConnectionAsync(CancellationToken ct) {
+        try {
+            await _transport!.ConnectAsync(TwitchIrcHost, TwitchIrcPort, ct);
+            await _transport.WriteLineAsync("CAP REQ :twitch.tv/tags twitch.tv/commands", ct);
+            if (_creds is not null) {
+                await _transport.WriteLineAsync($"PASS oauth:{_creds.OauthToken}", ct);
+            }
+            await _transport.WriteLineAsync($"NICK {_selfLogin}", ct);
+            await _transport.WriteLineAsync($"JOIN #{_channel}", ct);
+
+            while (!ct.IsCancellationRequested) {
+                var line = await _transport.ReadLineAsync(ct);
+                if (line is null) break;   // remote closed
+                ProcessIncomingLine(line);
+            }
+        } catch (Exception ex) {
+            LastError = ex;
+            TiLog.Error("[TwitchIrcChatService] read loop error", ex);
+            if (_state != ChatConnectionState.Disposed) TransitionTo(ChatConnectionState.Disconnected, "transport error");
+        }
+    }
+
+    private void ProcessIncomingLine(string line) {
+        var ev = TwitchIrcParser.Parse(line);
+        if (ev is null) return;
+
+        switch (ev) {
+            case CapAckEvent: /* tags + commands acknowledged */ break;
+            case CapNakEvent: /* TODO Task 16: fall back to no-tags mode */ break;
+            case PingEvent ping:
+                _ = _transport!.WriteLineAsync($"PONG :{ping.Token}", _cts!.Token);
+                break;
+            case PrivmsgEvent privmsg:
+                HandlePrivmsg(privmsg);
+                break;
+            case NoticeEvent notice:
+                HandleNotice(notice);
+                break;
+            case ReconnectEvent:
+                // TODO Task 29: graceful disconnect + reconnect
+                break;
+            case RoomStateEvent _:
+            case UserStateEvent _:
+                // ROOMSTATE/USERSTATE means JOIN succeeded.
+                if (_state is ChatConnectionState.Connecting) {
+                    TransitionTo(ChatConnectionState.ConnectedReadWrite, "JOIN confirmed");
+                }
+                break;
+            case UnknownIrcEvent:
+                // Numeric replies like 001/353/366 fall here; treat 353/366 as JOIN confirmation too.
+                if (_state is ChatConnectionState.Connecting && Is366Or353(line)) {
+                    TransitionTo(ChatConnectionState.ConnectedReadWrite, "JOIN confirmed via numeric");
+                }
+                break;
+        }
+    }
+
+    private static bool Is366Or353(string line) =>
+        line.Contains(" 353 ", StringComparison.Ordinal) || line.Contains(" 366 ", StringComparison.Ordinal);
+
+    private void HandlePrivmsg(PrivmsgEvent privmsg) {
+        LastMessageReceivedAt = _clock.UtcNow;
+        if (IsSelfEcho(privmsg.Message)) return;
+        var msg = privmsg.Message;
+        _dispatcher.Post(() => MessageReceived?.Invoke(this, msg));
+    }
+
+    private bool IsSelfEcho(ChatMessage msg) {
+        if (_selfLogin is null) return false;
+        return string.Equals(msg.Login, _selfLogin, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void HandleNotice(NoticeEvent notice) {
+        // TODO Task 15/23: handle terminal notices + rate-limit notices
+    }
+
+    private void TransitionTo(ChatConnectionState next, string? reason = null) {
+        if (_state == next) return;
+        var old = _state;
+        _state = next;
+        var args = new ChatConnectionChangedEventArgs(old, next, reason);
+        _dispatcher.Post(() => ConnectionStateChanged?.Invoke(this, args));
+    }
+
+    private static string NormaliseChannel(string raw) {
+        var lower = raw.Trim().ToLowerInvariant();
+        return lower.StartsWith("#") ? lower.Substring(1) : lower;
     }
 
     public void Disconnect() {
@@ -69,6 +178,8 @@ public sealed class TwitchIrcChatService : IChatService {
     public void Dispose() {
         if (_disposed) return;
         _disposed = true;
+        _cts?.Cancel();
+        _transport?.Dispose();
     }
 }
 

@@ -1,18 +1,29 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
+using SlayTheStreamer2.Game.Bootstrap;
+using BootstrapModSettings = SlayTheStreamer2.Game.Bootstrap.ModSettings;
 using SlayTheStreamer2.Godot;
+using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
+using SlayTheStreamer2.Ti.Voting;
 
 namespace SlayTheStreamer2;
 
 [ModInitializer("Init")]
 public static class ModEntry {
     internal static int GodotMainThreadId;
+
+    private static int _connectAnnounced;
+    private static readonly CancellationTokenSource _modCts = new();
+    internal static TwitchIrcChatService? Chat { get; private set; }
+    internal static VoteCoordinator? Coordinator { get; private set; }
 
     public static void Init() {
         try {
@@ -51,8 +62,6 @@ public static class ModEntry {
             }
 
             // 4. Wire IMainThreadDispatcher.
-            //    Plan B Phase 1 will hold this dispatcher reference (currently a local;
-            //    promote to a static field when wiring TwitchIrcChatService + Voter.Default).
             var dispatcher = new GodotMainThreadDispatcher();
             dispatcher.SetAutoload(autoload);
 
@@ -65,9 +74,57 @@ public static class ModEntry {
                 }
             };
 
-            // 6. Apply Harmony patches with diagnostic logging.
-            //    Plan B will add real patches against game decision call-sites; with
-            //    the smoke removed, this currently logs "0 patches applied".
+            // 6. Resolve settings file path Godot-side, load settings.
+            var modVersion = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+            Log.Info($"[slay_the_streamer_2] mod version: {modVersion}");
+
+            var settingsPath = Path.Combine(OS.GetUserDataDir(), "slay_the_streamer_2.json");
+            var settingsResult = BootstrapModSettings.Load(settingsPath);
+            ChatSettings? settings = null;
+            switch (settingsResult) {
+                case SettingsResult.Success s:
+                    settings = s.Settings;
+                    Log.Info($"[slay_the_streamer_2] settings loaded; channel=#{settings.Channel}");
+                    foreach (var w in s.Warnings) Log.Info($"[slay_the_streamer_2]   {w}");
+                    break;
+                case SettingsResult.Missing m:
+                    Log.Info($"[slay_the_streamer_2] no settings file at {m.Path}; mod loaded but Twitch not connected. " +
+                             "Create the file with: { \"schemaVersion\": 1, \"channel\": \"...\", \"username\": \"...\", \"oauthToken\": \"oauth:...\" }");
+                    break;
+                case SettingsResult.Malformed m:
+                    Log.Error($"[slay_the_streamer_2] settings file at {m.Path} is malformed: {m.Reason}. Mod loaded but not connecting.");
+                    break;
+            }
+
+            // 7. Build TI services if settings loaded.
+            var clock = new SlayTheStreamer2.Ti.Internal.SystemClock();
+            var scheduler = new SlayTheStreamer2.Ti.Internal.SystemTimerScheduler();
+
+            if (settings is not null) {
+                Chat = new TwitchIrcChatService(
+                    dispatcher: dispatcher,
+                    clock: clock,
+                    scheduler: scheduler,
+                    sendCapacity: 20,
+                    sendWindow: TimeSpan.FromSeconds(30));
+                Coordinator = new VoteCoordinator(Chat, clock, scheduler, dispatcher);
+                Voter.Default = Coordinator;
+
+                Chat.ConnectionStateChanged += (_, e) => {
+                    if (e.NewState is ChatConnectionState.ConnectedReadWrite
+                        && Interlocked.CompareExchange(ref _connectAnnounced, 1, 0) == 0) {
+                        _ = Chat.SendMessageAsync(
+                            $"slay-the-streamer-2 v{modVersion} connected — votes will go to #{settings.Channel}",
+                            OutgoingMessagePriority.High);
+                    }
+                };
+
+                _ = Chat.ConnectAsync(settings.Channel, settings.Credentials, _modCts.Token);
+            }
+
+            // 8. Apply Harmony patches with diagnostic logging.
+            //    NeowBlessingVotePatch attaches here via PatchAll.
             var harmony = new Harmony("slay_the_streamer_2");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             var patchedMethods = harmony.GetPatchedMethods().ToList();
@@ -76,7 +133,7 @@ public static class ModEntry {
                 Log.Info($"[slay_the_streamer_2]   {m.DeclaringType?.FullName}.{m.Name}");
             }
 
-            Log.Info("[slay_the_streamer_2] Init complete (skeleton — Plan B will fill in vote wiring).");
+            Log.Info("[slay_the_streamer_2] Init complete.");
         } catch (Exception e) {
             // Bound the blast radius: half-loaded mod is worse than not-loaded mod.
             Log.Error($"[slay_the_streamer_2] FATAL: Init failed; subsequent game " +

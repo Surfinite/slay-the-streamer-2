@@ -85,4 +85,14 @@ public class VoteCoordinatorTests {
         c.Dispose();
         Assert.Equal(VoteSessionState.Cancelled, s.State);
     }
+
+    [Fact]
+    public void Dispatcher_ReturnsConstructorInjected() {
+        var chat = new FakeChatService();
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var dispatcher = new ImmediateDispatcher();
+        var coord = new VoteCoordinator(chat, clock, scheduler, dispatcher);
+        Assert.Same(dispatcher, coord.Dispatcher);
+    }
 }

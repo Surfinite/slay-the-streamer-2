@@ -19,6 +19,7 @@ public sealed class VoteCoordinator : IDisposable {
     private readonly Random _random;
 
     public IChatService Chat => _chat;
+    public IMainThreadDispatcher Dispatcher => _dispatcher;
     public VoteSession? CurrentSession { get; private set; }
 
     public VoteCoordinator(

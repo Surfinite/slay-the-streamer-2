@@ -34,7 +34,7 @@
 | 1 | **B.1 is a single sub-plan; vertical slice; one Harmony patch.** | The smallest decomposition that's still smaller-than-monolithic. Validates the whole architecture (IRC + dispatcher + voting + Harmony + UI seam) in-game on one decision before fanning out to five more in B.2. |
 | 2 | **First patch is Neow blessing.** | Single-shot decision per run; small fixed option count (3 — verified from `Neow.GenerateInitialOptions` returning 1 curse + 2 positive at [decompiled/sts2/MegaCrit/sts2/Core/Models/Events/Neow.cs](../../../decompiled/sts2/MegaCrit/sts2/Core/Models/Events/Neow.cs)); no skip option; no stacking; same target Tempus's StS1 mod hit. <!-- CHANGED: decompile path cited — Reviewer 3 --> |
 | 3 | **Patch target: `NEventRoom.OptionButtonClicked(EventOption option, int index)` Prefix.** | Single intercept point for any event-based decision. Filter by "current event is `Neow`" so card events / future events pass through. **Decompile-verified: no keyboard input handler exists on `NEventRoom`** (no `_UnhandledInput`, `_Input`, or `InputMap` references) — option selection is mouse-only, so this single intercept is sufficient. `EventOption.Chosen()` was considered but is fire-and-forget at the call sites (`TaskHelper.RunSafely(option.Chosen())`); a longer Task wouldn't suspend the game. `EventSynchronizer.ChooseLocalOption(int index)` is documented as a B.2 alternative for non-UI votes. <!-- CHANGED: keyboard-bypass concern explicitly verified-falsified — Reviewer 4; EventSynchronizer alternative documented — Reviewers 3, 4 --> |
-| 4 | **Suspend-and-resume pattern with two-flag re-entry guard + immediate `DisableEventOptions`.** | Prefix returns `false` after firing `_ = HandleVoteAsync(...)`. Background task awaits the vote, then `dispatcher.Post(...)` re-invokes `OptionButtonClicked(winnerOption, winnerIndex)`. **Critical addition (v2): immediately after fire-and-forget, the prefix calls `room.Layout.DisableEventOptions()` ([decompile-verified](../../../decompiled/sts2/MegaCrit/sts2/Core/Nodes/Events/NEventLayout.cs#L310)) so the game's UI can't dispatch additional clicks during the vote. This prevents the "fast streamer click during async `option.Chosen()` settling" race at the source rather than band-aiding via flag-reset timing.** Two static flags (Interlocked): `_voteInProgress` (set across the whole vote) suppresses any clicks that slip past `DisableEventOptions`; `_resumeInProgress` (set ONLY around the resume's `OptionButtonClicked` call) makes the prefix return `true` so the chat-chosen click goes through to the original. <!-- CHANGED: DisableEventOptions promoted from contingency to primary mitigation — Reviewers 3, 4 --> |
+| 4 | **Suspend-and-resume pattern with two-flag re-entry guard + immediate `DisableEventOptions`.** | Prefix returns `false` after firing `_ = HandleVoteAsync(...)`. Background task awaits the vote, then `dispatcher.Post(...)` re-invokes `OptionButtonClicked(winnerOption, winnerIndex)`. **Critical addition (v2): immediately after fire-and-forget, the prefix calls `room.Layout.DisableEventOptions()` ([decompile-verified](../../../decompiled/sts2/MegaCrit/sts2/Core/Nodes/Events/NEventLayout.cs#L310) — calls `optionButton.Disable()` on each `NEventOptionButton`, standard Godot button-disabled behavior; buttons remain visible but typically render with reduced contrast) so the game's UI can't dispatch additional clicks during the vote. Prevents the "fast streamer click during async `option.Chosen()` settling" race at the source rather than band-aiding via flag-reset timing.** Two static flags (Interlocked): `_voteInProgress` (set across the whole vote) suppresses any clicks that slip past `DisableEventOptions`; `_resumeInProgress` (set ONLY around the resume's `OptionButtonClicked` call) makes the prefix return `true` so the chat-chosen click goes through to the original. **B.2 follow-up flagged**: greying may reduce chat readability of the option text on the original screen — the parallel `VoteTallyLabel` provides a redundant readable view, but B.2 should evaluate whether to keep `DisableEventOptions` or replace with click-suppression-via-flag-only (leaves buttons visually active for chat to read). <!-- CHANGED: DisableEventOptions promoted from contingency to primary mitigation — Reviewers 3, 4; B.2 readability note added — Surfinite session 4 --> |
 | 5 | **Credentials: JSON file at user-data path, resolved Godot-side.** | `ModEntry.Init` resolves the path via Godot's `OS.GetUserDataDir()` (matches Godot's `user://` convention; correct across Linux/macOS/Windows; honours the actual `project.godot` project name) and passes the resolved path into `ModSettings.Load(string path)`. **Keeps `ModSettings` BCL-only and unit-testable.** Settings panel deferred to B.2; B.1 just reads. JSON includes a `schemaVersion` field; `Load` rejects unknown future versions as `Malformed`. <!-- CHANGED: path resolution moved to ModEntry — Reviewer 3; schemaVersion added — Reviewer 3 --> |
 | 6 | **In-game vote UI: `RichTextLabel` with multi-line text.** | `Ti/Ui/VoteTallyLabel.cs` — a Godot `RichTextLabel` (`BbcodeEnabled = true`) showing all options + counts + time remaining. **Parented under `GetTree().Root` (NOT under `NEventRoom`) to avoid Godot's auto-free of children when the room is freed — eliminates double-free risk entirely.** Visible in the game window (captured by OBS — visible to everyone watching the stream, not streamer-only). No bars, no animations, no winner-highlight, no autohide fade. Polish deferred to B.2 / `VoteOverlayControl`. <!-- CHANGED: RichTextLabel — Reviewers 1, 3, 4, 5; root parenting — Reviewers 1, 5 --> |
 | 7 | **Connection-status feedback: TiLog + connect-once chat receipt with mod version.** | On the **first** successful Twitch connect per process (gated by static `_connectAnnounced` bool to avoid reconnect-flap spam), send `"slay-the-streamer-2 v{InformationalVersion} connected — votes will go to <channel>"` to the channel as `OutgoingMessagePriority.High`. Auth failure logs at Error and stays silent in-chat. In-game status indicator (`ChatStatusControl`) deferred to B.2. <!-- CHANGED: once-per-process + mod version — Reviewer 3 --> |
@@ -187,15 +187,21 @@ public static class ModSettings {
 - `schemaVersion`: must be `1` for B.1; `Load` returns `Malformed` for unknown versions. <!-- CHANGED: NEW — Reviewer 3 -->
 - `channel`: any of `foo`, `#foo`, `https://twitch.tv/foo` accepted; normalised internally per Plan A's channel-normalisation rule. Normalisations are surfaced in `Success.Warnings` (e.g., `"channel name 'https://twitch.tv/surfinite' normalised to 'surfinite'"`). <!-- CHANGED: warnings — Reviewer 3 -->
 - `username`: lowercased Twitch login of the bot account that owns the oauth token.
-- `oauthToken`: accepts either `oauth:abc123` or bare `abc123`; normalised to bare via `ChatCredentials` ctor.
+- `oauthToken`: accepts either `oauth:abc123` or bare `abc123`; normalised to bare via `ChatCredentials` ctor. Validated against `^[a-z0-9]{30}$` (Twitch's documented user-access-token shape — 30 lowercase alphanumeric chars after the `oauth:` prefix); a non-empty token that fails this regex returns `Malformed` with a clear message ("oauth token doesn't look like a Twitch user-access token; expected 30 lowercase alphanumeric characters"). <!-- CHANGED: regex validation — Optional Enhancement #4 -->
 
-**Twitch oauth scopes required**: `chat:read`, `chat:write`. Document this in setup notes. <!-- CHANGED: NEW — Reviewer 2 -->
+**Twitch oauth setup** (document in README and surface inline as the missing-file log message): <!-- CHANGED: setup-doc detail expanded — Optional Enhancement #6 + Reviewer 2 -->
+- The token must be a **Twitch user-access token**, not an app-access token.
+- Required scopes: `chat:read` (receive PRIVMSGs) and `chat:write` (send receipts).
+- The simplest way to generate one for a bot account: log in as the bot at `https://twitchtokengenerator.com` (or equivalent), authorise both scopes, copy the resulting `oauth:...` token into the JSON file's `oauthToken` field.
+- The `username` field must match the bot account that owns the token (lowercase Twitch login).
+- For receipt rate limit beyond the conservative `20/30s` default, the bot account must be a moderator/VIP/broadcaster in the streamer's channel; B.2's settings UI will expose `chatRateLimit: "mod"` to opt into `100/30s`.
 
 **Validation**:
 - Empty / whitespace-only any field → `Malformed` with reason.
 - Empty file or malformed JSON → `Malformed` with reason.
 - File doesn't exist → `Missing(path)`.
 - `schemaVersion != 1` → `Malformed` with reason `"unknown schemaVersion {n}; this mod build supports schemaVersion 1"`.
+- `oauthToken` non-empty but doesn't match `^[a-z0-9]{30}$` (after `oauth:` strip) → `Malformed` with the regex-failure message above. <!-- CHANGED: regex validation — Optional Enhancement #4 -->
 
 **Sample file generation**: when the file is missing, `ModEntry` logs the expected path and the JSON shape so the streamer can hand-create it. B.2's settings UI replaces this.
 
@@ -274,7 +280,7 @@ internal static class NeowBlessingVotePatch {
             return true;
         }
         var optionsSnapshot = liveOptions.ToList();
-        var labels = optionsSnapshot.Select(o => o.Title.GetRawText()).ToList();
+        var labels = optionsSnapshot.Select(o => o.Title.GetFormattedText()).ToList();
 
         // Open vote synchronously inside the prefix so we can fail soft on Voter.Start exceptions.   // CHANGED: try/catch in prefix — Reviewers 2, 3
         VoteSession session;
@@ -686,7 +692,7 @@ All of:
 
 **Still open** (need verification during implementation):
 
-1. **`EventOption.Title.GetRawText()` actual return shape**. Spec assumes plain text or BBCode-compatible markup. If it returns BBCode, `RichTextLabel` handles it natively. If it returns plain text, that's also fine in `RichTextLabel` — no behavior change. Verification: print a Neow option title to log on first vote and inspect.
+1. **`EventOption.Title.GetFormattedText()` actual return shape**. Spec assumes plain text or BBCode-compatible markup. If it returns BBCode, `RichTextLabel` handles it natively. If it returns plain text, that's also fine in `RichTextLabel` — no behavior change. Verification: print a Neow option title to log on first vote and inspect.
 2. **`VoteCoordinator.Dispatcher` get-only property addition**. Plan A change; trivial (1 line).
 3. **`SystemTimerScheduler()` no-arg ctor**. Plan B prep gotcha — keep flagged so the implementer doesn't waste time trying to pass an `IClock`.
 4. **Test seam for TwitchIrcChatService TLS injection**. Implementation introduces an internal `IIrcTransport` (or similar) abstraction. Public `IChatService` API stays unchanged.
@@ -721,26 +727,35 @@ Per the established workflow:
 2. If further review pass desired, run `/document-context` against v2 and collect more reviews.
 3. Otherwise, run `superpowers:writing-plans` to produce the implementation plan.
 4. Execute via `superpowers:subagent-driven-development` (per-task commits with `plan-b-1/X.Y:` prefix).
+5. **Open `notes/06-followups-and-deferred.md` for editing during B.1 implementation, not after** — running log of "things I want to fix in B.2 but skipped in B.1" so the B.2 meta-review starts with them ready. <!-- CHANGED: workflow note — Optional Enhancement #9 -->
 
 ---
 
-# Optional Enhancements (pick what you want)
+# Optional Enhancements (post-author-review status)
 
-These are "Consider"-tier items from the meta-review — good ideas but not urgent. Tell me which numbers (if any) to fold into the spec, or leave them for future iterations.
+Surfinite reviewed the meta-review's Optional Enhancements list (session 4, 2026-05-09); status updated below.
 
-| # | Change | Reviewer(s) | Effort | My recommendation |
-|---|---|---|---|---|
-| 1 | **Subscribe to `TallyChanged` events instead of `_Process` polling** in `VoteTallyLabel`. | R1, R5 | Small | **Lean no for B.1.** R3+R4 are right that polling is idiot-proof for a 4-line text label. Defer to B.2's polished overlay. |
-| 2 | **Introduce `DecisionVoteGate` shared abstraction** (Game/DecisionVotes/) now instead of waiting for B.2. | R2 | Small | **Lean no.** Premature for one patch; document for B.2 cleanup before adding 4 more patches. |
-| 3 | **Embed a tiny in-mod fake IRC server** for unit tests instead of `IIrcTransport` seam. | R1, R2, R3 | Medium | **Neutral.** R3 suggests a 1-hour spike to estimate cost. Defer pending operator-validation results — if `TwitchIrcChatService` proves flaky, this is the obvious next investment. |
-| 4 | **Validate oauth token format with regex** (`[a-z0-9]{30}` or similar) in `ModSettings`. | R2 | Trivial | **Lean yes.** One-line addition; gives a clearer error than waiting for `AuthenticationFailed`. |
-| 5 | **Visual highlight on player's clicked button** so the streamer knows their click was captured (even though chat will override). | R5 | Small | **Lean no.** `DisableEventOptions` already provides visible feedback (buttons greyed out). Defer additional highlight to B.2 polish. |
-| 6 | **`ModSettings` documents oauth scopes (`chat:read`, `chat:write`)** in the JSON setup notes. | R2 | Trivial | **Lean yes.** Implementation note; helps streamers generate the right token. |
-| 7 | **`/document-context` follow-up review pass** after v2 — collect crowd-source reviews on the v2 spec before writing the implementation plan. | (workflow) | Variable | **Neutral.** v2 has substantial changes from v1; another review pass is defensible but doubles the workflow time. Your call. |
-| 8 | **Add `_UnhandledInput` patch to `NEventRoom`** as defensive insurance against a future StS2 patch that adds keyboard input. | R4 (extrapolated) | Small | **Lean no.** No keyboard handler exists today; defending against a hypothetical future change is YAGNI. Re-evaluate if a game patch adds keyboard event-option support. |
-| 9 | **Promote `notes/06-followups-and-deferred.md` to a running log opened during B.1 implementation**, not after. | R3 | Trivial | **Lean yes.** Cheap habit; gives B.2's meta-review a head start on follow-ups. |
-| 10 | **`--smoke-only` ModEntry flag** that skips Harmony patching to reproduce smoke-mode for diagnostic purposes. | R3 | Small | **Lean no for B.1.** Smoke is shipped/done; if a B.2 patch breaks something, the `Prepare` signature/field checks should surface it without needing a smoke fallback. Reconsider if B.2 debugging proves painful. |
+| # | Change | Reviewer(s) | Status |
+|---|---|---|---|
+| 1 | **Subscribe to `TallyChanged` events instead of `_Process` polling** in `VoteTallyLabel`. | R1, R5 | **Deferred to B.2** — polling is fine for B.1's minimal label; revisit when polished overlay lands. |
+| 2 | **Introduce `DecisionVoteGate` shared abstraction** now instead of waiting for B.2. | R2 | **Deferred to B.2** — premature for one patch; address as B.2 cleanup before adding 4 more patches. |
+| 3 | **Embed a tiny in-mod fake IRC server** for unit tests instead of `IIrcTransport` seam. | R1, R2, R3 | **Deferred — implement at first sign of `TwitchIrcChatService` flakiness during operator-validation.** Captured in `notes/06-followups-and-deferred.md` as a B.2/Plan A revision. |
+| 4 | **Validate oauth token format with regex** (`^[a-z0-9]{30}$`) in `ModSettings`. | R2 | **APPLIED.** See `ModSettings` §"Validation". |
+| 5 | **Visual highlight on player's clicked button**. | R5 | **Deferred to B.2 polish.** Note added to Decision #4: greyed-out buttons may reduce chat readability of option text on the original screen; B.2 should evaluate keeping `DisableEventOptions` vs click-suppression-via-flag-only (leaves buttons visually active for chat to read). VoteTallyLabel's parallel readable view mitigates for B.1. |
+| 6 | **`ModSettings` documents oauth scopes (`chat:read`, `chat:write`)** in the JSON setup notes. | R2 | **APPLIED.** See `ModSettings` §"Twitch oauth setup". |
+| 7 | **`/document-context` follow-up review pass** after v2. | (workflow) | **Deferred** — see "Re-review process notes" below. |
+| 8 | **Add `_UnhandledInput` patch to `NEventRoom`** as defensive insurance. | R4 (extrapolated) | **Declined.** No keyboard handler exists today; YAGNI. Re-evaluate if a game patch adds keyboard event-option support. |
+| 9 | **Promote `notes/06-followups-and-deferred.md` to a running log** opened during B.1 implementation. | R3 | **APPLIED** (workflow note in §"Process"). |
+| 10 | **`--smoke-only` ModEntry flag** for diagnostic mode. | R3 | **Declined for B.1.** Smoke is shipped; `Prepare` signature/field checks surface drift. Reconsider if B.2 debugging proves painful. |
 
----
+### Re-review process notes (session 4)
 
-The updated plan has Must-do and Should-do changes applied. Review the Optional Enhancements list above and tell me which numbers to add, if any.
+**Does v2 need its own `/document-context` pass before another `/meta-review` round?** Probably no full re-run. The existing context document ([`-CONTEXT.md`](./2026-05-09-plan-b-1-vertical-slice-design-CONTEXT.md)) covers project background, Plan A status, smoke verdict, codebase map, and decompile evidence — none of which changed in v2. v2's deltas are internal architecture refinements (lifecycle fixes, two-flag guard tightening, new validation paths). A short addendum noting v2's main shifts would suffice if a second review pass is wanted; otherwise the existing context doc + v2 spec is enough material.
+
+**For Surfinite's broader question on whether the document-context / meta-review workflow itself should be upgraded**: deferred to a future session per Surfinite's preference. Quick capture of ideas worth exploring:
+- Reviewer-persona differentiation (security/UX/performance angles vs the current "5 generic critical reviews") to increase signal diversity.
+- A brief "what previous review rounds caught vs missed" section in the context doc to help reviewers calibrate.
+- A "meta-meta-review" — one more independent reviewer assesses whether v2's changes correctly address v1's critiques (catches over-/under-application).
+- Structured feedback template instead of free-form review prose — easier to synthesise, less duplication across reviewers.
+
+(Captured here as a future-session task; no action in B.1.)

@@ -26,6 +26,7 @@ public sealed class TwitchIrcChatService : IChatService {
     private string? _selfLogin;
     private string? _channel;
     private ChatCredentials? _creds;
+    private OutgoingMessageQueue? _sendQueue;
 
     public ChatConnectionState State => _state;
     public bool IsConnected => _state is
@@ -87,6 +88,11 @@ public sealed class TwitchIrcChatService : IChatService {
             }
             await _transport.WriteLineAsync($"NICK {_selfLogin}", ct);
             await _transport.WriteLineAsync($"JOIN #{_channel}", ct);
+
+            _sendQueue = new OutgoingMessageQueue(
+                capacity: _sendCapacity, window: _sendWindow, minInterval: _sendMinInterval,
+                clock: _clock, scheduler: _scheduler,
+                send: line => _transport!.WriteLineAsync(line, ct));
 
             while (!ct.IsCancellationRequested) {
                 var line = await _transport.ReadLineAsync(ct);
@@ -202,7 +208,12 @@ public sealed class TwitchIrcChatService : IChatService {
     }
 
     public Task SendMessageAsync(string text, OutgoingMessagePriority priority = OutgoingMessagePriority.Normal, CancellationToken ct = default) {
-        // Stub.
+        if (_disposed) return Task.FromException(new ObjectDisposedException(nameof(TwitchIrcChatService)));
+        if (!CanSend || _sendQueue is null || _channel is null) {
+            return Task.FromException(new InvalidOperationException($"Cannot send in state {_state}"));
+        }
+        var line = $"PRIVMSG #{_channel} :{text}";
+        _sendQueue.Enqueue(line, priority);
         return Task.CompletedTask;
     }
 

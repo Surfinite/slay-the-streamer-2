@@ -113,6 +113,22 @@ public class TwitchIrcChatServiceTests {
     }
 
     [Fact]
+    public async Task SendMessageAsync_WhenConnected_WritesPrivmsgToTransport() {
+        var (svc, transport, clock, sched) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        for (int i = 0; i < 10 && svc.State != ChatConnectionState.ConnectedReadWrite; i++) await Task.Delay(20);
+
+        await svc.SendMessageAsync("hello chat", OutgoingMessagePriority.High);
+        sched.Advance(TimeSpan.Zero);
+        await Task.Delay(50);
+
+        Assert.Contains(transport.Writes, w => w == "PRIVMSG #surfinite :hello chat");
+        svc.Dispose();
+    }
+
+    [Fact]
     public async Task Privmsg_SelfEchoByLogin_IsFiltered() {
         var (svc, transport, _, _) = Build();
         var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");

@@ -34,6 +34,16 @@ public static class ModSettings {
 
         using (doc) {
             var root = doc.RootElement;
+
+            if (!root.TryGetProperty("schemaVersion", out var versionProp) || versionProp.ValueKind != JsonValueKind.Number) {
+                return new SettingsResult.Malformed(path, "schemaVersion is missing or not a number");
+            }
+            var version = versionProp.GetInt32();
+            if (version != CurrentSchemaVersion) {
+                return new SettingsResult.Malformed(path,
+                    $"unknown schemaVersion {version}; this mod build supports schemaVersion {CurrentSchemaVersion}");
+            }
+
             var warnings = new List<string>();
 
             var channel = ReadStringOrNull(root, "channel");

@@ -48,6 +48,46 @@ public class ModSettingsTests {
         }
     }
 
+    [Fact]
+    public void Load_MissingSchemaVersion_ReturnsMalformed() {
+        var path = WriteTempJson("""
+        { "channel": "x", "username": "y", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var malformed = Assert.IsType<SettingsResult.Malformed>(result);
+            Assert.Contains("schemaVersion", malformed.Reason);
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Load_UnknownSchemaVersion_ReturnsMalformed() {
+        var path = WriteTempJson("""
+        { "schemaVersion": 999, "channel": "x", "username": "y", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var malformed = Assert.IsType<SettingsResult.Malformed>(result);
+            Assert.Contains("999", malformed.Reason);
+        } finally {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Load_CurrentSchemaVersion_ReturnsSuccess() {
+        var path = WriteTempJson($$"""
+        { "schemaVersion": {{ModSettings.CurrentSchemaVersion}}, "channel": "x", "username": "y", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            Assert.IsType<SettingsResult.Success>(ModSettings.Load(path));
+        } finally {
+            File.Delete(path);
+        }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

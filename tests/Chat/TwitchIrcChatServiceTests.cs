@@ -91,4 +91,24 @@ public class TwitchIrcChatServiceTests {
         Assert.False(svc.HasTags);   // expose a property indicating tag-mode
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task Privmsg_RaisesMessageReceived_OnDispatcherThread() {
+        var (svc, transport, _, _) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var received = new List<ChatMessage>();
+        svc.MessageReceived += (_, m) => received.Add(m);
+
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        transport.InjectIncoming(
+            "@user-id=1234;display-name=Carol :carol!carol@carol.tmi.twitch.tv PRIVMSG #surfinite :#0");
+
+        for (int i = 0; i < 10 && received.Count == 0; i++) await Task.Delay(20);
+
+        Assert.Single(received);
+        Assert.Equal("#0", received[0].Text);
+        Assert.Equal("carol", received[0].Login);
+        svc.Dispose();
+    }
 }

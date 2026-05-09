@@ -307,14 +307,3 @@ public sealed class TwitchIrcChatService : IChatService {
         try { _dispatcher.Post(() => ConnectionStateChanged?.Invoke(this, args)); } catch { }
     }
 }
-
-// Placeholder so the production constructor compiles. Real impl in Task 30.
-internal sealed class SslIrcTransport : IIrcTransport {
-    public Task ConnectAsync(string host, int port, CancellationToken ct) =>
-        throw new NotImplementedException("SslIrcTransport implemented in Task 30");
-    public Task<string?> ReadLineAsync(CancellationToken ct) =>
-        throw new NotImplementedException();
-    public Task WriteLineAsync(string line, CancellationToken ct) =>
-        throw new NotImplementedException();
-    public void Dispose() { }
-}

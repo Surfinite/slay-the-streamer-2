@@ -12,6 +12,7 @@
     <Compile Include="..\src\Ti\Internal\**\*.cs" />
     <Compile Include="..\src\Ti\Chat\**\*.cs" />
     <Compile Include="..\src\Ti\Voting\**\*.cs" />
+    <Compile Include="..\src\Game\Bootstrap\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>

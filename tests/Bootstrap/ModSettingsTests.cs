@@ -117,6 +117,19 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    [Fact]
+    public void Load_UsernameWithUppercase_LowercasesAndWarns() {
+        var path = WriteTempJson("""
+        { "schemaVersion": 1, "channel": "x", "username": "SurfiniteBot", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal("surfinitebot", success.Settings.Credentials.Username);
+            Assert.Contains(success.Warnings, w => w.Contains("SurfiniteBot") || w.Contains("lowercased"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

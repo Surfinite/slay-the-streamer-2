@@ -56,6 +56,11 @@ public static class ModSettings {
 
             var (normalisedChannel, channelWarning) = NormaliseChannel(channel);
             if (channelWarning is not null) warnings.Add(channelWarning);
+
+            if (!string.Equals(username, username.ToLowerInvariant(), StringComparison.Ordinal)) {
+                warnings.Add($"username '{username}' lowercased to '{username.ToLowerInvariant()}'");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds), warnings);
         }

@@ -147,7 +147,10 @@ public sealed class TwitchIrcChatService : IChatService {
                 if (_state is ChatConnectionState.Connecting) {
                     _joinTimeoutTimer?.Dispose();
                     _joinTimeoutTimer = null;
-                    TransitionTo(ChatConnectionState.ConnectedReadWrite, "JOIN confirmed");
+                    var nextState = _creds is null
+                        ? ChatConnectionState.ConnectedReadOnly
+                        : ChatConnectionState.ConnectedReadWrite;
+                    TransitionTo(nextState, "JOIN confirmed");
                 }
                 break;
             case UnknownIrcEvent:
@@ -155,7 +158,10 @@ public sealed class TwitchIrcChatService : IChatService {
                 if (_state is ChatConnectionState.Connecting && Is366Or353(line)) {
                     _joinTimeoutTimer?.Dispose();
                     _joinTimeoutTimer = null;
-                    TransitionTo(ChatConnectionState.ConnectedReadWrite, "JOIN confirmed via numeric");
+                    var nextState = _creds is null
+                        ? ChatConnectionState.ConnectedReadOnly
+                        : ChatConnectionState.ConnectedReadWrite;
+                    TransitionTo(nextState, "JOIN confirmed via numeric");
                 }
                 break;
         }

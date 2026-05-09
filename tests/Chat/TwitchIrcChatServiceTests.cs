@@ -234,4 +234,30 @@ public class TwitchIrcChatServiceTests {
             svc.Dispose();
         }
     }
+
+    [Fact]
+    public async Task ConnectAsync_NoCredentials_EntersConnectedReadOnly() {
+        var (svc, transport, _, _) = Build();
+        var connectTask = svc.ConnectAsync("surfinite", creds: null);
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        for (int i = 0; i < 10 && !svc.IsConnected; i++) await Task.Delay(20);
+
+        Assert.Equal(ChatConnectionState.ConnectedReadOnly, svc.State);
+        Assert.False(svc.CanSend);
+        Assert.Contains(transport.Writes, w => w.StartsWith("NICK justinfan"));
+        Assert.DoesNotContain(transport.Writes, w => w.StartsWith("PASS"));
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_InAnonymousMode_ReturnsFailedTask() {
+        var (svc, transport, _, _) = Build();
+        var connectTask = svc.ConnectAsync("surfinite", creds: null);
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        for (int i = 0; i < 10 && !svc.IsConnected; i++) await Task.Delay(20);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await svc.SendMessageAsync("nope"));
+        svc.Dispose();
+    }
 }

@@ -191,4 +191,21 @@ public class TwitchIrcChatServiceTests {
         Assert.Contains(transport.Writes, w => w == "PONG :tmi.twitch.tv");
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task JoinConfirmationTimeout_TransitionsToJoinFailed() {
+        var (svc, transport, clock, sched) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+
+        // No ROOMSTATE/USERSTATE/353/366 injected — simulate a quietly-dropped JOIN.
+        // Wait for JOIN to be sent first.
+        for (int i = 0; i < 20 && !transport.Writes.Any(w => w.StartsWith("JOIN")); i++) await Task.Delay(20);
+
+        sched.Advance(TimeSpan.FromSeconds(11));
+        await Task.Delay(50);
+
+        Assert.Equal(ChatConnectionState.JoinFailed, svc.State);
+        svc.Dispose();
+    }
 }

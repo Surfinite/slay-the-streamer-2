@@ -16,6 +16,8 @@ public sealed class TwitchIrcChatService : IChatService {
     private readonly TimeSpan _sendMinInterval;
     private ChatConnectionState _state = ChatConnectionState.Disconnected;
     private bool _disposed;
+    private IDisposable? _joinTimeoutTimer;
+    private static readonly TimeSpan JoinConfirmationTimeout = TimeSpan.FromSeconds(10);
 
     private const string TwitchIrcHost = "irc.chat.twitch.tv";
     private const int TwitchIrcPort = 6697;
@@ -89,6 +91,14 @@ public sealed class TwitchIrcChatService : IChatService {
             await _transport.WriteLineAsync($"NICK {_selfLogin}", ct);
             await _transport.WriteLineAsync($"JOIN #{_channel}", ct);
 
+            _joinTimeoutTimer = _scheduler.Schedule(JoinConfirmationTimeout, () => {
+                if (_state is ChatConnectionState.Connecting) {
+                    TransitionTo(ChatConnectionState.JoinFailed,
+                        $"JOIN confirmation timeout after {JoinConfirmationTimeout.TotalSeconds}s");
+                    _cts?.Cancel();
+                }
+            });
+
             _sendQueue = new OutgoingMessageQueue(
                 capacity: _sendCapacity, window: _sendWindow, minInterval: _sendMinInterval,
                 clock: _clock, scheduler: _scheduler,
@@ -135,12 +145,16 @@ public sealed class TwitchIrcChatService : IChatService {
             case UserStateEvent _:
                 // ROOMSTATE/USERSTATE means JOIN succeeded.
                 if (_state is ChatConnectionState.Connecting) {
+                    _joinTimeoutTimer?.Dispose();
+                    _joinTimeoutTimer = null;
                     TransitionTo(ChatConnectionState.ConnectedReadWrite, "JOIN confirmed");
                 }
                 break;
             case UnknownIrcEvent:
                 // Numeric replies like 001/353/366 fall here; treat 353/366 as JOIN confirmation too.
                 if (_state is ChatConnectionState.Connecting && Is366Or353(line)) {
+                    _joinTimeoutTimer?.Dispose();
+                    _joinTimeoutTimer = null;
                     TransitionTo(ChatConnectionState.ConnectedReadWrite, "JOIN confirmed via numeric");
                 }
                 break;
@@ -221,6 +235,7 @@ public sealed class TwitchIrcChatService : IChatService {
         if (_disposed) return;
         _disposed = true;
         _cts?.Cancel();
+        _joinTimeoutTimer?.Dispose();
         _transport?.Dispose();
     }
 }

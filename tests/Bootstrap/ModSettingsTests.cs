@@ -88,6 +88,35 @@ public class ModSettingsTests {
         }
     }
 
+    [Theory]
+    [InlineData("foo")]
+    [InlineData("#foo")]
+    [InlineData("https://twitch.tv/foo")]
+    [InlineData("https://www.twitch.tv/foo")]
+    [InlineData("http://twitch.tv/foo/")]
+    public void Load_ChannelForms_NormaliseToBareLowercase(string channelInput) {
+        var path = WriteTempJson($$"""
+        { "schemaVersion": 1, "channel": "{{channelInput}}", "username": "y", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal("foo", success.Settings.Channel);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ChannelWithUrlForm_AddsWarning() {
+        var path = WriteTempJson("""
+        { "schemaVersion": 1, "channel": "https://twitch.tv/Surfinite", "username": "y", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Contains(success.Warnings, w => w.Contains("normalised") || w.Contains("normalized"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

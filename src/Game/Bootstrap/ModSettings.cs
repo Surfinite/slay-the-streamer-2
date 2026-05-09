@@ -54,8 +54,10 @@ public static class ModSettings {
             if (string.IsNullOrWhiteSpace(username)) return new SettingsResult.Malformed(path, "username is missing or empty");
             if (string.IsNullOrWhiteSpace(oauthToken)) return new SettingsResult.Malformed(path, "oauthToken is missing or empty");
 
+            var (normalisedChannel, channelWarning) = NormaliseChannel(channel);
+            if (channelWarning is not null) warnings.Add(channelWarning);
             var creds = new ChatCredentials(username, oauthToken);
-            return new SettingsResult.Success(new ChatSettings(channel, creds), warnings);
+            return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds), warnings);
         }
     }
 
@@ -63,5 +65,33 @@ public static class ModSettings {
         return root.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String
             ? prop.GetString()
             : null;
+    }
+
+    private static (string Normalised, string? Warning) NormaliseChannel(string raw) {
+        var trimmed = raw.Trim();
+        var lower = trimmed.ToLowerInvariant();
+
+        string normalised;
+        if (lower.StartsWith("https://www.twitch.tv/", StringComparison.Ordinal)) {
+            normalised = lower.Substring("https://www.twitch.tv/".Length);
+        } else if (lower.StartsWith("http://www.twitch.tv/", StringComparison.Ordinal)) {
+            normalised = lower.Substring("http://www.twitch.tv/".Length);
+        } else if (lower.StartsWith("https://twitch.tv/", StringComparison.Ordinal)) {
+            normalised = lower.Substring("https://twitch.tv/".Length);
+        } else if (lower.StartsWith("http://twitch.tv/", StringComparison.Ordinal)) {
+            normalised = lower.Substring("http://twitch.tv/".Length);
+        } else if (lower.StartsWith("#", StringComparison.Ordinal)) {
+            normalised = lower.Substring(1);
+        } else {
+            normalised = lower;
+        }
+        // Strip trailing slash and any trailing path segment.
+        var slashIdx = normalised.IndexOf('/');
+        if (slashIdx >= 0) normalised = normalised.Substring(0, slashIdx);
+
+        string? warning = (normalised != trimmed)
+            ? $"channel '{trimmed}' normalised to '{normalised}'"
+            : null;
+        return (normalised, warning);
     }
 }

@@ -22,14 +22,14 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
-## Pre-Plan-B prep (before writing Plan B)
+## Pre-Plan-B prep (resolved)
 
-- [ ] **Switch Steam branch from beta to stable.** User is on beta during Plan A; agreed to switch before Plan B. Steam re-download takes time.
-- [ ] **Re-run `ilspycmd`** against the new stable `sts2.dll`. Diff against `decompiled/sts2/` for API-surface changes.
-- [ ] **Update `notes/03/04/05`** for any modding-API drift between beta and stable.
-- [ ] **Verify `MegaCrit.Sts2.Core.Logging.Log` is thread-safe.** Plan B's IRC background task + timer threads call it before reaching the dispatcher. If not thread-safe, the default `TiLog.Sink` must buffer + flush on the main thread.
-- [ ] **Validate Godot autoload registration from a mod assembly.** `AddAutoloadSingleton` needs a Node-class reference. Runtime registration via `ProjectSettings.SetSetting("autoload/...")` from `[ModInitializer]` may or may not work. Have a fallback for `DispatcherAutoload`.
-- [ ] **Smoke-test the Harmony deadlock risk**: blocking `await Voter.Start(...).AwaitWinnerAsync()` from a Harmony prefix on the Godot main thread, where AwaitWinnerAsync continuations also dispatch to the main thread. Verify before relying on the pattern.
+- [x] **Switch Steam branch from beta to stable.** Done 2026-05-08.
+- [x] **Re-run `ilspycmd`** against the new stable `sts2.dll`. Done 2026-05-08; diff captured. Beta is the *newer* dev branch; what we saw as "stable removed X" was actually "beta added X that hasn't shipped yet." Modding contract (`Mod`, `ModInitializerAttribute`, `ModManifest`, `Logger`) is byte-identical between branches; only `ModManager` got internal hardening (circular-dep detection). `AbstractModel` had real signature drift (mostly `PlayerChoiceContext` parameter additions in beta + 4 new auto-play-phase callbacks; `ICombatState`/`NullCombatState`/`PlayerTurnPhase` deleted in stable). Doesn't affect v0.1 (Harmony-heavy); affects v0.2+ combat hooks only.
+- [x] **Update `notes/03/04/05`** — drift summary added inline as callout boxes in `notes/03` and `notes/04`.
+- [x] **Verify `MegaCrit.Sts2.Core.Logging.Log` is thread-safe.** Confirmed: `Logger.LogMessage` holds a `static readonly object _lockObj` around `_logPrinter.Print` + `LogCallback?.Invoke`. `TiLog.Sink` can be a direct passthrough — no buffering needed.
+- [x] **Validate Godot autoload registration from a mod assembly.** Resolved by Plan B prep smoke (commit `204d061`, run 2026-05-09). Direct `tree.Root.AddChild(node)` from `[ModInitializer]` errors with "Parent node is busy setting up children" because `Init` runs during `NGame._EnterTree`. Fix: `tree.Root.CallDeferred("add_child", autoload)` — defers the attach to the next idle frame. `Engine.RegisterSingleton(name, node)` works as optional instrumentation. Working pattern is permanently captured in `src/ModEntry.cs`.
+- [x] **Smoke-test the Harmony deadlock risk.** **Resolved with the deadlock confirmed**, exactly as the meta-review predicted. Smoke C ran a Harmony prefix on `NSettingsScreen._Ready` that did `session.AwaitWinnerAsync().GetAwaiter().GetResult()` on the Godot main thread. The game hung at startup (StS2 instantiates Settings during boot, before main menu). The deadlock chain: prefix blocks main thread → close timer fires on threadpool → dispatcher does `CallDeferred` → idle frame queued for main thread → main thread blocked → close never runs → `.GetResult()` waits forever. **Plan A's `RunContinuationsAsynchronously` on the winner TCS is insufficient under Godot's main-thread sync context** (which re-captures `await` continuations onto thread 1; observed in Smoke A's `continuation thread=1, main thread=1` log). **Plan B must use suspend-and-resume**: Harmony prefix returns `false` to skip the original method, kicks off `_ = HandleVoteAsync(...)`, and the async handler invokes the chat-winner's choice via `dispatcher.Post(...)` once the vote completes. No blocking the main thread, ever. This was on the meta-review's "Future considerations" list; the smoke promoted it to "the only viable pattern."
 
 ---
 

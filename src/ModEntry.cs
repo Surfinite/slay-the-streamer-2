@@ -1,26 +1,18 @@
 using System;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using SlayTheStreamer2.Godot;
-using SlayTheStreamer2.Smoke;
-using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
-using SlayTheStreamer2.Ti.Voting;
 
 namespace SlayTheStreamer2;
 
 [ModInitializer("Init")]
 public static class ModEntry {
     internal static int GodotMainThreadId;
-
-    // SMOKE-TEST: DELETE AFTER VALIDATION.
-    internal static FakeChatService SmokeChat = null!;
-    internal static Task SmokeATask = Task.CompletedTask;
 
     public static void Init() {
         try {
@@ -44,12 +36,8 @@ public static class ModEntry {
                 return;
             }
 
-            // 2. Attach dispatcher node (primary mechanism).
-            // Use CallDeferred("add_child", ...) instead of direct AddChild because
-            // [ModInitializer] runs during NGame._EnterTree, when the root is busy
-            // building the scene tree — direct AddChild errors out with "Parent node
-            // is busy setting up children." Deferring queues the attach for the next
-            // idle frame, by which time the tree is ready.
+            // 2. Attach dispatcher node via deferred add_child (root is busy during
+            //    NGame._EnterTree when [ModInitializer] runs; direct AddChild errors).
             var autoload = new DispatcherAutoload { Name = "DispatcherAutoload" };
             tree.Root.CallDeferred("add_child", autoload);
             Log.Info("[slay_the_streamer_2] dispatcher node deferred-attach queued (CallDeferred add_child)");
@@ -63,6 +51,8 @@ public static class ModEntry {
             }
 
             // 4. Wire IMainThreadDispatcher.
+            //    Plan B Phase 1 will hold this dispatcher reference (currently a local;
+            //    promote to a static field when wiring TwitchIrcChatService + Voter.Default).
             var dispatcher = new GodotMainThreadDispatcher();
             dispatcher.SetAutoload(autoload);
 
@@ -75,20 +65,9 @@ public static class ModEntry {
                 }
             };
 
-            // 6. Smoke wiring (DISPOSABLE — delete after smoke success).
-            // SMOKE-ONLY: FakeChatService.ConnectAsync completes synchronously.
-            // Do NOT copy this .GetAwaiter().GetResult() pattern to TwitchIrcChatService —
-            // sync-over-async on the main thread is the exact deadlock source we're trying
-            // to rule out. Plan B must use the connection-state callback instead.
-            var clock = new SystemClock();
-            var scheduler = new SystemTimerScheduler();
-            SmokeChat = new FakeChatService();
-            SmokeChat.ConnectAsync("smoke", new ChatCredentials("smokebot", "abc"))
-                     .GetAwaiter().GetResult();
-            var coord = new VoteCoordinator(SmokeChat, clock, scheduler, dispatcher);
-            Voter.Default = coord;
-
-            // 7. Apply Harmony patches with diagnostic logging.
+            // 6. Apply Harmony patches with diagnostic logging.
+            //    Plan B will add real patches against game decision call-sites; with
+            //    the smoke removed, this currently logs "0 patches applied".
             var harmony = new Harmony("slay_the_streamer_2");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             var patchedMethods = harmony.GetPatchedMethods().ToList();
@@ -96,22 +75,8 @@ public static class ModEntry {
             foreach (var m in patchedMethods) {
                 Log.Info($"[slay_the_streamer_2]   {m.DeclaringType?.FullName}.{m.Name}");
             }
-            if (patchedMethods.Count == 0) {
-                Log.Warn("[slay_the_streamer_2] WARNING: 0 patches applied. Check that " +
-                    "[HarmonyPatch] attributes target valid methods.");
-            }
 
-            // 8. Sanity check before declaring success.
-            if (Voter.Default is null) {
-                Log.Error("[slay_the_streamer_2] FATAL: Voter.Default is null after wiring; " +
-                    "smoke cannot run. Aborting.");
-                return;
-            }
-
-            // 9. Smoke A: fire-and-forget vote from this startup context (DISPOSABLE).
-            SmokeATask = SmokeRunner.RunSmokeA(SmokeChat);
-
-            Log.Info("[slay_the_streamer_2] Init complete.");
+            Log.Info("[slay_the_streamer_2] Init complete (skeleton — Plan B will fill in vote wiring).");
         } catch (Exception e) {
             // Bound the blast radius: half-loaded mod is worse than not-loaded mod.
             Log.Error($"[slay_the_streamer_2] FATAL: Init failed; subsequent game " +

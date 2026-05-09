@@ -292,6 +292,32 @@ public class TwitchIrcChatServiceTests {
     }
 
     [Fact]
+    public async Task ReconnectCommand_TriggersGracefulReconnect() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var sched = new FakeTimerScheduler(clock);
+        var transports = new List<FakeIrcTransport>();
+        var svc = new TwitchIrcChatService(
+            new ImmediateDispatcher(), clock, sched,
+            () => { var t = new FakeIrcTransport(); transports.Add(t); return t; },
+            20, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1));
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        _ = svc.ConnectAsync("surfinite", creds);
+        for (int i = 0; i < 20 && transports.Count < 1; i++) await Task.Delay(20);
+        transports[0].InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        for (int i = 0; i < 20 && svc.State != ChatConnectionState.ConnectedReadWrite; i++) await Task.Delay(20);
+
+        transports[0].InjectIncoming("RECONNECT");
+        // Wait for the read loop to process RECONNECT, exit, and start reconnecting
+        for (int i = 0; i < 50 && svc.State != ChatConnectionState.Reconnecting; i++) await Task.Delay(20);
+
+        sched.Advance(TimeSpan.FromSeconds(7));   // past first backoff
+        for (int i = 0; i < 20 && transports.Count < 2; i++) await Task.Delay(20);
+
+        Assert.True(transports.Count >= 2);
+        svc.Dispose();
+    }
+
+    [Fact]
     public async Task AuthenticationFailed_DoesNotTriggerReconnect() {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
         var sched = new FakeTimerScheduler(clock);

@@ -176,7 +176,10 @@ public sealed class TwitchIrcChatService : IChatService {
                 HandleNotice(notice);
                 break;
             case ReconnectEvent:
-                // TODO Task 29: graceful disconnect + reconnect
+                TiLog.Info("[TwitchIrcChatService] received RECONNECT — reconnecting");
+                try { _transport?.Dispose(); } catch { }
+                // The read loop will exit on null/exception; ScheduleReconnect kicks in.
+                _cts?.Cancel();
                 break;
             case RoomStateEvent _:
             case UserStateEvent _:

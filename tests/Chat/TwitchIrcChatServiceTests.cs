@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using SlayTheStreamer2.Tests.Chat.Internal;
 using SlayTheStreamer2.Ti.Chat;
@@ -173,6 +174,21 @@ public class TwitchIrcChatServiceTests {
         await Task.Delay(50);
         var totalWrites = transport.Writes.Count - writesBefore;
         Assert.True(totalWrites >= 2, "second message should be sent after >=1s gap");
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Ping_TriggersPong_BeforeJoinConfirmation() {
+        var (svc, transport, _, _) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+
+        transport.InjectIncoming("PING :tmi.twitch.tv");
+        for (int i = 0; i < 10; i++) {
+            if (transport.Writes.Any(w => w.StartsWith("PONG"))) break;
+            await Task.Delay(20);
+        }
+        Assert.Contains(transport.Writes, w => w == "PONG :tmi.twitch.tv");
         svc.Dispose();
     }
 }

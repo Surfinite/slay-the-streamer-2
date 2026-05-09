@@ -74,4 +74,21 @@ public class TwitchIrcChatServiceTests {
         Assert.Equal(ChatConnectionState.AuthenticationFailed, svc.State);
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task CapNak_FallsBackToNoTagsMode_AndStillReachesConnected() {
+        var (svc, transport, _, _) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+
+        transport.InjectIncoming(":tmi.twitch.tv CAP * NAK :twitch.tv/tags twitch.tv/commands");
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+
+        for (int i = 0; i < 10 && svc.State != ChatConnectionState.ConnectedReadWrite; i++) {
+            await Task.Delay(20);
+        }
+        Assert.Equal(ChatConnectionState.ConnectedReadWrite, svc.State);
+        Assert.False(svc.HasTags);   // expose a property indicating tag-mode
+        svc.Dispose();
+    }
 }

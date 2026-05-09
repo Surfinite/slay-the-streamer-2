@@ -35,6 +35,7 @@ public sealed class TwitchIrcChatService : IChatService {
     public bool CanSend => _state is ChatConnectionState.ConnectedReadWrite;
     public DateTimeOffset? LastMessageReceivedAt { get; private set; }
     public Exception? LastError { get; private set; }
+    internal bool HasTags { get; private set; } = true;   // optimistic; falsified by CAP NAK
 
     public event EventHandler<ChatMessage>? MessageReceived;
     public event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;
@@ -107,8 +108,11 @@ public sealed class TwitchIrcChatService : IChatService {
         if (ev is null) return;
 
         switch (ev) {
-            case CapAckEvent: /* tags + commands acknowledged */ break;
-            case CapNakEvent: /* TODO Task 16: fall back to no-tags mode */ break;
+            case CapAckEvent: HasTags = true; break;
+            case CapNakEvent:
+                HasTags = false;
+                TiLog.Warn("[TwitchIrcChatService] CAP NAK — falling back to no-tags mode");
+                break;
             case PingEvent ping:
                 _ = _transport!.WriteLineAsync($"PONG :{ping.Token}", _cts!.Token);
                 break;

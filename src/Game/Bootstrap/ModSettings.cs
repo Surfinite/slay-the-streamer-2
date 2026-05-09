@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using SlayTheStreamer2.Ti.Chat;
 
@@ -59,6 +60,18 @@ public static class ModSettings {
 
             if (!string.Equals(username, username.ToLowerInvariant(), StringComparison.Ordinal)) {
                 warnings.Add($"username '{username}' lowercased to '{username.ToLowerInvariant()}'");
+            }
+
+            // Strip optional oauth: prefix for shape inspection.
+            var bareForCheck = oauthToken.StartsWith("oauth:", StringComparison.OrdinalIgnoreCase)
+                ? oauthToken.Substring(6) : oauthToken;
+            if (bareForCheck.Any(c => char.IsWhiteSpace(c) || char.IsControl(c))) {
+                return new SettingsResult.Malformed(path, "oauthToken contains whitespace or control characters");
+            }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(bareForCheck, "^[a-z0-9]{30}$")) {
+                warnings.Add(
+                    "oauth token doesn't match the common Twitch user-access-token shape " +
+                    "(30 lowercase alphanumeric chars); will let Twitch authentication be the source of truth");
             }
 
             var creds = new ChatCredentials(username, oauthToken);

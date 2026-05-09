@@ -130,6 +130,42 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    [Theory]
+    [InlineData("oauth:abc123def456ghi789jkl012mno345")]
+    [InlineData("abc123def456ghi789jkl012mno345")]
+    public void Load_OauthBothForms_NormaliseToBare(string token) {
+        var path = WriteTempJson($$"""
+        { "schemaVersion": 1, "channel": "x", "username": "y", "oauthToken": "{{token}}" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal("abc123def456ghi789jkl012mno345", success.Settings.Credentials.OauthToken);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_OauthWithUnusualShape_ReturnsSuccessWithWarning() {
+        var path = WriteTempJson("""
+        { "schemaVersion": 1, "channel": "x", "username": "y", "oauthToken": "ABC123DEF456GHI789JKL012MNO345" }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Contains(success.Warnings, w => w.Contains("oauth") || w.Contains("token"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_OauthWithWhitespace_ReturnsMalformed() {
+        var path = WriteTempJson("""
+        { "schemaVersion": 1, "channel": "x", "username": "y", "oauthToken": "abc 123" }
+        """);
+        try {
+            Assert.IsType<SettingsResult.Malformed>(ModSettings.Load(path));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

@@ -201,7 +201,16 @@ public sealed class TwitchIrcChatService : IChatService {
             return;
         }
 
-        // Rate-limit / slow-mode NOTICEs handled in Task 23.
+        bool isRateLimit = msgId is "msg_ratelimit" or "msg_slowmode";
+        if (isRateLimit) {
+            TiLog.Warn($"[TwitchIrcChatService] Twitch ratelimit/slowmode NOTICE: {text}");
+            return;
+        }
+        bool isDuplicate = msgId is "msg_duplicate";
+        if (isDuplicate) {
+            TiLog.Debug($"[TwitchIrcChatService] duplicate-message NOTICE dropped: {text}");
+            return;
+        }
     }
 
     private void TransitionTo(ChatConnectionState next, string? reason = null) {

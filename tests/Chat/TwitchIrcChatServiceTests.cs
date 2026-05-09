@@ -10,6 +10,7 @@ using Xunit;
 
 namespace SlayTheStreamer2.Tests.Chat;
 
+[Collection("TiLog.Sink")]
 public class TwitchIrcChatServiceTests {
     private static (TwitchIrcChatService svc, FakeIrcTransport transport, FakeClock clock, FakeTimerScheduler sched) Build() {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
@@ -207,5 +208,30 @@ public class TwitchIrcChatServiceTests {
 
         Assert.Equal(ChatConnectionState.JoinFailed, svc.State);
         svc.Dispose();
+    }
+
+    [Fact]
+    public async Task RateLimitNotice_LogsAndDoesNotChangeState() {
+        var (svc, transport, _, _) = Build();
+        var logs = new List<string>();
+        var oldSink = TiLog.Sink;
+        TiLog.Sink = (level, msg, ex) => {
+            if (level >= LogLevel.Warn) lock (logs) logs.Add(msg);
+        };
+        try {
+            var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+            var connectTask = svc.ConnectAsync("surfinite", creds);
+            transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+            for (int i = 0; i < 10 && svc.State != ChatConnectionState.ConnectedReadWrite; i++) await Task.Delay(20);
+
+            transport.InjectIncoming("@msg-id=msg_ratelimit :tmi.twitch.tv NOTICE #surfinite :Your message was not sent because you are sending messages too quickly.");
+            for (int i = 0; i < 10 && !logs.Any(l => l.Contains("ratelimit", StringComparison.OrdinalIgnoreCase)); i++) await Task.Delay(20);
+
+            Assert.Equal(ChatConnectionState.ConnectedReadWrite, svc.State);
+            Assert.Contains(logs, l => l.Contains("ratelimit", StringComparison.OrdinalIgnoreCase));
+        } finally {
+            TiLog.Sink = oldSink;
+            svc.Dispose();
+        }
     }
 }

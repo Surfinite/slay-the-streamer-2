@@ -166,6 +166,32 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    [Fact]
+    public void Load_EmptyFile_ReturnsMalformed() {
+        var path = WriteTempJson("");
+        try {
+            Assert.IsType<SettingsResult.Malformed>(ModSettings.Load(path));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_MalformedJson_ReturnsMalformed() {
+        var path = WriteTempJson("{ this is not json");
+        try {
+            Assert.IsType<SettingsResult.Malformed>(ModSettings.Load(path));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_WhitespaceOnlyChannel_ReturnsMalformed() {
+        var path = WriteTempJson("""
+        { "schemaVersion": 1, "channel": "   ", "username": "y", "oauthToken": "abc123def456ghi789jkl012mno345" }
+        """);
+        try {
+            Assert.IsType<SettingsResult.Malformed>(ModSettings.Load(path));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

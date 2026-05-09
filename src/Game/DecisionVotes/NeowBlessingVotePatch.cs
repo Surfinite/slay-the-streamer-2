@@ -102,7 +102,72 @@ internal static class NeowBlessingVotePatch {
     private static async Task HandleVoteAsync(VoteCoordinator coordinator, NEventRoom room,
                                               VoteSession session, IReadOnlyList<EventOption> snapshot,
                                               int playerClickIndex) {
-        await Task.CompletedTask;   // implemented in Task 34
+        try {
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+
+            int winnerIndex;
+            try {
+                winnerIndex = await session.AwaitWinnerAsync();
+            } catch (Exception ex) {
+                TiLog.Error("[neow-vote] AwaitWinnerAsync threw; falling back to player click", ex);
+                winnerIndex = playerClickIndex;
+            }
+
+            if (winnerIndex < 0 || winnerIndex >= snapshot.Count) {
+                TiLog.Warn($"[neow-vote] winnerIndex {winnerIndex} out of snapshot range; using player click");
+                winnerIndex = playerClickIndex;
+            }
+
+            TiLog.Info($"[neow-vote] resume: applying winner #{winnerIndex} on main thread");
+            coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, snapshot, winnerIndex, playerClickIndex));
+        } catch (Exception ex) {
+            TiLog.Error("[neow-vote] HandleVoteAsync threw; attempting fallback resume with player click", ex);
+            try {
+                coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, snapshot, playerClickIndex, playerClickIndex));
+            } catch (Exception postEx) {
+                TiLog.Error("[neow-vote] fallback resume Post itself threw; resetting flags", postEx);
+                Interlocked.Exchange(ref _resumeInProgress, 0);
+                Interlocked.Exchange(ref _voteInProgress, 0);
+            }
+        }
+    }
+
+    private static void ResumeOnMainThread(NEventRoom room, IReadOnlyList<EventOption> snapshot,
+                                           int preferredIndex, int playerClickIndex) {
+        Interlocked.Exchange(ref _resumeInProgress, 1);
+        try {
+            if (!GodotObject.IsInstanceValid(room)) {
+                TiLog.Warn("[neow-vote] resume: room no longer valid; dropping resume");
+                return;
+            }
+            if (!IsNeowEvent(room)) {
+                TiLog.Warn("[neow-vote] resume: active event is no longer Neow; dropping resume");
+                return;
+            }
+            var currentOptions = GetCurrentOptions(room)?.ToList();
+            if (currentOptions is null || currentOptions.Count == 0) {
+                TiLog.Warn("[neow-vote] resume: no current options; dropping");
+                return;
+            }
+
+            int applyIndex = preferredIndex;
+            if (applyIndex < 0 || applyIndex >= currentOptions.Count) {
+                TiLog.Warn($"[neow-vote] resume: preferred index {applyIndex} out of range; falling back to player click");
+                applyIndex = playerClickIndex;
+            }
+            if (applyIndex < 0 || applyIndex >= currentOptions.Count) {
+                TiLog.Warn($"[neow-vote] resume: neither preferred nor player index valid (options now {currentOptions.Count}); dropping");
+                return;
+            }
+
+            var winnerOption = currentOptions[applyIndex];
+            room.OptionButtonClicked(winnerOption, applyIndex);
+        } catch (Exception ex) {
+            TiLog.Error("[neow-vote] resume threw", ex);
+        } finally {
+            Interlocked.Exchange(ref _resumeInProgress, 0);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+        }
     }
 
     private static bool IsNeowEvent(NEventRoom room) {

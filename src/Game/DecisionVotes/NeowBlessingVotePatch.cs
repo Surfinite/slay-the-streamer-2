@@ -46,8 +46,63 @@ internal static class NeowBlessingVotePatch {
     }
 
     static bool Prefix(NEventRoom __instance, EventOption option, int index) {
-        // Stub — fills in next tasks (33).
-        return true;
+        if (_resumeInProgress == 1) return true;
+        if (!IsNeowEvent(__instance)) return true;
+        if (option.IsLocked || option.IsProceed) return true;
+
+        if (TryGetEventOwnerPlayerCount(__instance) is int playerCount && playerCount > 1) {
+            if (Interlocked.CompareExchange(ref _multiplayerWarnFired, 1, 0) == 0) {
+                TiLog.Warn("[neow-vote] multiplayer detected (Players.Count > 1); bailing to vanilla (further bail-outs at Debug)");
+            } else {
+                TiLog.Debug("[neow-vote] multiplayer bail-out");
+            }
+            return true;
+        }
+
+        var coordinator = Voter.Default;
+        if (coordinator is null) return true;
+        if (coordinator.Chat.State is not ChatConnectionState.ConnectedReadWrite) {
+            TiLog.Debug($"[neow-vote] chat not in ConnectedReadWrite (state={coordinator.Chat.State}); bailing to vanilla");
+            return true;
+        }
+
+        if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
+            TiLog.Debug("[neow-vote] repeat click during open vote — suppressed");
+            return false;
+        }
+
+        var liveOptions = GetCurrentOptions(__instance);
+        if (liveOptions is null || liveOptions.Count == 0) {
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+        var optionsSnapshot = liveOptions.ToList();
+        var labels = optionsSnapshot.Select(o => o.Title.GetFormattedText()).ToList();
+
+        VoteSession session;
+        try {
+            session = coordinator.Start("Neow's Bonus", labels, TimeSpan.FromSeconds(30));
+        } catch (Exception ex) {
+            TiLog.Error("[neow-vote] Voter.Default.Start threw; falling back to vanilla", ex);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+
+        try {
+            __instance.Layout?.DisableEventOptions();
+        } catch (Exception ex) {
+            TiLog.Warn($"[neow-vote] DisableEventOptions threw (continuing): {ex.Message}");
+        }
+
+        TiLog.Info($"[neow-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{index}");
+        _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, index);
+        return false;
+    }
+
+    private static async Task HandleVoteAsync(VoteCoordinator coordinator, NEventRoom room,
+                                              VoteSession session, IReadOnlyList<EventOption> snapshot,
+                                              int playerClickIndex) {
+        await Task.CompletedTask;   // implemented in Task 34
     }
 
     private static bool IsNeowEvent(NEventRoom room) {

@@ -111,4 +111,26 @@ public class TwitchIrcChatServiceTests {
         Assert.Equal("carol", received[0].Login);
         svc.Dispose();
     }
+
+    [Fact]
+    public async Task Privmsg_SelfEchoByLogin_IsFiltered() {
+        var (svc, transport, _, _) = Build();
+        var creds = new ChatCredentials("surfinitebot", "abc123def456ghi789jkl012mno345");
+        var received = new List<ChatMessage>();
+        svc.MessageReceived += (_, m) => received.Add(m);
+
+        var connectTask = svc.ConnectAsync("surfinite", creds);
+        transport.InjectIncoming(":tmi.twitch.tv ROOMSTATE #surfinite");
+        // Self message — login matches the bot's NICK.
+        transport.InjectIncoming(":surfinitebot!surfinitebot@surfinitebot.tmi.twitch.tv PRIVMSG #surfinite :hello from bot");
+        // Another user — should NOT be filtered.
+        transport.InjectIncoming(":alice!alice@alice.tmi.twitch.tv PRIVMSG #surfinite :hello from alice");
+
+        for (int i = 0; i < 10 && received.Count == 0; i++) await Task.Delay(20);
+        await Task.Delay(50);   // give the second message a chance to arrive
+
+        Assert.Single(received);
+        Assert.Equal("alice", received[0].Login);
+        svc.Dispose();
+    }
 }

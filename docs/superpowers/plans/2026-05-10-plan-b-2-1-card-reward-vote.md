@@ -14,6 +14,23 @@
 
 ---
 
+## Spike-derived corrections (Task 1 desk-research output, 2026-05-10)
+
+The Task 1 spike inspected decompiled source and found five corrections to the v4 spec. **All subsequent tasks MUST use these corrected accessors instead of the spec's originals.** The v4 spec assumed several APIs that don't exist as named; these are the real ones.
+
+| # | Spec said | Use instead | Affects tasks |
+|---|---|---|---|
+| 1 | `RunState.Id` (assumed `Guid`) | **`runState.Rng.StringSeed`** (string — user's run seed). Pass `runState.Rng.StringSeed` as the string run-id to `SkipBudgetTracker.ObserveRunAndAct(...)` and to the run-id guard. | 6, 8, 9, 13 |
+| 2 | `CardCreationResult.Card.Name.GetText()` for receipt labels | **`result.Card.Title`** — public string property; handles upgrade suffix. No method call chain needed. | 8 |
+| 3 | `NRewardsScreen._ExitTree` (assumed declared) | **Not declared on NRewardsScreen** — would patch the inherited Godot Control/Node method. Spike runtime verification (Step 1.2) will confirm whether Harmony patches the inherited method. **If it doesn't fire**, Task 13 switches the second postfix target to `NRewardsScreen.AfterOverlayClosed()` (declared at decompiled NRewardsScreen.cs:460; called during overlay teardown before `QueueFreeSafely`). Default for the plan: try `_ExitTree` first per spec; switch on Step 1.2 finding. | 13 |
+| 4 | `runState.Acts.Count - 1` for current-act index | **`runState.CurrentActIndex`** (0-based int, exposed on both `RunState` and `IRunState` interface). Cleaner; reflection still wraps it for fail-safe access but the property name is now pinned. | 12 |
+| 5a | `NRewardButton` namespace `MegaCrit.Sts2.Core.Nodes` | **`MegaCrit.Sts2.Core.Nodes.Rewards`** | 11, 12 |
+| 5b | `NRewardButton.Reward` accessed via reflection (`GetProperty("Reward")`) | **Public property of type `Reward?`** — call directly: `(button as NRewardButton)?.Reward is CardReward`. No `GetProperty` needed. | 12 |
+
+These are documented in `notes/06-followups-and-deferred.md` under "Plan B.2.1 spike findings". Runtime verification of `_ExitTree` patchability and Mode B back-out remains for Steps 1.2 / 1.4 (operator-driven).
+
+---
+
 ## File Structure
 
 **New files:**

@@ -7,7 +7,7 @@ using SlayTheStreamer2.Ti.Chat;
 
 namespace SlayTheStreamer2.Game.Bootstrap;
 
-public sealed record ChatSettings(string Channel, ChatCredentials Credentials);
+public sealed record ChatSettings(string Channel, ChatCredentials Credentials, int CardSkipsPerAct);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -74,8 +74,20 @@ public static class ModSettings {
                     "(30 lowercase alphanumeric chars); will let Twitch authentication be the source of truth");
             }
 
+            int cardSkipsPerAct = 1;   // default
+            if (root.TryGetProperty("cardSkipsPerAct", out var skipsProp)) {
+                if (skipsProp.ValueKind != JsonValueKind.Number || !skipsProp.TryGetInt32(out var rawSkips)) {
+                    warnings.Add("cardSkipsPerAct is not an integer; using default (1)");
+                } else if (rawSkips < -1) {
+                    warnings.Add($"cardSkipsPerAct {rawSkips} clamped to -1 (unlimited)");
+                    cardSkipsPerAct = -1;
+                } else {
+                    cardSkipsPerAct = rawSkips;
+                }
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
-            return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds), warnings);
+            return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds, cardSkipsPerAct), warnings);
         }
     }
 

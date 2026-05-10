@@ -12,7 +12,7 @@ public class ModSettingsTests {
         SettingsResult missing = new SettingsResult.Missing("x");
         SettingsResult malformed = new SettingsResult.Malformed("x", "y");
         SettingsResult success = new SettingsResult.Success(
-            new ChatSettings("foo", new ChatCredentials("bar", "abc123")),
+            new ChatSettings("foo", new ChatCredentials("bar", "abc123"), 1),
             new[] { "warn" });
         Assert.NotNull(missing);
         Assert.NotNull(malformed);
@@ -189,6 +189,107 @@ public class ModSettingsTests {
         """);
         try {
             Assert.IsType<SettingsResult.Malformed>(ModSettings.Load(path));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipsPerActMissing_UsesDefault() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "#foo",
+            "username": "bot",
+            "oauthToken": "abcdefghijklmnopqrstuvwxyz1234"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(1, success.Settings.CardSkipsPerAct);   // default
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipsPerActInvalid_WarnsAndUsesDefault() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "#foo", "username": "bot",
+            "oauthToken": "abcdefghijklmnopqrstuvwxyz1234",
+            "cardSkipsPerAct": "not a number"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(1, success.Settings.CardSkipsPerAct);
+            Assert.Contains(success.Warnings, w => w.Contains("cardSkipsPerAct"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipsPerActNegativeFive_ClampsToMinusOne() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "#foo", "username": "bot",
+            "oauthToken": "abcdefghijklmnopqrstuvwxyz1234",
+            "cardSkipsPerAct": -5
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(-1, success.Settings.CardSkipsPerAct);
+            Assert.Contains(success.Warnings, w => w.Contains("clamped"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipsPerActZero_IsStrict() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "#foo", "username": "bot",
+            "oauthToken": "abcdefghijklmnopqrstuvwxyz1234",
+            "cardSkipsPerAct": 0
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(0, success.Settings.CardSkipsPerAct);
+            Assert.DoesNotContain(success.Warnings, w => w.Contains("cardSkipsPerAct"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipsPerActPositive_Parses() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "#foo", "username": "bot",
+            "oauthToken": "abcdefghijklmnopqrstuvwxyz1234",
+            "cardSkipsPerAct": 3
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(3, success.Settings.CardSkipsPerAct);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipsPerActMinusOne_IsUnlimited() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "#foo", "username": "bot",
+            "oauthToken": "abcdefghijklmnopqrstuvwxyz1234",
+            "cardSkipsPerAct": -1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(-1, success.Settings.CardSkipsPerAct);
+            Assert.DoesNotContain(success.Warnings, w => w.Contains("cardSkipsPerAct"));
         } finally { File.Delete(path); }
     }
 

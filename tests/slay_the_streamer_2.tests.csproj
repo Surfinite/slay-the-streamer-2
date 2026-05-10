@@ -22,6 +22,7 @@
     -->
     <Compile Remove="..\src\Game\DecisionVotes\NeowBlessingVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\SpikePatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\CardRewardVotePatch.cs" />
   </ItemGroup>
 
   <ItemGroup>

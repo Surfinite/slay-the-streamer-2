@@ -1,0 +1,101 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using Godot;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
+using MegaCrit.Sts2.Core.Runs;
+using SlayTheStreamer2.Ti.Chat;
+using SlayTheStreamer2.Ti.Internal;
+using SlayTheStreamer2.Ti.Ui;
+using SlayTheStreamer2.Ti.Voting;
+
+namespace SlayTheStreamer2.Game.DecisionVotes;
+
+// SelectCard is private — must use string literal (nameof won't bind across accessibility).
+[HarmonyPatch(typeof(NCardRewardSelectionScreen), "SelectCard")]
+internal static class CardRewardVotePatch {
+    private static int _voteInProgress;
+    private static int _resumeInProgress;
+    private static int _multiplayerWarnFired;
+
+    /// <summary>
+    /// True iff the patch passed Prepare's hard checks at registration time.
+    /// Read by CardRewardSkipGatePatch.ShouldEnforceSkipGate() — gate degrades
+    /// to vanilla if the vote patch couldn't register.
+    /// </summary>
+    internal static bool PreparedSuccessfully { get; private set; }
+
+    /// <summary>
+    /// True iff Prepare's soft check confirmed RunManager.Instance.DebugOnlyGetState()
+    /// is reachable. False means we register the vote patch but skip the run-id guard
+    /// (vote still works; resume just doesn't get the abandon-mid-vote safety net).
+    /// </summary>
+    internal static bool RunIdGuardEnabled { get; private set; } = true;
+
+    /// <summary>
+    /// True while a card vote is in flight. Exposed so the skip-gate can cross-check
+    /// (e.g., refuse to act on a Proceed click that might race a pending resume).
+    /// </summary>
+    internal static bool VoteInProgress => _voteInProgress == 1;
+
+    private static readonly Lazy<FieldInfo?> _optionsField =
+        new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_options"));
+    private static readonly Lazy<FieldInfo?> _cardRowField =
+        new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_cardRow"));
+
+    static bool Prepare(MethodBase? original) {
+        if (original is null) {
+            // Registration-time. Hard checks: vote target shape — failure aborts patch.
+            if (_optionsField.Value is null) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] hard check failed: NCardRewardSelectionScreen._options field not found; patch will not register");
+                PreparedSuccessfully = false;
+                return false;
+            }
+            if (_cardRowField.Value is null) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] hard check failed: NCardRewardSelectionScreen._cardRow field not found; patch will not register");
+                PreparedSuccessfully = false;
+                return false;
+            }
+
+            // Soft check: run-id accessor. Failure logs Warn but does NOT abort registration.
+            try {
+                var rm = RunManager.Instance;
+                if (rm == null) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded — RunManager.Instance not reachable");
+                    RunIdGuardEnabled = false;
+                } else {
+                    var stateMethod = rm.GetType().GetMethod("DebugOnlyGetState");
+                    if (stateMethod is null) {
+                        TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded — DebugOnlyGetState() not found");
+                        RunIdGuardEnabled = false;
+                    }
+                    // Don't deeply walk Rng.StringSeed here — state may be null at Prepare
+                    // time (no run in progress). Defer to runtime; if accessor throws,
+                    // log Warn and treat that vote as guard-disabled.
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] run-ID guard degraded — Prepare soft check threw: {ex.Message}");
+                RunIdGuardEnabled = false;
+            }
+
+            PreparedSuccessfully = true;
+            return true;
+        }
+
+        // Per-method signature check.
+        var parameters = original.GetParameters();
+        if (parameters.Length != 1 || parameters[0].ParameterType != typeof(NCardHolder)) {
+            TiLog.Error($"[SlayTheStreamer2][card-vote] target signature mismatch: {original.DeclaringType?.FullName}.{original.Name}({string.Join(", ", parameters.Select(p => p.ParameterType.Name))})");
+            PreparedSuccessfully = false;
+            return false;
+        }
+        TiLog.Info($"[SlayTheStreamer2][card-vote] target resolved: {original.DeclaringType?.FullName}.{original.Name}");
+        return true;
+    }
+}

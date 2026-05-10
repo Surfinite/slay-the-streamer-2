@@ -143,6 +143,29 @@ internal static class CardRewardSkipGatePatch {
         _activeLabel.UpdateText(_tracker.Snapshot(actLimit));
     }
 
+    /// <summary>
+    /// Format the skip receipt sent to chat. Used/limit semantics; "unlimited act"
+    /// rendering for actLimit < 0. Per spec Decision 16, this stays in Game/ — do
+    /// NOT add to Ti/Voting/EnglishReceipts (would violate the TI/Game seam).
+    /// </summary>
+    private static string FormatSkipReceipt(int actUsed, int actLimit) {
+        string limitPart = actLimit < 0 ? "unlimited act" : $"{actUsed}/{actLimit} act";
+        return $"Streamer skipped a card reward ({limitPart})";
+    }
+
+    /// <summary>
+    /// Send the skip receipt to chat. Routes through OutgoingMessageQueue via
+    /// coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal) —
+    /// rate limiting (20/30s + 1/sec spacing) preserved per spec.
+    /// </summary>
+    private static void SendSkipReceipt(int actLimit) {
+        var coordinator = Voter.Default;
+        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+
+        string text = FormatSkipReceipt(_tracker.ActSkipsUsed, actLimit);
+        _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
+    }
+
     [HarmonyPatch(typeof(NRewardsScreen), "_Ready")]
     internal static class NRewardsScreen_Ready_Postfix {
         static bool Prepare() => PrepareHardChecks();
@@ -182,6 +205,36 @@ internal static class CardRewardSkipGatePatch {
         static bool Prepare() => true;   // No reflected fields needed; the patch is a simple null-out.
         static void Postfix() {
             _activeLabel = null;
+        }
+    }
+
+    [HarmonyPatch(typeof(NRewardsScreen), "RewardSkippedFrom")]
+    internal static class NRewardsScreen_RewardSkippedFrom_Postfix {
+        static bool Prepare() => PrepareHardChecks();
+
+        static void Postfix(NRewardsScreen __instance, Control button) {
+            try {
+                if (!IsCardRewardButton(button)) return;
+                if (!ShouldEnforceSkipGate()) return;   // settings-check BEFORE recording (per spec)
+
+                _tracker.RecordSkip();
+
+                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
+                SendSkipReceipt(settings.CardSkipsPerAct);
+
+                // Multi-card-reward gate re-evaluation: if THIS skip exhausted budget AND
+                // another unclaimed card reward remains on this screen, call DisallowSkipping
+                // again so vanilla disables Proceed for the remaining card(s).
+                if (!_tracker.IsSkipAllowed(settings.CardSkipsPerAct) && HasUnclaimedCardReward(__instance)) {
+                    __instance.DisallowSkipping();
+                }
+
+                if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
+                    _activeLabel.UpdateText(_tracker.Snapshot(settings.CardSkipsPerAct));
+                }
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] RewardSkippedFrom postfix failed", ex);
+            }
         }
     }
 }

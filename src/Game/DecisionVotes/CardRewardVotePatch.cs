@@ -51,21 +51,27 @@ internal static class CardRewardVotePatch {
     private static readonly Lazy<MethodInfo?> _selectCardMethod =
         new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "SelectCard", new[] { typeof(NCardHolder) }));
 
-    private readonly record struct HolderSignature(int Count, ulong[] InstanceIds) {
-        public bool Matches(IReadOnlyList<NCardHolder> current) {
+    /// <summary>
+    /// Captures option identity (not holder identity) for reroll detection at resume.
+    /// Reroll is the failure mode the spec wanted to catch — and reroll uniquely
+    /// rebuilds `_options` (NCardRewardSelectionScreen.RefreshOptions). Holder
+    /// instances, by contrast, can be re-created mid-vote by hover animations,
+    /// focus-loss redraw cycles, or other vanilla UI lifecycle events that do NOT
+    /// indicate reroll. Comparing CardCreationResult references gives us exactly
+    /// the signal we want with no false positives.
+    /// </summary>
+    private readonly record struct OptionsSignature(int Count, CardCreationResult[] Snapshot) {
+        public bool Matches(IReadOnlyList<CardCreationResult> current) {
             if (current.Count != Count) return false;
             for (int i = 0; i < Count; i++) {
-                if (!GodotObject.IsInstanceValid(current[i])) return false;
-                if (current[i].GetInstanceId() != InstanceIds[i]) return false;
+                if (!ReferenceEquals(current[i], Snapshot[i])) return false;
             }
             return true;
         }
     }
 
-    private static HolderSignature CaptureSignature(IReadOnlyList<NCardHolder> holders) {
-        var ids = new ulong[holders.Count];
-        for (int i = 0; i < holders.Count; i++) ids[i] = holders[i].GetInstanceId();
-        return new HolderSignature(holders.Count, ids);
+    private static OptionsSignature CaptureSignature(IReadOnlyList<CardCreationResult> options) {
+        return new OptionsSignature(options.Count, options.ToArray());
     }
 
     private static IReadOnlyList<NCardHolder>? GetCurrentHolders(NCardRewardSelectionScreen screen) {
@@ -191,7 +197,7 @@ internal static class CardRewardVotePatch {
         var labels = optionsSnapshot.Select(o => o.Card.Title).ToList();   // SPIKE-CORRECTED: was Card.Name.GetText()
 
         int playerClickIndex = FindHolderIndex(holdersSnapshot, cardHolder) ?? 0;
-        var holderSig = CaptureSignature(holdersSnapshot);
+        var optionsSig = CaptureSignature(optionsSnapshot);
 
         // Capture run-id (soft guard — uses Rng.StringSeed per spike, not .Id)
         string? runIdAtStart = null;
@@ -217,7 +223,7 @@ internal static class CardRewardVotePatch {
         }
 
         TiLog.Info($"[SlayTheStreamer2][card-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{playerClickIndex}");
-        _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, holderSig, playerClickIndex, runIdAtStart);
+        _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, optionsSig, playerClickIndex, runIdAtStart);
         return false;
     }
 
@@ -226,7 +232,7 @@ internal static class CardRewardVotePatch {
         NCardRewardSelectionScreen screen,
         VoteSession session,
         IReadOnlyList<CardCreationResult> optionsSnapshot,
-        HolderSignature holderSig,
+        OptionsSignature optionsSig,
         int playerClickIndex,
         string? runIdAtStart) {
         try {
@@ -246,11 +252,11 @@ internal static class CardRewardVotePatch {
             }
 
             TiLog.Info($"[SlayTheStreamer2][card-vote] resume: applying winner #{winnerIndex} on main thread");
-            coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, winnerIndex, playerClickIndex, runIdAtStart, holderSig));
+            coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, winnerIndex, playerClickIndex, runIdAtStart, optionsSig));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] HandleVoteAsync threw; attempting fallback resume with player click", ex);
             try {
-                coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, playerClickIndex, playerClickIndex, runIdAtStart, holderSig));
+                coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, playerClickIndex, playerClickIndex, runIdAtStart, optionsSig));
             } catch (Exception postEx) {
                 TiLog.Error("[SlayTheStreamer2][card-vote] fallback resume Post itself threw; resetting flags", postEx);
                 Interlocked.Exchange(ref _resumeInProgress, 0);
@@ -264,7 +270,7 @@ internal static class CardRewardVotePatch {
         int preferredIndex,
         int playerClickIndex,
         string? runIdAtStart,
-        HolderSignature snapshotSig) {
+        OptionsSignature snapshotSig) {
         Interlocked.Exchange(ref _resumeInProgress, 1);
         try {
             if (!GodotObject.IsInstanceValid(screen)) {
@@ -316,10 +322,23 @@ internal static class CardRewardVotePatch {
                 return;
             }
 
-            // Holder-signature check — detects reroll, screen rebuild, alternate path, etc.
-            var currentHolders = GetCurrentHolders(screen);
-            if (currentHolders is null || !snapshotSig.Matches(currentHolders)) {
+            // Options-signature check — detects reroll specifically (reroll uniquely rebuilds
+            // _options via RefreshOptions). Hover/animation/focus changes do NOT touch _options,
+            // so this gives us reroll-detection with zero false positives — unlike the previous
+            // holder-signature approach which fired spuriously on normal UI lifecycle events.
+            var currentOptions = GetCurrentOptions(screen);
+            if (currentOptions is null || !snapshotSig.Matches(currentOptions)) {
                 TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: card selection changed before apply");
+                SendCancellationReceipt();
+                return;
+            }
+
+            // Re-derive holders from current screen state for the actual SelectCard call.
+            // Holders may have been re-created during the vote window (e.g., hover animations) —
+            // OK to use the current instances since options identity is what we already verified.
+            var currentHolders = GetCurrentHolders(screen);
+            if (currentHolders is null || currentHolders.Count != currentOptions.Count) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: holders missing or out of sync with options");
                 SendCancellationReceipt();
                 return;
             }

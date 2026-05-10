@@ -116,4 +116,72 @@ internal static class CardRewardSkipGatePatch {
             return null;
         }
     }
+
+    /// <summary>
+    /// Ensure a CardSkipCounterLabel is attached to the rewards screen and shows
+    /// the current snapshot. Hides (or skips creating) when actLimit < 0 (unlimited).
+    /// IsInstanceValid guards against the static _activeLabel pointing at a freed node
+    /// (belt-and-suspenders alongside the AfterOverlayClosed null-out).
+    /// </summary>
+    private static void AttachOrUpdateLabel(NRewardsScreen screen, int actLimit) {
+        if (actLimit < 0) {
+            if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
+                _activeLabel.Visible = false;
+            }
+            return;
+        }
+
+        if (_activeLabel is null || !GodotObject.IsInstanceValid(_activeLabel)) {
+            var proceedButton = _proceedButtonField.Value?.GetValue(screen) as Control;
+            try {
+                _activeLabel = CardSkipCounterLabel.AttachTo(screen, proceedButton);
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] label attach failed", ex);
+                return;
+            }
+        }
+        _activeLabel.UpdateText(_tracker.Snapshot(actLimit));
+    }
+
+    [HarmonyPatch(typeof(NRewardsScreen), "_Ready")]
+    internal static class NRewardsScreen_Ready_Postfix {
+        static bool Prepare() => PrepareHardChecks();
+
+        static void Postfix(NRewardsScreen __instance) {
+            try {
+                if (!ShouldEnforceSkipGate()) return;
+
+                var runState = TryGetRunState();
+                if (runState is null) return;
+
+                // MP bail
+                try {
+                    if (runState.Players?.Count is int n && n > 1) return;
+                } catch { /* swallow — proceed without MP bail if accessor failed */ }
+
+                string? runId = runState.Rng?.StringSeed;
+                int? actIndex = GetCurrentActIndex(runState);
+                _tracker.ObserveRunAndAct(runId, actIndex);
+
+                if (!HasUnclaimedCardReward(__instance)) return;
+
+                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
+                if (!_tracker.IsSkipAllowed(settings.CardSkipsPerAct)) {
+                    __instance.DisallowSkipping();
+                }
+
+                AttachOrUpdateLabel(__instance, settings.CardSkipsPerAct);
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] _Ready postfix failed", ex);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
+    internal static class NRewardsScreen_AfterOverlayClosed_Postfix {
+        static bool Prepare() => true;   // No reflected fields needed; the patch is a simple null-out.
+        static void Postfix() {
+            _activeLabel = null;
+        }
+    }
 }

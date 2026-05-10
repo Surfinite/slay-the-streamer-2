@@ -272,17 +272,48 @@ internal static class CardRewardVotePatch {
                 return;
             }
 
-            // Run-ID guard (only if we captured a non-null start id)
-            if (runIdAtStart is not null) {
-                string? currentRunId = null;
-                try {
-                    currentRunId = RunManager.Instance?.DebugOnlyGetState()?.Rng?.StringSeed;
-                } catch { /* swallow — treat as null */ }
-                if (currentRunId != runIdAtStart) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run changed during vote");
+            // Run-state liveness checks. Catches:
+            //  - Run abandoned via menu (RunManager.IsAbandoned set true in AbandonInternal — RunState
+            //    survives in memory during teardown, so seed-only check below misses this case)
+            //  - Player died (RunState.IsGameOver true once GuaranteeKillAllPlayers ran)
+            //  - State fully torn down (DebugOnlyGetState null)
+            // Seed-only guard remains as a final check for "started a NEW run with a different seed
+            // before our resume Posted" — rare but possible.
+            try {
+                var rm = RunManager.Instance;
+                if (rm is null) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: RunManager.Instance is null");
                     SendCancellationReceipt();
                     return;
                 }
+                if (rm.IsAbandoned) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run was abandoned during vote");
+                    SendCancellationReceipt();
+                    return;
+                }
+                var currentState = rm.DebugOnlyGetState();
+                if (currentState is null) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run state is gone");
+                    SendCancellationReceipt();
+                    return;
+                }
+                if (currentState.IsGameOver) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run is over (player dead)");
+                    SendCancellationReceipt();
+                    return;
+                }
+                if (runIdAtStart is not null) {
+                    string? currentRunId = currentState.Rng?.StringSeed;
+                    if (currentRunId != runIdAtStart) {
+                        TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run changed during vote");
+                        SendCancellationReceipt();
+                        return;
+                    }
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] resume aborted: liveness check threw ({ex.Message})");
+                SendCancellationReceipt();
+                return;
             }
 
             // Holder-signature check — detects reroll, screen rebuild, alternate path, etc.

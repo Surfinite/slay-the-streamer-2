@@ -182,15 +182,42 @@ internal static class NeowBlessingVotePatch {
                 TiLog.Warn("[SlayTheStreamer2][neow-vote] resume: active event is no longer Neow; dropping resume");
                 return;
             }
-            if (runIdAtStart != null) {
-                string? currentRunId = null;
-                try {
-                    currentRunId = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState()?.Rng?.StringSeed;
-                } catch { /* swallow — treat as null */ }
-                if (currentRunId != runIdAtStart) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run changed during vote");
+            // Run-state liveness checks. Catches:
+            //  - Run abandoned via menu (RunManager.IsAbandoned set true in AbandonInternal — RunState
+            //    survives in memory during teardown, so seed-only check below misses this case)
+            //  - Player died (RunState.IsGameOver true once GuaranteeKillAllPlayers ran)
+            //  - State fully torn down (DebugOnlyGetState null)
+            // Seed-only guard remains as a final check for "started a NEW run with a different seed
+            // before our resume Posted" — rare but possible.
+            try {
+                var rm = MegaCrit.Sts2.Core.Runs.RunManager.Instance;
+                if (rm is null) {
+                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: RunManager.Instance is null");
                     return;
                 }
+                if (rm.IsAbandoned) {
+                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run was abandoned during vote");
+                    return;
+                }
+                var currentState = rm.DebugOnlyGetState();
+                if (currentState is null) {
+                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run state is gone");
+                    return;
+                }
+                if (currentState.IsGameOver) {
+                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run is over (player dead)");
+                    return;
+                }
+                if (runIdAtStart != null) {
+                    string? currentRunId = currentState.Rng?.StringSeed;
+                    if (currentRunId != runIdAtStart) {
+                        TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run changed during vote");
+                        return;
+                    }
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][neow-vote] resume aborted: liveness check threw ({ex.Message})");
+                return;
             }
             var currentOptions = GetCurrentOptions(room)?.ToList();
             if (currentOptions is null || currentOptions.Count == 0) {

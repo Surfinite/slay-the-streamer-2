@@ -225,8 +225,14 @@ internal static class CardRewardSkipGatePatch {
 
     [HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
     internal static class NRewardsScreen_AfterOverlayClosed_Postfix {
-        static bool Prepare() => true;   // No reflected fields needed; the patch is a simple null-out.
+        static bool Prepare() => true;   // No reflected fields needed.
         static void Postfix() {
+            // Label is now parented under SceneTree.Root (commit 17cb1d7) so it doesn't
+            // auto-free with the rewards screen. Free it explicitly here, then null the
+            // static so the next SetRewards postfix builds a fresh one.
+            if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
+                _activeLabel.QueueFree();
+            }
             _activeLabel = null;
         }
     }

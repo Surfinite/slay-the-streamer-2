@@ -49,6 +49,48 @@ internal static class CardRewardVotePatch {
     private static readonly Lazy<FieldInfo?> _cardRowField =
         new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_cardRow"));
 
+    private readonly record struct HolderSignature(int Count, ulong[] InstanceIds) {
+        public bool Matches(IReadOnlyList<NCardHolder> current) {
+            if (current.Count != Count) return false;
+            for (int i = 0; i < Count; i++) {
+                if (!GodotObject.IsInstanceValid(current[i])) return false;
+                if (current[i].GetInstanceId() != InstanceIds[i]) return false;
+            }
+            return true;
+        }
+    }
+
+    private static HolderSignature CaptureSignature(IReadOnlyList<NCardHolder> holders) {
+        var ids = new ulong[holders.Count];
+        for (int i = 0; i < holders.Count; i++) ids[i] = holders[i].GetInstanceId();
+        return new HolderSignature(holders.Count, ids);
+    }
+
+    private static IReadOnlyList<NCardHolder>? GetCurrentHolders(NCardRewardSelectionScreen screen) {
+        var host = _cardRowField.Value?.GetValue(screen) as Node;
+        if (host is null) return null;
+        return host.GetChildren().OfType<NCardHolder>().ToList();
+    }
+
+    private static int? FindHolderIndex(IReadOnlyList<NCardHolder> holders, NCardHolder target) {
+        for (int i = 0; i < holders.Count; i++) {
+            if (holders[i] == target || holders[i].GetInstanceId() == target.GetInstanceId()) return i;
+        }
+        return null;
+    }
+
+    private static IReadOnlyList<CardCreationResult>? GetCurrentOptions(NCardRewardSelectionScreen screen) {
+        return _optionsField.Value?.GetValue(screen) as IReadOnlyList<CardCreationResult>;
+    }
+
+    private static int? TryGetPlayerCount() {
+        try {
+            return RunManager.Instance?.DebugOnlyGetState()?.Players?.Count;
+        } catch {
+            return null;
+        }
+    }
+
     static bool Prepare(MethodBase? original) {
         if (original is null) {
             // Registration-time. Hard checks: vote target shape — failure aborts patch.
@@ -97,5 +139,92 @@ internal static class CardRewardVotePatch {
         }
         TiLog.Info($"[SlayTheStreamer2][card-vote] target resolved: {original.DeclaringType?.FullName}.{original.Name}");
         return true;
+    }
+
+    static bool Prefix(NCardRewardSelectionScreen __instance, NCardHolder cardHolder) {
+        if (_resumeInProgress == 1) return true;
+
+        // Hard guards
+        if (!GodotObject.IsInstanceValid(__instance) || !GodotObject.IsInstanceValid(cardHolder)) return true;
+
+        // Multiplayer bail
+        int? playerCount = TryGetPlayerCount();
+        if (playerCount is int n && n > 1) {
+            if (Interlocked.CompareExchange(ref _multiplayerWarnFired, 1, 0) == 0) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] multiplayer detected (Players.Count > 1); bailing to vanilla");
+            } else {
+                TiLog.Debug("[SlayTheStreamer2][card-vote] multiplayer bail-out");
+            }
+            return true;
+        }
+
+        // Chat-readiness gate
+        var coordinator = Voter.Default;
+        if (coordinator is null) return true;
+        if (coordinator.Chat.State is not ChatConnectionState.ConnectedReadWrite) {
+            TiLog.Debug($"[SlayTheStreamer2][card-vote] chat not in ConnectedReadWrite (state={coordinator.Chat.State}); bailing to vanilla");
+            return true;
+        }
+
+        // Atomic vote-in-progress flip
+        if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
+            TiLog.Debug("[SlayTheStreamer2][card-vote] repeat click during open vote — suppressed");
+            return false;
+        }
+
+        // Snapshot options + holders
+        var options = GetCurrentOptions(__instance);
+        var holders = GetCurrentHolders(__instance);
+        if (options is null || options.Count == 0 || holders is null || holders.Count == 0) {
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+        var optionsSnapshot = options.ToList();
+        var holdersSnapshot = holders.ToList();
+        var labels = optionsSnapshot.Select(o => o.Card.Title).ToList();   // SPIKE-CORRECTED: was Card.Name.GetText()
+
+        int playerClickIndex = FindHolderIndex(holdersSnapshot, cardHolder) ?? 0;
+        var holderSig = CaptureSignature(holdersSnapshot);
+
+        // Capture run-id (soft guard — uses Rng.StringSeed per spike, not .Id)
+        string? runIdAtStart = null;
+        if (RunIdGuardEnabled) {
+            try {
+                runIdAtStart = RunManager.Instance?.DebugOnlyGetState()?.Rng?.StringSeed;
+                if (runIdAtStart is null) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded for this vote — null state or null seed at start");
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] run-ID guard degraded for this vote — {ex.Message}");
+            }
+        }
+
+        // Voter.Start with try/catch fallback to vanilla
+        VoteSession session;
+        try {
+            session = coordinator.Start("Card Reward", labels, TimeSpan.FromSeconds(30));
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-vote] Voter.Default.Start threw; falling back to vanilla", ex);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+
+        TiLog.Info($"[SlayTheStreamer2][card-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{playerClickIndex}");
+        _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, holderSig, playerClickIndex, runIdAtStart);
+        return false;
+    }
+
+    // Stub — Task 9 implements the body
+    private static Task HandleVoteAsync(
+        VoteCoordinator coordinator,
+        NCardRewardSelectionScreen screen,
+        VoteSession session,
+        IReadOnlyList<CardCreationResult> optionsSnapshot,
+        HolderSignature holderSig,
+        int playerClickIndex,
+        string? runIdAtStart) {
+        // TODO Task 9: implement
+        Interlocked.Exchange(ref _voteInProgress, 0);
+        return Task.CompletedTask;
     }
 }

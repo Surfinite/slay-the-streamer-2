@@ -24,24 +24,25 @@ public static class ModEntry {
     private static readonly CancellationTokenSource _modCts = new();
     internal static TwitchIrcChatService? Chat { get; private set; }
     internal static VoteCoordinator? Coordinator { get; private set; }
+    internal static SettingsResult? Settings { get; private set; }
 
     public static void Init() {
         try {
             GodotMainThreadId = System.Environment.CurrentManagedThreadId;
-            Log.Info($"[slay_the_streamer_2] mod loading... (init thread={GodotMainThreadId})");
+            Log.Info($"[SlayTheStreamer2] mod loading... (init thread={GodotMainThreadId})");
 
             // Godot version + main loop type for cross-version troubleshooting.
             var godotVer = Engine.GetVersionInfo();
-            Log.Info($"[slay_the_streamer_2] Godot {godotVer["string"]}, " +
+            Log.Info($"[SlayTheStreamer2] Godot {godotVer["string"]}, " +
                 $"main loop type: {Engine.GetMainLoop()?.GetType().Name ?? "<null>"}");
-            Log.Info($"[slay_the_streamer_2] log file location: " +
+            Log.Info($"[SlayTheStreamer2] log file location: " +
                 $"{System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData)}" +
                 $"/SlayTheSpire2/logs/godot.log");
 
             // 1. Resolve SceneTree once with explicit cast and null check.
             var tree = Engine.GetMainLoop() as SceneTree;
             if (tree?.Root is null) {
-                Log.Error("[slay_the_streamer_2] Engine.GetMainLoop() is not a SceneTree " +
+                Log.Error("[SlayTheStreamer2] Engine.GetMainLoop() is not a SceneTree " +
                     "or has no Root — main loop not initialized at [ModInitializer] time. " +
                     "Aborting mod load.");
                 return;
@@ -51,14 +52,14 @@ public static class ModEntry {
             //    NGame._EnterTree when [ModInitializer] runs; direct AddChild errors).
             var autoload = new DispatcherAutoload { Name = "DispatcherAutoload" };
             tree.Root.CallDeferred("add_child", autoload);
-            Log.Info("[slay_the_streamer_2] dispatcher node deferred-attach queued (CallDeferred add_child)");
+            Log.Info("[SlayTheStreamer2] dispatcher node deferred-attach queued (CallDeferred add_child)");
 
             // 3. Optional instrumentation: register as engine singleton.
             try {
                 Engine.RegisterSingleton("DispatcherAutoload", autoload);
-                Log.Info("[slay_the_streamer_2] dispatcher also registered with Engine.RegisterSingleton");
+                Log.Info("[SlayTheStreamer2] dispatcher also registered with Engine.RegisterSingleton");
             } catch (Exception e) {
-                Log.Warn($"[slay_the_streamer_2] Engine.RegisterSingleton failed (continuing): {e.Message}");
+                Log.Warn($"[SlayTheStreamer2] Engine.RegisterSingleton failed (continuing): {e.Message}");
             }
 
             // 4. Wire IMainThreadDispatcher.
@@ -77,23 +78,24 @@ public static class ModEntry {
             // 6. Resolve settings file path Godot-side, load settings.
             var modVersion = Assembly.GetExecutingAssembly()
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
-            Log.Info($"[slay_the_streamer_2] mod version: {modVersion}");
+            Log.Info($"[SlayTheStreamer2] mod version: {modVersion}");
 
             var settingsPath = Path.Combine(OS.GetUserDataDir(), "slay_the_streamer_2.json");
             var settingsResult = BootstrapModSettings.Load(settingsPath);
+            Settings = settingsResult;
             ChatSettings? settings = null;
             switch (settingsResult) {
                 case SettingsResult.Success s:
                     settings = s.Settings;
-                    Log.Info($"[slay_the_streamer_2] settings loaded; channel=#{settings.Channel}");
-                    foreach (var w in s.Warnings) Log.Info($"[slay_the_streamer_2]   {w}");
+                    Log.Info($"[SlayTheStreamer2] settings loaded; channel=#{settings.Channel}");
+                    foreach (var w in s.Warnings) Log.Info($"[SlayTheStreamer2]   {w}");
                     break;
                 case SettingsResult.Missing m:
-                    Log.Info($"[slay_the_streamer_2] no settings file at {m.Path}; mod loaded but Twitch not connected. " +
+                    Log.Info($"[SlayTheStreamer2] no settings file at {m.Path}; mod loaded but Twitch not connected. " +
                              "Create the file with: { \"schemaVersion\": 1, \"channel\": \"...\", \"username\": \"...\", \"oauthToken\": \"oauth:...\" }");
                     break;
                 case SettingsResult.Malformed m:
-                    Log.Error($"[slay_the_streamer_2] settings file at {m.Path} is malformed: {m.Reason}. Mod loaded but not connecting.");
+                    Log.Error($"[SlayTheStreamer2] settings file at {m.Path} is malformed: {m.Reason}. Mod loaded but not connecting.");
                     break;
             }
 
@@ -128,15 +130,15 @@ public static class ModEntry {
             var harmony = new Harmony("slay_the_streamer_2");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             var patchedMethods = harmony.GetPatchedMethods().ToList();
-            Log.Info($"[slay_the_streamer_2] Harmony patched {patchedMethods.Count} method(s):");
+            Log.Info($"[SlayTheStreamer2] Harmony patched {patchedMethods.Count} method(s):");
             foreach (var m in patchedMethods) {
-                Log.Info($"[slay_the_streamer_2]   {m.DeclaringType?.FullName}.{m.Name}");
+                Log.Info($"[SlayTheStreamer2]   {m.DeclaringType?.FullName}.{m.Name}");
             }
 
-            Log.Info("[slay_the_streamer_2] Init complete.");
+            Log.Info("[SlayTheStreamer2] Init complete.");
         } catch (Exception e) {
             // Bound the blast radius: half-loaded mod is worse than not-loaded mod.
-            Log.Error($"[slay_the_streamer_2] FATAL: Init failed; subsequent game " +
+            Log.Error($"[SlayTheStreamer2] FATAL: Init failed; subsequent game " +
                 $"behavior unmodified. Exception: {e}");
         }
     }

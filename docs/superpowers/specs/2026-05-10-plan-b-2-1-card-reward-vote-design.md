@@ -32,7 +32,7 @@ Three things shape this spec beyond "do what B.1 did, but for cards":
 - **Patching reroll**, alternates, or any other non-`SelectCard` button on `NCardRewardSelectionScreen`. Streamer uses reroll freely; vote starts when streamer clicks an actual card.
 - **Patching `NRewardsScreen.OnProceedButtonPressed` directly.** We use vanilla's `DisallowSkipping()` instead — smaller surface, less risk of breaking unrelated reward types.
 - **Per-relic curation** (chat-strong / streamer-strong relic blacklist). Surfinite raised this during brainstorming; deferred to v0.2 polish. Documented in notes/06.
-- **Per-card-rarity vote-duration tuning.** v0.1 uses the global `voteDuration` for all votes including card reward.
+- **Settings-driven vote duration.** B.1's `NeowBlessingVotePatch` hardcodes `TimeSpan.FromSeconds(30)`; B.2.1 keeps the same hardcoded value in `CardRewardVotePatch`. Adding a `voteDuration` settings key is B.2.4 territory (in-game settings UI).
 - **BBCode stripping in receipts.** B.1's note still applies — if card names contain BBCode (unconfirmed), receipts will show literal markup. Add a stripper later if it actually surfaces.
 - **In-game indicator that vote is "in progress" beyond the existing `VoteTallyLabel`.** B.1's top-right multi-line label is reused as-is.
 - **Localised receipts.** English-only via Plan A's `EnglishReceipts`.
@@ -96,15 +96,16 @@ Copy-paste-modified from `NeowBlessingVotePatch.cs`. Same five sections, same fl
 
 ```csharp
 [HarmonyPatch(typeof(NCardRewardSelectionScreen), nameof(NCardRewardSelectionScreen.SelectCard))]
-public static class CardRewardVotePatch
+internal static class CardRewardVotePatch
 {
-    private static readonly object _gate = new();
-    private static bool _voteInProgress;
-    private static bool _resumeInProgress;
+    // Match B.1's NeowBlessingVotePatch: int + Interlocked, not bool, for atomic transitions.
+    private static int _voteInProgress;
+    private static int _resumeInProgress;
+    private static int _multiplayerWarnFired;
 
-    public static bool Prepare(MethodBase original) { /* field+signature checks */ }
+    static bool Prepare(MethodBase? original) { /* field+method shape checks */ }
 
-    public static bool Prefix(NCardRewardSelectionScreen __instance, NCardHolder cardHolder)
+    static bool Prefix(NCardRewardSelectionScreen __instance, NCardHolder cardHolder)
     {
         // — guard early returns —
         // — Players.Count > 1 bail —
@@ -147,13 +148,12 @@ Owns the skip-counter state and the two postfix patches that maintain it.
 ### State
 
 ```csharp
-public static class CardRewardSkipGatePatch
+internal static class CardRewardSkipGatePatch
 {
-    private static readonly object _gate = new();
     private static int _actSkipsUsed;
     private static int _runSkipsUsed;
     private static int? _lastSeenActIndex;       // null = no act seen yet
-    private static Guid? _lastSeenRunId;          // null = no run seen yet
+    private static Guid? _lastSeenRunId;         // null = no run seen yet (replace with actual run-id type if not Guid)
     private static CardSkipCounterLabel? _activeLabel;
     // ...
 }
@@ -269,13 +269,14 @@ Two new keys with documented defaults and validation:
   "schemaVersion": 1,
   "channel": "...",
   "username": "...",
-  "oauth": "...",
-  "voteDuration": 30,
+  "oauthToken": "...",
   // — new in B.2.1 —
   "cardSkipsPerAct": 1,    // default 1; -1 = unlimited; 0 = strict
   "cardSkipsPerRun": -1    // default -1 (unlimited); 0 = strict; positive = cap
 }
 ```
+
+(Existing B.1 keys preserved as-is. B.1 hardcodes vote duration at 30s in the Neow patch; B.2.1 follows suit.)
 
 ### Parsing rules
 

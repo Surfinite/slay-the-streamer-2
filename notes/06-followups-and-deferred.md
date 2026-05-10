@@ -4,6 +4,56 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Plan B.2.1 spike findings (2026-05-10)
+
+### Harmony patchability of Godot lifecycle methods on NRewardsScreen
+
+- `_Ready` postfix fires: <RUNTIME-VERIFY: needs operator playthrough — observe godot.log for `[spike] NRewardsScreen._Ready fired` after a combat-rewards screen appears>
+- `_ExitTree` postfix fires: <RUNTIME-VERIFY: needs operator playthrough — observe godot.log for `[spike] NRewardsScreen._ExitTree fired` after dismissing a rewards screen>
+  - **Spike-author note**: `NRewardsScreen` does NOT declare `_ExitTree()` (verified in decompile — absent from both `MethodName` registry and `GetGodotMethodList`). Harmony will attempt to patch the inherited `Control._ExitTree` (or `Node._ExitTree`); whether that intercepts the actual call on subclassed instances is the question. If the postfix never fires in-game, fallback chain: (a) patch `AfterOverlayClosed()` (declared on NRewardsScreen, called when overlay teardown runs `this.QueueFreeSafely()`; see lines 460–480 of decompile) — this is *probably the right hook anyway* for skip-gate teardown, since it fires after the rewards UI is dismissed but before the node is freed; (b) patch `Control._ExitTree` if AfterOverlayClosed proves insufficient; (c) hold a `WeakReference<NRewardsScreen>` and poll `IsInstanceValid` from a Godot tick.
+- Fallback if `_Ready` doesn't patch: try `_EnterTree` postfix (also inherited), or patch the first NRewardsScreen-declared method that runs after node setup — e.g., `AfterOverlayShown()` runs reliably after the screen becomes visible (line 494) and is a defensible alternative.
+
+### Reflected sts2.dll members — B.2.1 dependency surface
+
+CardRewardVotePatch depends on:
+- `MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardSelectionScreen` (type — public class, namespace confirmed)
+- `NCardRewardSelectionScreen.SelectCard(NCardHolder)` — `private void SelectCard(NCardHolder cardHolder)` (line 255 of decompile; `NCardHolder` is `MegaCrit.Sts2.Core.Nodes.Cards.Holders.NCardHolder`, abstract Control subclass)
+- `NCardRewardSelectionScreen._options` — `private IReadOnlyList<CardCreationResult> _options` (line 98; `CardCreationResult` is in `MegaCrit.Sts2.Core.Entities.Cards`)
+- Card-holder collection accessor: `private Control _cardRow` (line 96). The holders are children of `_cardRow` and are concretely `NGridCardHolder` (extends `NCardHolder`). Enumeration pattern verified in `RefreshOptions` (line 175): `_cardRow.GetChildren().OfType<NGridCardHolder>()`. For SelectCard you need the `NCardHolder` base type, so enumerate `_cardRow.GetChildren().OfType<NCardHolder>()` and index by position. Cards are added in order matching `_options` (verified at line 184: `for (int i = 0; i < _options.Count; i++) { ... _cardRow.AddChildSafely(holder); }`), so `_cardRow.GetChild<NCardHolder>(i)` aligns with `_options[i]`.
+- Card title for chat receipts: `result.Card.Title` returns `string` (already formatted; handles upgrade suffix). **Spec called this `result.Card.Name.GetText()` — that chain does not exist.** Use `result.Card.Title` directly (from `CardModel.Title` property, line 92 of CardModel.cs decompile). `Card` is `CardCreationResult.Card => _modifiedCard ?? originalCard` (line 14 of CardCreationResult.cs).
+- `MegaCrit.Sts2.Core.Runs.RunManager.Instance` — `public static RunManager Instance { get; } = new RunManager()` (line 62 of RunManager.cs; confirmed singleton, eagerly initialized)
+- `RunManager.DebugOnlyGetState()` returns `RunState?` (declared as nullable; line 1394). Returns the private `State` field which is null when not in a run; **non-null in modded production: <RUNTIME-VERIFY>** — should be non-null on a card-reward screen because the screen only appears mid-combat-reward sequence, which requires an active run.
+- `RunState.Id` — **DOES NOT EXIST.** No `Id` property on RunState (verified by inspection of full file and grep). Spec assumed this. Closest stable run identifier: `runState.Rng.StringSeed` (string — the user-supplied seed) or `runState.Rng.Seed` (uint — deterministic hash of the StringSeed). Recommended: `runState.Rng.StringSeed` for the run-ID guard; reads cleanly and survives serialization. Conversion: already a string, no `.ToString()` needed. If a more "instance-identity" guard is wanted (distinguishing two runs with the same seed string, which is rare but possible if the same daily is re-attempted), fall back to reference equality on the `RunState` instance itself: capture `runState` at vote-start, compare `ReferenceEquals(runState, RunManager.Instance.DebugOnlyGetState())` at resume.
+- `RunState.Players.Count` — `Players` is `IReadOnlyList<Player>` (line 39 of RunState.cs). `.Count` reachable; this is also already used by `NeowBlessingVotePatch.TryGetEventOwnerPlayerCount` via the `EventModel.Owner.RunState.Players.Count` chain — pattern already in production.
+- Current-act access pattern: **`runState.CurrentActIndex`** is the cleanest accessor. It's a public `int` property with public getter/setter on `RunState` (line 43). `ActConsoleCmd.NextAct` writes via `RunManager.Instance.EnterAct(actIndex)` and the State exposes the index directly. The `IRunState` interface also exposes it (line 23 of IRunState.cs), so the property is part of the stable contract. `runState.Acts.Count - 1` would give the *final* act index, not the current one. `runState.CurrentRoom?.Act` does not exist on AbstractRoom in this surface. Recommended: `runState.CurrentActIndex` (0-based; add 1 for human-readable "Act N" display).
+
+CardRewardSkipGatePatch depends on:
+- `MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen` (type — public class, namespace confirmed)
+- `NRewardsScreen._Ready()` — Harmony patches: <RUNTIME-VERIFY> (declared on NRewardsScreen at line 226; should patch cleanly since it's a `public override void` declared on the type)
+- `NRewardsScreen._ExitTree()` — Harmony patches: <RUNTIME-VERIFY>. **Important**: NRewardsScreen does NOT declare `_ExitTree`; Harmony will target the inherited Godot Control/Node `_ExitTree`. Likely-safer alternative: `AfterOverlayClosed()` (declared on NRewardsScreen, line 460; runs during the overlay-close pipeline before `QueueFreeSafely`). See "Harmony patchability" section above for fallback chain.
+- `NRewardsScreen.RewardSkippedFrom(Control)` — `public void RewardSkippedFrom(Control button)` (line 350; takes `Control` not `NRewardButton` — the signal is wired with `Callable.From<NRewardButton>` but the receiver signature accepts the base `Control` type)
+- `NRewardsScreen.DisallowSkipping()` — `public void DisallowSkipping()` (line 306; no parameters, sets `_skipDisallowed = true` and disables proceed button if it's currently in Skip mode)
+- `NRewardsScreen._rewardButtons` — `private readonly List<Control> _rewardButtons` (line 149; populated in `SetRewards` at line 291 with each `option` being either an `NRewardButton` or `NLinkedRewardSet`, both Control subclasses)
+- `NRewardsScreen._skippedRewardButtons` — `private readonly List<Control> _skippedRewardButtons` (line 151; populated in `RewardSkippedFrom` at line 352)
+- `NRewardsScreen._proceedButton` — `private NProceedButton _proceedButton` (line 129; type is concrete `NProceedButton` not Control)
+- `MegaCrit.Sts2.Core.Nodes.Rewards.NRewardButton` (type — at `decompiled/sts2/MegaCrit/sts2/Core/Nodes/Rewards/NRewardButton.cs`; **note namespace is `Nodes.Rewards`, not `Nodes`** as the spec wording implied)
+- `NRewardButton.Reward` — **property** (not field): `public Reward? Reward { get; private set; }` (line 105). Type is `Reward?` (nullable) where `Reward` is `MegaCrit.Sts2.Core.Rewards.Reward` (abstract base class). Accessibility: **public getter, private setter** — reflection not needed for read; direct property access works. Initially null until `SetReward` is called during `Create`.
+- `MegaCrit.Sts2.Core.Rewards.CardReward` (type — concrete subclass of `Reward`, line 29 of CardReward.cs; usable for `is CardReward` identity check on `NRewardButton.Reward`)
+- Current-act accessor: **`runState.CurrentActIndex`** (0-based int; same rationale as CardRewardVotePatch — public on `RunState`, also exposed via `IRunState` interface, used internally by `ActConsoleCmd` and `RunManager.SetActInternal`)
+- Vanilla `RewardCollectedFrom(Control)` removes button from `_rewardButtons`: **YES.** Verified at line 334–348 of decompile. Sequence: `int a = _rewardButtons.IndexOf(button); RemoveButton(button); ...` and `RemoveButton` calls `_rewardButtons.Remove(button)` (line 402). The button is also queue-freed (line 400). So a postfix observing `_rewardButtons` after `RewardCollectedFrom` will see the collected button gone. A skip-gate prefix that decides whether to hand control to chat must run BEFORE `RewardCollectedFrom` (e.g., on the click signal or via `RewardClaimed` signal interception) — but a postfix-on-`RewardCollectedFrom` for *post-claim* behavior (e.g., updating a per-act tally) sees the cleaned-up state.
+
+NeowBlessingVotePatch (B.1, retro-touched in B.2.1):
+- All B.1 reflection (already in NeowBlessingVotePatch.cs)
+- `RunManager.Instance.DebugOnlyGetState()?.Rng.StringSeed` (NEW in B.2.1 for run-ID guard — note: **not** `.Id` as the spec suggested; that property does not exist)
+
+### Vanilla back-out path from NCardRewardSelectionScreen
+
+Result: <RUNTIME-VERIFY: open card sub-screen in-game, look for back/cancel mechanism — Escape key, X button, right-click, etc.>
+- **Spike-author hint from decompile**: `NCardRewardSelectionScreen` itself has no obvious cancel button or escape-key handler in `_Ready` or elsewhere; the `_extraOptions` list (line 100, type `IReadOnlyList<CardRewardAlternative>`) drives "alternative reward" buttons via `OnAlternateRewardSelected` (line 247) which can complete the screen with `PostAlternateCardRewardAction.DismissScreenAndRemoveReward`. There may also be a global escape-handler at the `NOverlayStack` level (the screen is pushed via `NOverlayStack.Instance.Push` at line 149, which is the standard overlay pattern shared with NRewardsScreen). Operator should test: Escape key, right-click, controller B-button. If a back-out exists, it likely closes the sub-screen without selecting (returning control to NRewardsScreen). The `_ExitTree` override (line 230) handles the unselected-completion case: if `_completionSource` is not yet completed, it fires with `(Array.Empty<NCardHolder>(), item2: false)` — so back-out is structurally supported.
+Implication for acceptance gate Mode B verification: <doable | record as N/A — depends on verify result>.
+
+---
+
 ## Outstanding from session 2
 
 ### First action next session

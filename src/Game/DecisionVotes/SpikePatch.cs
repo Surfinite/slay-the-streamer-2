@@ -9,7 +9,11 @@ internal static class SpikeReadyPatch {
     static void Postfix() => TiLog.Info("[SlayTheStreamer2][spike] NRewardsScreen._Ready fired");
 }
 
-[HarmonyPatch(typeof(NRewardsScreen), "_ExitTree")]
-internal static class SpikeExitTreePatch {
-    static void Postfix() => TiLog.Info("[SlayTheStreamer2][spike] NRewardsScreen._ExitTree fired");
+// _ExitTree is NOT declared on NRewardsScreen (inherited from Godot.Node base);
+// Harmony can't resolve it by name on the derived type. Use AfterOverlayClosed
+// instead — declared directly on NRewardsScreen, called during overlay teardown
+// before QueueFreeSafely. Confirmed by FATAL Init exception on the first spike build.
+[HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
+internal static class SpikeAfterOverlayClosedPatch {
+    static void Postfix() => TiLog.Info("[SlayTheStreamer2][spike] NRewardsScreen.AfterOverlayClosed fired");
 }

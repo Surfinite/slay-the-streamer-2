@@ -13,16 +13,43 @@ the modded save is its own profile (no unlock progression yet).
 
 ## Repo layout
 
+What's in the repo:
+
 ```
 slay-the-streamer-2/
-  README.md                 this file
-  notes/                    research notes, hook-point map, design fragments
-  references/               cloned reference repos (read-only — do not modify)
-    SlayTheStreamer-sts1/     original StS1 mod, Java/LibGDX, feature reference only
-    STS2FirstMod/             jiegec's StS2 example mod, the toolkit reference
-  decompiled/               output of ILSpy on sts2.dll (regenerable, gitignored)
-    sts2/                     per-namespace .cs tree + .csproj
-    ilspy.log                 decompile log
+  README.md                  this file
+  LICENSE                    MIT
+  src/                       the mod
+    Ti/                        extractable Twitch-integration core (no Godot, no sts2.dll refs)
+      Chat/                      IRC client + chat message + send queue
+      Voting/                    VoteSession / VoteCoordinator / Voter / EnglishReceipts
+      Internal/                  IClock / ITimerScheduler / IMainThreadDispatcher / TiLog + fakes
+      Ui/                        Godot UI (VoteTallyLabel)
+      Godot/                     GodotMainThreadDispatcher + DispatcherAutoload
+    Game/                      StS2-specific glue (Harmony patches, settings)
+      Bootstrap/                 ModSettings (JSON config reader)
+      DecisionVotes/             Harmony patches per voted decision
+    ModEntry.cs                [ModInitializer] entry point
+    slay_the_streamer_2.csproj
+    slay_the_streamer_2.json   mod manifest
+  tests/                     xUnit test project (source-referenced, no DLL refs)
+  docs/superpowers/          specs + implementation plans + meta-reviews (the build-out story)
+  notes/                     research notes, hook-point inventory, follow-ups
+  build.ps1                  refresh DLLs from game install -> dotnet publish -> dotnet test -> assemble dist/
+  install.ps1                copy dist/ to <game-install>/mods/
+  uninstall.ps1              remove from <game-install>/mods/
+```
+
+Not in the repo — gitignored, created locally by the "Setting up a fresh workspace" steps below:
+
+```
+  references/                cloned reference repos (not our code; redistributing isn't ok)
+    SlayTheStreamer-sts1/      original StS1 mod, Java/LibGDX, feature reference only
+    STS2FirstMod/              jiegec's StS2 example mod
+  decompiled/sts2/           output of ILSpy on sts2.dll (MegaCrit's source, regenerable)
+  src/sts2.dll               copied per-build from the game install
+  src/0Harmony.dll           copied per-build from the game install
+  dist/                      build artefacts
 ```
 
 ## Scope (v0.1 MVP)

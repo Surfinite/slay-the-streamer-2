@@ -48,6 +48,8 @@ internal static class CardRewardVotePatch {
         new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_options"));
     private static readonly Lazy<FieldInfo?> _cardRowField =
         new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_cardRow"));
+    private static readonly Lazy<MethodInfo?> _selectCardMethod =
+        new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "SelectCard", new[] { typeof(NCardHolder) }));
 
     private readonly record struct HolderSignature(int Count, ulong[] InstanceIds) {
         public bool Matches(IReadOnlyList<NCardHolder> current) {
@@ -101,6 +103,11 @@ internal static class CardRewardVotePatch {
             }
             if (_cardRowField.Value is null) {
                 TiLog.Error("[SlayTheStreamer2][card-vote] hard check failed: NCardRewardSelectionScreen._cardRow field not found; patch will not register");
+                PreparedSuccessfully = false;
+                return false;
+            }
+            if (_selectCardMethod.Value is null) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] hard check failed: NCardRewardSelectionScreen.SelectCard(NCardHolder) method not found via reflection; patch will not register");
                 PreparedSuccessfully = false;
                 return false;
             }
@@ -214,8 +221,7 @@ internal static class CardRewardVotePatch {
         return false;
     }
 
-    // Stub — Task 9 implements the body
-    private static Task HandleVoteAsync(
+    private static async Task HandleVoteAsync(
         VoteCoordinator coordinator,
         NCardRewardSelectionScreen screen,
         VoteSession session,
@@ -223,8 +229,103 @@ internal static class CardRewardVotePatch {
         HolderSignature holderSig,
         int playerClickIndex,
         string? runIdAtStart) {
-        // TODO Task 9: implement
-        Interlocked.Exchange(ref _voteInProgress, 0);
-        return Task.CompletedTask;
+        try {
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+
+            int winnerIndex;
+            try {
+                winnerIndex = await session.AwaitWinnerAsync();
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] AwaitWinnerAsync threw; falling back to player click", ex);
+                winnerIndex = playerClickIndex;
+            }
+
+            if (winnerIndex < 0 || winnerIndex >= optionsSnapshot.Count) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] winnerIndex {winnerIndex} out of range; using player click");
+                winnerIndex = playerClickIndex;
+            }
+
+            TiLog.Info($"[SlayTheStreamer2][card-vote] resume: applying winner #{winnerIndex} on main thread");
+            coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, winnerIndex, playerClickIndex, runIdAtStart, holderSig));
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-vote] HandleVoteAsync threw; attempting fallback resume with player click", ex);
+            try {
+                coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, playerClickIndex, playerClickIndex, runIdAtStart, holderSig));
+            } catch (Exception postEx) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] fallback resume Post itself threw; resetting flags", postEx);
+                Interlocked.Exchange(ref _resumeInProgress, 0);
+                Interlocked.Exchange(ref _voteInProgress, 0);
+            }
+        }
+    }
+
+    private static void ResumeOnMainThread(
+        NCardRewardSelectionScreen screen,
+        int preferredIndex,
+        int playerClickIndex,
+        string? runIdAtStart,
+        HolderSignature snapshotSig) {
+        Interlocked.Exchange(ref _resumeInProgress, 1);
+        try {
+            if (!GodotObject.IsInstanceValid(screen)) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] resume: screen no longer valid; dropping");
+                return;
+            }
+
+            // Run-ID guard (only if we captured a non-null start id)
+            if (runIdAtStart is not null) {
+                string? currentRunId = null;
+                try {
+                    currentRunId = RunManager.Instance?.DebugOnlyGetState()?.Rng?.StringSeed;
+                } catch { /* swallow — treat as null */ }
+                if (currentRunId != runIdAtStart) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run changed during vote");
+                    SendCancellationReceipt();
+                    return;
+                }
+            }
+
+            // Holder-signature check — detects reroll, screen rebuild, alternate path, etc.
+            var currentHolders = GetCurrentHolders(screen);
+            if (currentHolders is null || !snapshotSig.Matches(currentHolders)) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: card selection changed before apply");
+                SendCancellationReceipt();
+                return;
+            }
+
+            // Bounds check
+            int applyIndex = preferredIndex;
+            if (applyIndex < 0 || applyIndex >= currentHolders.Count) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] preferred index {applyIndex} out of range; falling back to player click");
+                applyIndex = playerClickIndex;
+            }
+            if (applyIndex < 0 || applyIndex >= currentHolders.Count) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] resume: neither preferred nor player index valid; dropping");
+                return;
+            }
+
+            // Re-derive holder from current screen state (NOT captured ref) and apply via reflection
+            // (SelectCard is private — see Prepare's hard check on _selectCardMethod).
+            var winnerHolder = currentHolders[applyIndex];
+            var method = _selectCardMethod.Value;
+            if (method is null) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] resume: SelectCard method not found");
+                return;
+            }
+            method.Invoke(screen, new object[] { winnerHolder });
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-vote] resume threw", ex);
+        } finally {
+            Interlocked.Exchange(ref _resumeInProgress, 0);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+        }
+    }
+
+    private static void SendCancellationReceipt() {
+        var coordinator = Voter.Default;
+        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+        _ = coordinator.Chat.SendMessageAsync(
+            "Vote result ignored — card selection changed before apply",
+            OutgoingMessagePriority.Normal);
     }
 }

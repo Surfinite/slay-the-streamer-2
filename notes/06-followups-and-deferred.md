@@ -4,6 +4,17 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Vanilla bugs to file with MegaCrit (B.2.1 operator-validation discoveries, 2026-05-10)
+
+- [ ] **Escape-from-card-select softlocks the Skip button.** Repro: open the card sub-screen via the rewards screen Card item → press Escape → click Resume on the pause menu (returns to parent rewards screen with card unclaimed) → click Skip. Skip button does not respond; player is softlocked unless they go back through the card sub-screen and pick (or abandon the run). Reproduced with our mod active (skip gate did NOT call `DisallowSkipping` in this scenario — confirmed via diagnostic logs in commit 335dd49) so the issue is in vanilla state-machine handling of the Escape→Resume back-out path; not caused by our patches. **Surfinite to file via the appropriate vanilla bug-report channel.**
+
+## Plan B.2.1 UI / placement polish (deferred to v0.2)
+
+- [ ] **`CardSkipCounterLabel` placement is suboptimal.** Currently anchored at 0.62-0.98 horizontal × 0.74-0.82 vertical (right side, above the proceed button area). At default text size + default color, it appears as small text well to the left of the Skip button. Surfinite's brainstorming preference was "close to the proceed button for viewer readability". Polish needed: larger font, possibly bolder/coloured text, and tighter horizontal placement (likely AnchorLeft ~0.78 instead of 0.62). Verify on streamed playthrough at typical viewer screen size before tagging final.
+- [ ] **Skip / Proceed button text observation (informational, no action needed).** Vanilla's proceed button is a single button whose label switches between "Skip" (when unclaimed rewards remain) and "Proceed" (when all rewards have been taken or skipped). Our `DisallowSkipping()` call piggybacks on the Skip-mode disable mechanic; it has no effect once vanilla transitions the button to Proceed mode (which is correct — by then no skip is needed).
+
+---
+
 ## Plan B.2.1 spike findings (2026-05-10)
 
 ### Harmony patchability of Godot lifecycle methods on NRewardsScreen

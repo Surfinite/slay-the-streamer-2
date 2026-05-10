@@ -4,7 +4,12 @@ A Slay the Spire 2 mod that lets Twitch chat vote on the streamer's
 in-game decisions. Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer)
 (Steam Workshop [1610759491](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)).
 
-Currently in research / preparation phase — no mod code yet.
+**Status**: v0.1 in active development. **B.1 vertical slice shipped**
+2026-05-10 (`plan-b-1-complete` tag) — Neow blessing voting works
+end-to-end with real Twitch IRC. The remaining 4 votes (card reward,
+boss relic, map path, act boss) plus an in-game settings UI come in B.2.
+**Not yet for end users** — installation requires manual JSON config and
+the modded save is its own profile (no unlock progression yet).
 
 ## Repo layout
 
@@ -22,23 +27,30 @@ slay-the-streamer-2/
 
 ## Scope (v0.1 MVP)
 
-Chat votes on the **core decisions only**:
+Chat votes on the **core decisions** the original StS1 mod (or its
+underlying Twitch Integration base mod) covered:
 
+- Neow blessings (✅ shipped in B.1, 2026-05-10)
 - Card rewards
-- Neow blessings
-- Event choices
-- Boss reward picks
-- Shop purchases
+- Boss relic picks
 - Map path selection
+- Act boss (custom screen — likely needs its own sub-plan, B.3)
 
-Out of scope for v0.1 (post-MVP polish):
+Deferred to v0.2 as new-design problems (not in the original mod or its
+base-mod dependency, so each is a fresh design pass rather than a port):
+- Event choice voting
+- Shop purchase voting
+
+Out of scope entirely:
 - Chat bubbles on monsters
 - Custom monster names
 - Twitch Extension overlays
-- Anything requiring sending data back to Twitch
+- Sending data back to Twitch beyond outgoing chat receipts
 
-Twitch direction is **read-only IRC**. The streamer's screen is the
-shared display; viewers type vote commands like `#1` in chat.
+Twitch direction is **read-only IRC + outgoing chat receipts**. The
+streamer's screen is the shared display; viewers type vote commands
+like `#0`, `#1`, `#2` in chat. Vote tally is rendered both in chat
+(periodic + open + close receipts) and in-game (small overlay label).
 
 ## Setting up a fresh workspace
 

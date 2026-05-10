@@ -1,0 +1,398 @@
+## Final verdict
+
+v3 is substantially improved and close to implementation-ready, but I would fix a handful of remaining contradictions before generating the implementation plan — mainly around skip-gate activation, run-ID fallback semantics, reroll-cancel receipts, and self-contained patch details.
+
+---
+
+## Must fix before implementation
+
+### 1. Contradiction: run-ID guard failure disables patch vs only disables guard
+
+In **Decision 6**, you say:
+
+> if shape mismatch, log Warn and disable the run-ID check — vote still works without guard
+
+But in **`CardRewardVotePatch` → Reflected members verified by `Prepare`**, you say:
+
+> If ANY check fails: log Error, return false from `Prepare`, patch silently skips.
+
+That includes `RunManager.Instance`, `DebugOnlyGetState()`, and `RunState.Id`, so the two sections conflict.
+
+Recommended fix:
+
+Split `Prepare` requirements into two tiers:
+
+```text
+Hard Prepare requirements:
+- NCardRewardSelectionScreen exists
+- SelectCard(NCardHolder) exists
+- _options exists and is readable
+- card-holder collection exists and maps to _options
+- required player-count / MP-bail access exists, if the patch depends on it
+
+Soft Prepare requirements:
+- run-state accessor exists
+- run ID exists
+
+If soft run-ID checks fail, patch still registers with run-ID guard disabled.
+```
+
+Apply the same distinction to `NeowBlessingVotePatch`.
+
+---
+
+### 2. Skip gate still activates when card voting is not actually operational
+
+v3 fixes missing/malformed settings:
+
+> Skip gate detects `Settings` is `Missing`/`Malformed` and degrades to vanilla.
+
+Good.
+
+But there are still cases where the skip gate may enforce even though chat voting cannot happen:
+
+- `CardRewardVotePatch.Prepare` fails, but `CardRewardSkipGatePatch` still works.
+- settings are valid, but Twitch is disconnected/read-only.
+- `Voter.Default` is null or not usable.
+- chat credentials are valid but connection never succeeds.
+
+In those cases, the streamer may be forced to claim cards manually, but chat is not actually choosing. That weakens “degrade to vanilla.”
+
+You need an explicit policy.
+
+Recommended policy:
+
+```text
+Skip gate enforces only when card-vote infrastructure is available:
+- SettingsResult.Success exists.
+- CardRewardVotePatch prepared successfully.
+- Voter.Default exists.
+- Chat service is configured.
+
+Temporary Twitch disconnects during a run do NOT disable the gate, because reconnect/backlog is expected.
+Permanent no-settings/malformed-settings/no-voter/vote-patch-not-prepared degrade to vanilla.
+```
+
+Implementation can expose:
+
+```csharp
+internal static bool CardRewardVotePatch.PreparedSuccessfully { get; private set; }
+```
+
+Then skip gate checks it before enforcing.
+
+If you intentionally want skip gate to enforce with valid settings even when chat is disconnected, state that directly.
+
+---
+
+### 3. Reroll receipt claim is overconfident without patching reroll
+
+Decision 12 says:
+
+> If streamer clicks reroll mid-vote, chat receives a `vote cancelled — streamer rerolled` receipt.
+
+But reroll is explicitly not patched. If you only detect resume failure via holder snapshot mismatch, you cannot reliably know the cause was reroll. It could also be:
+
+- screen closed;
+- run abandoned;
+- card screen rebuilt;
+- holder invalidated by some other UI transition;
+- alternate reward path;
+- game update changed structure.
+
+So either:
+
+#### Option A — make receipt generic
+
+Use:
+
+```text
+vote cancelled — card reward changed or closed
+```
+
+or:
+
+```text
+vote cancelled — card selection no longer valid
+```
+
+This matches what the code can actually prove.
+
+#### Option B — patch reroll or screen-change event
+
+Out of scope per Non-goals, so I would not do this in B.2.1.
+
+Recommended fix: replace “rerolled” receipt with generic “card selection changed” wording everywhere, including Acceptance Step 6.
+
+---
+
+### 4. Acceptance Step 6 assumes “look + back out” is possible
+
+Mode B validation says:
+
+> open card sub-screen, see cards, return to rewards screen WITHOUT picking, click Proceed
+
+This is only valid if vanilla actually supports backing out from `NCardRewardSelectionScreen` to `NRewardsScreen` without selecting.
+
+If the card reward sub-screen has no back/cancel path, Mode B still exists in theory only if some UI path closes it. But the acceptance step would be impossible.
+
+Recommended fix:
+
+Change the acceptance wording to:
+
+```text
+If vanilla provides a back/cancel path from the card-selection sub-screen:
+  open card sub-screen, inspect cards, return to rewards screen without picking, click Proceed.
+  With cardSkipsPerAct: 1, skip is allowed.
+
+If no such path exists:
+  record that Mode B is only relevant to any future/rare vanilla path that returns from card selection without picking.
+```
+
+Or validate this in Task 1 before locking the acceptance gate.
+
+---
+
+### 5. `SkipBudgetTracker` assumes `Guid`, but spec says run ID type is uncertain
+
+The tracker uses:
+
+```csharp
+private Guid? _lastSeenRunId;
+public void ObserveRunAndAct(Guid? runId, int? actIndex)
+```
+
+But several parts of the spec say the run ID type must be pinned and is only assumed to be `Guid`.
+
+If the actual type is not `Guid`, you’ll either rewrite the tracker during implementation or disable run detection unnecessarily.
+
+Recommended fix:
+
+Make tracker independent of the concrete run-ID type:
+
+```csharp
+internal sealed class SkipBudgetTracker
+{
+    private string? _lastSeenRunId;
+
+    public void ObserveRunAndAct(string? runId, int? actIndex)
+    {
+        ...
+    }
+}
+```
+
+Then the Harmony layer converts the actual run ID to a stable string:
+
+```csharp
+string? runId = GetRunId(runState)?.ToString();
+```
+
+Or use `object?` plus `Equals`, but string is simpler and test-friendly.
+
+Same for the vote guard: compare normalized run-ID strings unless the real type is definitely known.
+
+---
+
+## Should fix / clarify
+
+### 6. v3 should not require readers to open v2 for the full `CardRewardVotePatch`
+
+This line is risky for an implementation plan:
+
+> see v2 spec for the full patch sketch
+
+Since v3 is “spec-of-record,” it should be self-contained enough to implement from. Cross-reference v2 for history, not required behaviour.
+
+Recommended fix: copy the key v2 details into v3, especially:
+
+- prefix guard order;
+- chat-readiness fallback behaviour;
+- player-click fallback semantics;
+- option snapshot;
+- holder snapshot/signature validation;
+- resume checks;
+- zero-option behaviour;
+- repeated-click behaviour.
+
+You don’t need the full 200 LOC sketch, but the behavioural contract should live in v3.
+
+---
+
+### 7. `_Ready` patchability check should also cover `_ExitTree`
+
+Decision 3 correctly says to verify `_Ready` Harmony patching with a no-op log.
+
+But v3 also relies on `_ExitTree` for clearing `_activeLabel`.
+
+Recommended addition:
+
+```text
+Task 1 also verifies `_ExitTree` postfix fires. If `_ExitTree` patching is unreliable, label cleanup relies on IsInstanceValid checks only.
+```
+
+Not a blocker, but it prevents false confidence in the cleanup path.
+
+---
+
+### 8. `RewardSkippedFrom` record-before-settings could mutate tracker during degraded mode
+
+Current sketch:
+
+```csharp
+if (!IsCardRewardButton(button)) return;
+
+_tracker.RecordSkip();
+
+if (ModEntry.Settings is SettingsResult.Success success) {
+    ...
+}
+```
+
+If settings are missing/malformed, `_Ready` degrades to vanilla, but `RewardSkippedFrom` still records skips. Usually harmless, but it means tracker state changes in a mode where the gate is supposedly inactive.
+
+Recommended order:
+
+```csharp
+if (!IsCardRewardButton(button)) return;
+if (ModEntry.Settings is not SettingsResult.Success success) return;
+
+_tracker.RecordSkip();
+...
+```
+
+If you add a `ShouldEnforceSkipGate()` helper, use it in both `_Ready` and `RewardSkippedFrom`.
+
+---
+
+### 9. Label may not update after card claim, depending on screen lifecycle
+
+Step 1 says:
+
+> skip-counter label updates correctly when cards are claimed (no skip used; stays `1/1 act`)
+
+If no skip happened, no counter change is needed. Fine.
+
+But if a skip happened earlier on the same screen, then a later card claim may change Proceed state, not budget state. The label can stay as-is.
+
+The real risk is `DisallowSkipping()` lifecycle, already covered by Step 5. I’d slightly reword Step 1 to avoid implying card claim triggers label refresh:
+
+```text
+skip-counter label remains visible and unchanged after card claim when no skip was used
+```
+
+---
+
+### 10. `SendSkipReceipt` sample may not match actual `Voter.Default` API
+
+The sketch says:
+
+```csharp
+var coordinator = Voter.Default;
+if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+```
+
+But from the context, `Voter.Default` is a static facade over `VoteCoordinator`; I’m not sure it exposes `.Chat` directly.
+
+This may be just pseudocode, but implementation plan should avoid relying on an uncertain API.
+
+Recommended spec wording:
+
+```text
+Send via the same chat-service access path used by B.1 receipts. If no public accessor exists, add a Game-side reference during ModEntry wiring rather than modifying Ti abstractions.
+```
+
+---
+
+## Minor inconsistencies / nits
+
+### 11. Architecture says `Ti/` unchanged, but Decision 20 talks about all log calls
+
+The architecture block says:
+
+```text
+Ti/ ✅ unchanged from B.1; NO modifications in B.2.1
+```
+
+Decision 20 says:
+
+> TiLog `[SlayTheStreamer2]` prefix on all log calls.
+
+This is okay if you’re only changing call sites in `Game/` and `ModEntry`, not `TiLog` itself or Ti call sites.
+
+But “all log calls” could imply Ti call sites too.
+
+Clarify:
+
+```text
+B.2.1 prefixes all Game/ and ModEntry log messages touched by this work. Ti/ remains unchanged.
+```
+
+Or, if you really want every log line globally tagged, prefix once in the sink instead of editing call sites — but that would touch `ModEntry`, not `Ti`.
+
+---
+
+### 12. `RunState.Acts` listed but current-act detection still not pinned
+
+The notes/06 list says:
+
+```text
+RunState.Acts (field — for current-act detection)
+```
+
+But this alone doesn’t define current act. Earlier specs acknowledged uncertainty around `Acts.Count - 1` vs `CurrentActIndex`.
+
+Add a line:
+
+```text
+Exact current-act derivation must be pinned during Task 1 and added to this notes section before implementation proceeds past the spike.
+```
+
+---
+
+### 13. Failure mode #8 may be too strong
+
+Failure mode #8:
+
+> `DebugOnlyGetState()` returns null at resume time | Null-safe comparison naturally aborts resume.
+
+If run ID guard was degraded at start because start state was null, then resume should probably not abort just because current state is null. The rule should be:
+
+```text
+If no run ID was captured at vote start, run-ID guard is disabled for that vote.
+If a run ID was captured at vote start and current run ID cannot be read at resume, abort resume fail-safe.
+```
+
+This avoids accidentally treating “guard unavailable” as “run changed.”
+
+---
+
+### 14. `Vote cancelled` receipt timing
+
+Because the vote cannot be cancelled externally, the “cancelled” receipt will happen only after the 30s vote closes and resume validation fails.
+
+That’s acceptable, but the wording might confuse chat: they voted for 30 seconds, then are told it was cancelled.
+
+Consider:
+
+```text
+Vote result ignored — card selection changed before apply
+```
+
+This is more accurate than “vote cancelled.”
+
+---
+
+## Final recommendation
+
+I’d call v3 **implementation-ready after a small v3.1 cleanup**, not a full redesign.
+
+The most important edits are:
+
+1. Resolve hard-vs-soft `Prepare` checks for run ID.
+2. Define skip-gate activation when card voting/chat is unavailable.
+3. Make reroll receipt generic unless reroll is actually patched.
+4. Make v3 self-contained for `CardRewardVotePatch`.
+5. Use a run-ID representation that does not assume `Guid`.
+
+Everything else is polish or implementation-plan detail. The core design — card vote via `SelectCard`, skip gate via `DisallowSkipping()`, per-act budget, pure `SkipBudgetTracker`, separate skip label, and Neow run-ID hardening — is sound.

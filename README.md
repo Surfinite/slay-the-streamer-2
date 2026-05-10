@@ -81,3 +81,11 @@ ilspycmd "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_st
 
 See `notes/` for the running research log, hook-point inventory,
 and any open questions.
+
+## Licence
+
+[MIT](LICENSE) — do whatever you want with this code as long as the
+licence + copyright stays attached. The original StS1 mod (Tempus's
+[Slay the Streamer](https://github.com/Tempus/SlayTheStreamer)) has no
+declared licence, so this project derives from its *concept* only — no
+code from that repo is incorporated.

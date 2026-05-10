@@ -28,5 +28,7 @@ Thumbs.db
 # Claude Code per-user state (commands/skills/shared settings DO get committed)
 .claude/settings.local.json
 
-# sts2.dll is copied per-build from the game install; never commit it
+# sts2.dll and 0Harmony.dll are copied per-build from the game install;
+# they're MegaCrit / HarmonyLib binaries, not ours to redistribute.
 src/sts2.dll
+src/0Harmony.dll

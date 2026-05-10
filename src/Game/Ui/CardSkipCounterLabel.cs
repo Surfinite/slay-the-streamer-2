@@ -6,22 +6,13 @@ namespace SlayTheStreamer2.Game.Ui;
 
 /// <summary>
 /// Godot RichTextLabel showing the streamer's per-act card-skip budget.
-/// Parented under SceneTree.Root (z-order proven by B.1's VoteTallyLabel) and
-/// positioned in screen-space near the proceed button via GlobalPosition.
+/// Mirrors B.1's VoteTallyLabel pattern (root-parented, anchor-based positioning,
+/// no theme overrides) — known to render reliably. For v0.1 diagnostic placement,
+/// anchored just below the vote tally region (top-right). Spatial co-location with
+/// the proceed button is deferred until we have a working baseline rendering.
 /// Hidden when cardSkipsPerAct == -1 (unlimited; nothing to display).
 /// </summary>
 public partial class CardSkipCounterLabel : RichTextLabel {
-    private const int FontSize = 18;
-    private static readonly Color DefaultColor = new(0.95f, 0.85f, 0.5f);
-
-    public override void _Ready() {
-        BbcodeEnabled = true;
-        FitContent = true;
-        ScrollActive = false;
-        AddThemeFontSizeOverride("normal_font_size", FontSize);
-        AddThemeColorOverride("default_color", DefaultColor);
-    }
-
     internal void UpdateText(SkipBudgetSnapshot snap) {
         if (snap.LimitThisAct < 0) {
             Visible = false;
@@ -31,40 +22,33 @@ public partial class CardSkipCounterLabel : RichTextLabel {
         Text = $"Card skips: {snap.RemainingThisAct}/{snap.LimitThisAct} act";
     }
 
-    /// <summary>
-    /// Attach a new label under SceneTree.Root and place it near `proceedButton` in
-    /// screen-space. Root-parenting matches B.1's VoteTallyLabel pattern (proven
-    /// z-order; unaffected by sub-screens overlaying NRewardsScreen).
-    /// `parent` is used only as a SceneTree handle (`parent.GetTree().Root`); ownership
-    /// is transferred to root, so cleanup MUST be done by the caller via
-    /// `_activeLabel = null` (the AfterOverlayClosed postfix in CardRewardSkipGatePatch).
-    /// </summary>
     public static CardSkipCounterLabel AttachTo(Node parent, Control? proceedButton) {
-        var label = new CardSkipCounterLabel { Name = "CardSkipCounterLabel" };
-        var root = parent.GetTree()?.Root;
-        if (root is null) {
-            TiLog.Error("[SlayTheStreamer2][card-skip-label] could not resolve SceneTree.Root; falling back to direct AddChild");
-            parent.AddChild(label);
-        } else {
-            root.AddChild(label);
+        var tree = parent.GetTree();
+        if (tree?.Root is null) {
+            TiLog.Warn("[SlayTheStreamer2][card-skip-label] no SceneTree.Root available; skipping UI attach");
+            // Return a free-standing label so the caller's contract is preserved;
+            // it will never render but won't crash anything either.
+            return new CardSkipCounterLabel { Name = "CardSkipCounterLabel" };
         }
 
-        // Position in screen-space. Use GlobalPosition (not Position — which is
-        // anchor-relative and can resolve to off-screen coordinates with
-        // LayoutPreset.TopLeft).
-        if (proceedButton is not null && GodotObject.IsInstanceValid(proceedButton)) {
-            var btnGlobal = proceedButton.GlobalPosition;
-            // Place 50px above the top of the proceed button, left-aligned with it.
-            label.GlobalPosition = btnGlobal + new Vector2(0, -50);
-            label.Size = new Vector2(360, 36);
-            TiLog.Info($"[SlayTheStreamer2][card-skip-label] attached at GlobalPosition={label.GlobalPosition} (proceedButton GlobalPosition={btnGlobal})");
-        } else {
-            TiLog.Warn("[SlayTheStreamer2][card-skip-label] _proceedButton not found; falling back to viewport-relative top-right");
-            // Top-right of viewport (vanilla 1920x1080 letterboxed; root viewport size is reliable).
-            var viewportSize = (root ?? parent).GetViewport().GetVisibleRect().Size;
-            label.GlobalPosition = new Vector2(viewportSize.X - 380, 60);
-            label.Size = new Vector2(360, 36);
-        }
+        var label = new CardSkipCounterLabel { Name = "CardSkipCounterLabel" };
+        label.BbcodeEnabled = true;
+        label.FitContent = true;
+        // DIAGNOSTIC: oversized + bright magenta to confirm rendering pipeline works
+        // at all. Strip back to defaults once visibility is confirmed.
+        label.AddThemeFontSizeOverride("normal_font_size", 80);
+        label.AddThemeColorOverride("default_color", new Color(1f, 0f, 1f));   // magenta
+        // Anchored just below VoteTallyLabel (which uses 0.05-0.4 vertically in the
+        // top-right region). This puts the skip counter in the 0.4-0.5 vertical band,
+        // visible without overlap. Spatial co-location with the Proceed button is a
+        // polish item once we know the rendering pipeline works at all.
+        label.AnchorLeft = 0.6f;
+        label.AnchorTop = 0.4f;
+        label.AnchorRight = 0.98f;
+        label.AnchorBottom = 0.5f;
+
+        tree.Root.AddChild(label);
+        TiLog.Info("[SlayTheStreamer2][card-skip-label] attached under SceneTree.Root with anchor 0.6,0.4,0.98,0.5; DIAGNOSTIC font=80 magenta");
         return label;
     }
 }

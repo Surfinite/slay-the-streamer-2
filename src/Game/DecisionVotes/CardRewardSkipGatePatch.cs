@@ -54,4 +54,66 @@ internal static class CardRewardSkipGatePatch {
         }
         return true;
     }
+
+    /// <summary>
+    /// Reflect into NRewardsScreen._rewardButtons and return as IReadOnlyList&lt;Control&gt;.
+    /// Vanilla stores this as List&lt;Control&gt; (mixes NRewardButton and NLinkedRewardSet,
+    /// both Control subclasses). Returns null if reflection fails.
+    /// </summary>
+    private static IReadOnlyList<Control>? GetRewardButtons(NRewardsScreen screen) {
+        var raw = _rewardButtonsField.Value?.GetValue(screen);
+        return raw as IReadOnlyList<Control> ?? (raw as IEnumerable<Control>)?.ToList();
+    }
+
+    /// <summary>
+    /// True iff the button is an NRewardButton wrapping a CardReward.
+    /// Uses direct property access (NRewardButton.Reward is a public property — no reflection).
+    /// </summary>
+    private static bool IsCardRewardButton(Control button) {
+        if (!GodotObject.IsInstanceValid(button)) return false;
+        if (button is not NRewardButton rb) return false;
+        return rb.Reward is CardReward;
+    }
+
+    /// <summary>
+    /// True iff at least one card reward remains unclaimed/unskipped on the screen.
+    /// Vanilla removes claimed/skipped buttons from _rewardButtons in RewardCollectedFrom
+    /// / RewardSkippedFrom (verified in spike notes) — so any CardReward-wrapping
+    /// NRewardButton still in the list is unclaimed.
+    /// </summary>
+    private static bool HasUnclaimedCardReward(NRewardsScreen screen) {
+        var buttons = GetRewardButtons(screen);
+        if (buttons is null) {
+            TiLog.Warn("[SlayTheStreamer2][card-skip-gate] could not enumerate _rewardButtons; assuming no card reward");
+            return false;
+        }
+        return buttons.Any(b => GodotObject.IsInstanceValid(b) && IsCardRewardButton(b));
+    }
+
+    /// <summary>
+    /// Read the current act index from RunState. Uses the public CurrentActIndex
+    /// property (spike-pinned; 0-based). Returns null on access failure (degraded
+    /// run detection — tracker treats null as "no change").
+    /// </summary>
+    private static int? GetCurrentActIndex(RunState? runState) {
+        if (runState is null) return null;
+        try {
+            return runState.CurrentActIndex;
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] CurrentActIndex access failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Try to read the current RunState. Wraps the DebugOnlyGetState() call in try/catch
+    /// so callers can treat any failure as "no run state available" (degraded operation).
+    /// </summary>
+    private static RunState? TryGetRunState() {
+        try {
+            return RunManager.Instance?.DebugOnlyGetState();
+        } catch {
+            return null;
+        }
+    }
 }

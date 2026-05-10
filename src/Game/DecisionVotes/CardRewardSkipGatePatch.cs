@@ -178,40 +178,24 @@ internal static class CardRewardSkipGatePatch {
         static bool Prepare() => PrepareHardChecks();
 
         static void Postfix(NRewardsScreen __instance) {
-            // TEMP: unconditional entry log to diagnose why postfix appears silent in v0.1 testing.
-            // Remove once skip-gate behaviour is operator-validated end-to-end.
-            TiLog.Info($"[SlayTheStreamer2][card-skip-gate] SetRewards postfix fired; Settings={(ModEntry.Settings?.GetType().Name ?? "null")}, VotePrepared={CardRewardVotePatch.PreparedSuccessfully}, VoterDefault={(Voter.Default is null ? "null" : "set")}");
             try {
-                if (!ShouldEnforceSkipGate()) {
-                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] SetRewards postfix bailed: ShouldEnforceSkipGate=false");
-                    return;
-                }
+                if (!ShouldEnforceSkipGate()) return;
 
                 var runState = TryGetRunState();
-                if (runState is null) {
-                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] SetRewards postfix bailed: TryGetRunState returned null");
-                    return;
-                }
+                if (runState is null) return;
 
                 // MP bail
                 try {
-                    if (runState.Players?.Count is int n && n > 1) {
-                        TiLog.Info($"[SlayTheStreamer2][card-skip-gate] SetRewards postfix bailed: MP detected (Players.Count={n})");
-                        return;
-                    }
+                    if (runState.Players?.Count is int n && n > 1) return;
                 } catch { /* swallow — proceed without MP bail if accessor failed */ }
 
                 string? runId = runState.Rng?.StringSeed;
                 int? actIndex = GetCurrentActIndex(runState);
                 _tracker.ObserveRunAndAct(runId, actIndex);
 
-                if (!HasUnclaimedCardReward(__instance)) {
-                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] SetRewards postfix bailed: no unclaimed card reward on screen");
-                    return;
-                }
+                if (!HasUnclaimedCardReward(__instance)) return;
 
                 var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
-                TiLog.Info($"[SlayTheStreamer2][card-skip-gate] SetRewards postfix proceeding: cardSkipsPerAct={settings.CardSkipsPerAct}, used={_tracker.ActSkipsUsed}, allowed={_tracker.IsSkipAllowed(settings.CardSkipsPerAct)}");
                 if (!_tracker.IsSkipAllowed(settings.CardSkipsPerAct)) {
                     __instance.DisallowSkipping();
                 }

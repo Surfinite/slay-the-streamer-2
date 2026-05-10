@@ -34,21 +34,19 @@ public partial class CardSkipCounterLabel : RichTextLabel {
         var label = new CardSkipCounterLabel { Name = "CardSkipCounterLabel" };
         label.BbcodeEnabled = true;
         label.FitContent = true;
-        // DIAGNOSTIC: oversized + bright magenta to confirm rendering pipeline works
-        // at all. Strip back to defaults once visibility is confirmed.
-        label.AddThemeFontSizeOverride("normal_font_size", 80);
-        label.AddThemeColorOverride("default_color", new Color(1f, 0f, 1f));   // magenta
-        // Anchored just below VoteTallyLabel (which uses 0.05-0.4 vertically in the
-        // top-right region). This puts the skip counter in the 0.4-0.5 vertical band,
-        // visible without overlap. Spatial co-location with the Proceed button is a
-        // polish item once we know the rendering pipeline works at all.
-        label.AnchorLeft = 0.6f;
-        label.AnchorTop = 0.4f;
+        // Right-aligned, vertically positioned just above the proceed button area.
+        // Proceed button observed at GlobalPosition.Y ~= 0.83 (1920x1080); anchor band
+        // 0.74-0.82 puts the label directly above it without overlapping the rewards
+        // screen panel (which ends around Y=0.74). Root-parented for z-order above
+        // sibling overlays. Diagnostic earlier proved rendering works in the 0.4-0.5
+        // band; this placement is the spec-preferred "near proceed button" location.
+        label.AnchorLeft = 0.62f;
+        label.AnchorTop = 0.74f;
         label.AnchorRight = 0.98f;
-        label.AnchorBottom = 0.5f;
+        label.AnchorBottom = 0.82f;
 
         tree.Root.AddChild(label);
-        TiLog.Info("[SlayTheStreamer2][card-skip-label] attached under SceneTree.Root with anchor 0.6,0.4,0.98,0.5; DIAGNOSTIC font=80 magenta");
+        TiLog.Info("[SlayTheStreamer2][card-skip-label] attached under SceneTree.Root");
         return label;
     }
 }

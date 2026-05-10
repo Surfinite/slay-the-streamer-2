@@ -166,8 +166,15 @@ internal static class CardRewardSkipGatePatch {
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
     }
 
-    [HarmonyPatch(typeof(NRewardsScreen), "_Ready")]
-    internal static class NRewardsScreen_Ready_Postfix {
+    // Patches SetRewards (NOT _Ready) — vanilla NRewardsScreen._Ready does NOT populate
+    // _rewardButtons; it just wires UI nodes and signal handlers. _rewardButtons is filled
+    // later by an explicit SetRewards(IEnumerable<Reward>) call from RunManager / NCombatRoom.
+    // Operator-validation Step 1 caught this: with a _Ready postfix, _rewardButtons was empty
+    // → HasUnclaimedCardReward returned false → silent early-return → label never attached
+    // and DisallowSkipping never called. SetRewards is the right hook because by the end of
+    // it (line 294 of decompile, just before UpdateScreenState), _rewardButtons is fully wired.
+    [HarmonyPatch(typeof(NRewardsScreen), "SetRewards")]
+    internal static class NRewardsScreen_SetRewards_Postfix {
         static bool Prepare() => PrepareHardChecks();
 
         static void Postfix(NRewardsScreen __instance) {
@@ -195,7 +202,7 @@ internal static class CardRewardSkipGatePatch {
 
                 AttachOrUpdateLabel(__instance, settings.CardSkipsPerAct);
             } catch (Exception ex) {
-                TiLog.Error("[SlayTheStreamer2][card-skip-gate] _Ready postfix failed", ex);
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] SetRewards postfix failed", ex);
             }
         }
     }

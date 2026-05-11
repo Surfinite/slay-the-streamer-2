@@ -230,6 +230,17 @@ internal static class CardRewardSkipGatePatch {
                 if (!IsCardRewardButton(button)) return;
                 if (!ShouldEnforceSkipGate()) return;   // settings-check BEFORE recording (per spec)
 
+                // Mid-vote skip guard: if a card vote is currently in progress, the streamer
+                // is using the sub-screens Skip path to abort the vote (vanilla still fires
+                // RewardSkippedFrom on the card button as part of the dismiss flow). Don't
+                // decrement the budget for this — the vote will drop silently when the
+                // resume hits IsInstanceValid. The deeper "abort-and-retry" exploit is
+                // tracked in notes/06 as v0.2 polish (patch OnAlternateRewardSelected).
+                if (CardRewardVotePatch.VoteInProgress) {
+                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] RewardSkippedFrom fired while vote in progress; not decrementing budget");
+                    return;
+                }
+
                 _tracker.RecordSkip();
 
                 var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;

@@ -121,6 +121,60 @@ Implication for acceptance gate Mode B verification (Task 21, Step 6 sub-step): 
 
 ---
 
+## Plan B.2.1 card reward vote (resolved 2026-05-11)
+
+Plan B.2.1's spec is at [`docs/superpowers/specs/2026-05-10-plan-b-2-1-card-reward-vote-design-v4.md`](../docs/superpowers/specs/2026-05-10-plan-b-2-1-card-reward-vote-design-v4.md) (with two 2026-05-11 amendments to Decisions 18 and 21); the implementation plan at [`docs/superpowers/plans/2026-05-10-plan-b-2-1-card-reward-vote.md`](../docs/superpowers/plans/2026-05-10-plan-b-2-1-card-reward-vote.md). Tagged `plan-b-2-1-complete`.
+
+### Acceptance gate — all green
+
+- [x] All B.1 regression tests pass (199 → 203 total with B.2.1's 4 new `BudgetResetReason` tests).
+- [x] **Step 0** pure regression — Neow vote still works with B.2.1 patches loaded; no card-reward path exercised.
+- [x] **Step 1** card vote happy path — 3 runs covering chat vote with `#N`/`N` parsing, latest-wins, close receipt with card name, VoteTallyLabel visible, skip-counter label visible near Proceed button.
+- [x] **Step 2** skip used — sub-screen Skip + parent Proceed flow charges budget, chat receipt fires, counter updates.
+- [x] **Step 3** skip blocked — strict mode (`cardSkipsPerAct: 0`) prevents skip at parent click; mandatory-look log fires; streamer must claim.
+- [x] **Step 4** counter resets — `act 2` DevConsole jump resets `1/1 act` (4A-used and 4A-fresh paths); new run resets via run-id change (4B).
+- [x] **Step 5** multi-reward-type screen — gold+potion+card combos work; mandatory-look gates the card portion specifically; non-card rewards unaffected.
+- [x] **Step 6** edge cases — run-abandon mid-vote (cancellation receipt fires when not eaten by Twitch ratelimit), streamer-escape mid-vote (vote completes in background, sub-screen survives Escape→Resume — a vanilla behavior shift we lucked into), rapid clicks suppressed, dual-card-rewards via `relic PrayerWheel` work correctly under per-card-button budget, reroll via Driftwood blocked mid-vote at `CardReward.Reroll` level.
+- [x] **Step 7** activation gate — `schemaVersion: 99` malformed-settings test degrades to vanilla cleanly. Auth-fail extension (Decision 21 amendment) also verified: one-character-corrupted oauthToken → `state=AuthenticationFailed` → skip-gate degrades same as malformed-settings.
+
+### Architecture-defining outcomes
+
+**The Model 2 transactional commit pattern is the right shape for "vote + budget" decisions in StS2.** The initial Model 1 design (immediate-charge on each sub-screen close-without-pick) felt natural from a Harmony-postfix-on-`RewardSkippedFrom` perspective, but operator-validation Step 5 surfaced a real UX trap: exploratory sub-screen Skip clicks charged budget the streamer didn't intend to spend. Model 2 (charge only when the parent Proceed click commits the screen) is symmetric, undoable until commit, and matches the player's mental model of "edit my choices until I press Proceed". For B.2.2 boon-god vote and onwards, expect to use the same shape: tentative state during the decision, committed at the screen-close button click.
+
+**Per-button mandatory-look tracking via `NRewardButton.OnRelease` prefix is the cleanest "did the player engage with this option" signal.** Sync handler, fires before the async sub-screen opens, instance-id keyed. No need for completion-source inspection or signal-handler interception. Generalizes to any decision where "must have looked at option N before committing" is a rule.
+
+**Vanilla's parent-Skip path does NOT emit `NRewardButton.RewardSkipped`.** The `RewardSkipped` signal fires only via `NRewardButton.GetReward`'s `OnSelectWrapper`-returned-false path (sub-screen close-without-pick). Parent's Proceed-as-Skip goes through `NOverlayStack.Remove` → `AfterOverlayClosed` → `Reward.OnSkipped()` (model-level method, no signal). Implication for any future budget-tracking patch: hook `AfterOverlayClosed` (prefix) to observe screen-level skip commits, NOT just the `RewardSkippedFrom` signal handler. The signal handler misses parent-Skip entirely.
+
+**`OnAlternateRewardSelected` is a two-statement click handler.** Vanilla wires the reroll/skip/alternate button click as `OnAlternateRewardSelected(...)` AND `TaskHelper.RunSafely(rewardOption.OnSelect())` — TWO independent calls. Blocking only `OnAlternateRewardSelected` does nothing for alternates whose `AfterSelected` is `None`/`DoNothing` (reroll being the prime example). To fully block a reroll you must patch `CardReward.Reroll` directly. Anti-pattern to remember for B.2.2+.
+
+### Findings worth preserving
+
+- **Sub-screen Escape→Resume returns to the sub-screen, not the parent, under our patch set.** Spike findings (notes/06 line 78) said Escape→Resume pops the sub-screen and returns to the parent rewards screen. After our patches landed, Surfinite observed Escape→Resume keeps the sub-screen with cards visible — actually a better UX for the no-skip-during-vote principle (Step 6 verification). The behavior change is likely a side-effect of one of our `OnAlternateRewardSelected` / `_ExitTree` interactions; worth a forensic dive in v0.2 to understand whether it's intentional or accidental.
+- **`OS.GetUserDataDir()` path is unchanged from B.1.** Settings at `%APPDATA%\SlayTheSpire2\slay_the_streamer_2.json`. Confirmed `ModSettings.Load` returns the expected `Malformed` variants for missing-required-field, bad-schemaVersion, and empty-credential cases.
+- **Run-state liveness checks need a tiered guard** — `IsAbandoned` and `IsGameOver` are correct semantics-of-mid-vote checks, but in practice the IsInstanceValid-on-screen check fires first because vanilla teardown frees the screen before our IsAbandoned check can run. The IsInstanceValid drop path now sends a cancellation receipt (commit `1b4d3b0`) — this is the primary path for "vote ended while run was being torn down".
+- **`CardReward.Title` is the canonical receipt name accessor.** The v3 spec called for `result.Card.Name.GetText()`; that chain doesn't exist. Use `result.Card.Title` (string) directly. Spike pinning (notes/06 line 50) called this out before implementation.
+- **`RunState.Id` doesn't exist either.** Use `runState.Rng.StringSeed` (string — the user-supplied seed) for the run-ID guard. Confirmed during spike (notes/06 line 53).
+- **`SetRewards` is the right hook for skip-gate setup, NOT `_Ready`.** `NRewardsScreen._Ready` does not populate `_rewardButtons`; it just wires UI nodes. Operator-validation Step 1 caught this with the original `_Ready` postfix → empty list → silent early-return. The plan-b-2-1/16.x commits switched to `SetRewards` postfix.
+- **`HasUnclaimedCardReward` originally double-counted sub-screen-skipped buttons.** Under Model 1, the multi-card-reward re-eval branch could spuriously call `DisallowSkipping` because vanilla doesn't remove skipped buttons from `_rewardButtons` (only adds them to `_skippedRewardButtons`). Model 2 sidesteps the bug entirely by not calling `DisallowSkipping` from `RewardSkippedFrom_Postfix` at all. Lesson: if vanilla's data model splits "still alive" from "already handled", our patches need to filter explicitly — or restructure to not care.
+- **Patch count for the slice: 8** (not 10 as one update mid-development suggested — `AfterOverlayClosed` is one method-target with Prefix + Postfix patches; Harmony counts it once).
+
+### B.2.1 follow-ups (deferred to v0.2 / Plan C)
+
+All deferred items are documented in the **UI/placement polish** section above (in this same file). Notable ones in priority-rough order:
+- Vanilla map-screen go-back arrow + Model 2 commit interaction.
+- Twitch ratelimit-burst handling (cancellation receipts dropped under the 20/30s account cap).
+- Reset-receipt timing (fires at end of first combat, not at act transition itself).
+- `TwitchIrcChatService.TransitionTo` silent-on-state-change logging gap.
+- Counter label live update / pulse on tentative-skip state (Model 2 currently shows committed-only).
+- Vote-option-numbering Noita pattern (back-to-back vote tally collisions under stream delay).
+- Skip receipt wording was resolved live during validation (commits 22.x).
+
+### B.2.2 readiness notes
+
+- Boss relics are removed in StS2; **"boon-god" start-of-act special-relic picks** (Tezcatara, Pael, etc.) take their place. Reuse Neow vote pattern as a template — same single-option-button-click structure. See [`sts2_boon_gods`](../../C:/Users/Surfinite/.claude/projects/c--Users-Surfinite-slay-the-streamer-2/memory/sts2_boon_gods.md) memory entry. In-code class name TBD until decompile inspection at B.2.2 kickoff.
+
+---
+
 ## Plan B.1 vertical slice (resolved 2026-05-10)
 
 Plan B.1's spec is at [`docs/superpowers/specs/2026-05-09-plan-b-1-vertical-slice-design-v3.md`](../docs/superpowers/specs/2026-05-09-plan-b-1-vertical-slice-design-v3.md); the implementation plan at [`docs/superpowers/plans/2026-05-09-plan-b-1-vertical-slice.md`](../docs/superpowers/plans/2026-05-09-plan-b-1-vertical-slice.md). Tagged `plan-b-1-complete`.

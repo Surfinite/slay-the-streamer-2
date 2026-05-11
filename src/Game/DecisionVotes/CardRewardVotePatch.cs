@@ -380,10 +380,15 @@ internal static class CardRewardVotePatch {
 
     private static void SendCancellationReceipt() {
         var coordinator = Voter.Default;
-        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
-        _ = coordinator.Chat.SendMessageAsync(
+        var state = coordinator?.Chat?.State;
+        if (state != ChatConnectionState.ConnectedReadWrite) {
+            TiLog.Warn($"[SlayTheStreamer2][card-vote] cancellation receipt skipped: chat state is {state?.ToString() ?? "null"}");
+            return;
+        }
+        _ = coordinator!.Chat.SendMessageAsync(
             "Vote result ignored — card selection changed before apply",
             OutgoingMessagePriority.Normal);
+        TiLog.Info("[SlayTheStreamer2][card-vote] cancellation receipt queued");
     }
 
     /// <summary>

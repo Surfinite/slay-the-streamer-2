@@ -67,13 +67,23 @@ internal static class CardRewardSkipGatePatch {
 
     /// <summary>
     /// Skip gate enforces only when card-vote infrastructure is fully available.
-    /// Temporary Twitch disconnect mid-run does NOT disable the gate (chat reconnect
-    /// + backlog handles that). Permanent missing-infrastructure degrades to vanilla.
+    /// Temporary Twitch disconnect mid-run (`Reconnecting` / `Connecting`) does NOT
+    /// disable the gate — those are transient and chat reconnect + IRC backlog
+    /// handle them per Decision 21. **Terminal** chat-failure states DO disable the
+    /// gate (Decision 21 amendment 2026-05-11 — see spec): if chat can't connect or
+    /// join the channel, the streamer's gameplay should not be gated against a chat
+    /// that will never recover for this session. Otherwise the streamer is stuck in
+    /// the worst-of-both-worlds state (no chat to vote, but skip is still
+    /// mandatory-look + budget gated).
     /// </summary>
     internal static bool ShouldEnforceSkipGate() {
         if (ModEntry.Settings is not SettingsResult.Success) return false;
         if (!CardRewardVotePatch.PreparedSuccessfully) return false;
         if (Voter.Default == null) return false;
+        var chatState = Voter.Default.Chat?.State;
+        if (chatState is ChatConnectionState.AuthenticationFailed
+                      or ChatConnectionState.JoinFailed
+                      or ChatConnectionState.Disposed) return false;
         return true;
     }
 

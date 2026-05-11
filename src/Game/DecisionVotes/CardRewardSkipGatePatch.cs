@@ -191,14 +191,32 @@ internal static class CardRewardSkipGatePatch {
     }
 
     private static string FormatSkipReceipt(int actUsed, int actLimit) {
-        string limitPart = actLimit < 0 ? "unlimited act" : $"{actUsed}/{actLimit} act";
-        return $"Streamer skipped a card reward ({limitPart})";
+        if (actLimit < 0) return "Streamer skipped a card reward.";
+        int remaining = Math.Max(0, actLimit - actUsed);
+        return $"Streamer skipped a card reward. {remaining} remaining this act";
     }
 
     private static void SendSkipReceipt(int actLimit) {
         var coordinator = Voter.Default;
         if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
         string text = FormatSkipReceipt(_tracker.ActSkipsUsed, actLimit);
+        _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
+    }
+
+    /// <summary>
+    /// Fires once at the moment the tracker detects a run change or act change. Lets
+    /// chat know the budget reset without them having to infer from the running-skip
+    /// receipts (which only fire on actual skips). Suppressed for unlimited
+    /// (actLimit &lt; 0) — no meaningful reset to announce. Also suppressed if act
+    /// detection failed (humanActNumber &lt;= 0); the reset still happened internally
+    /// but we don't want to send "Act 0".
+    /// </summary>
+    private static void SendBudgetResetReceipt(int actLimit, int humanActNumber) {
+        if (actLimit < 0) return;
+        if (humanActNumber <= 0) return;
+        var coordinator = Voter.Default;
+        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+        string text = $"Card skips reset to {actLimit} for Act {humanActNumber}";
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
     }
 
@@ -228,11 +246,20 @@ internal static class CardRewardSkipGatePatch {
                     if (runState.Players?.Count is int n && n > 1) return;
                 } catch { /* swallow — proceed without MP bail if accessor failed */ }
 
-                _tracker.ObserveRunAndAct(runState.Rng?.StringSeed, GetCurrentActIndex(runState));
+                int? actIndex = GetCurrentActIndex(runState);
+                var resetReason = _tracker.ObserveRunAndAct(runState.Rng?.StringSeed, actIndex);
+                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
+
+                if (resetReason != BudgetResetReason.None) {
+                    // Human-readable act number (1-based). actIndex is 0-based; if null
+                    // we send 0 to the receipt (which skips formatting it) and tag the
+                    // log with "?" so it's debuggable.
+                    int humanAct = actIndex.HasValue ? actIndex.Value + 1 : 0;
+                    SendBudgetResetReceipt(settings.CardSkipsPerAct, humanAct);
+                    TiLog.Info($"[SlayTheStreamer2][card-skip-gate] budget reset ({resetReason}); Act {(actIndex.HasValue ? humanAct.ToString() : "?")}");
+                }
 
                 if (!HasUnclaimedCardReward(__instance)) return;
-
-                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
                 // NOTE: Model 2 deliberately omits the SetRewards-time DisallowSkipping
                 // call. The OnProceedButtonPressed prefix below is the single source of
                 // truth for whether Proceed is allowed (mandatory-look + budget check).

@@ -19,7 +19,10 @@ public partial class CardSkipCounterLabel : RichTextLabel {
             return;
         }
         Visible = true;
-        Text = $"Card skips: {snap.RemainingThisAct}/{snap.LimitThisAct} act";
+        // Singular "card skip" iff exactly 1 remaining, else "card skips". 0 follows the
+        // standard English plural-zero convention ("0 card skips").
+        string noun = snap.RemainingThisAct == 1 ? "card skip" : "card skips";
+        Text = $"{snap.RemainingThisAct} {noun} remaining this act";
     }
 
     public static CardSkipCounterLabel AttachTo(Node parent, Control? proceedButton) {

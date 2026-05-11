@@ -14,17 +14,24 @@ internal sealed class SkipBudgetTracker {
 
     public int ActSkipsUsed => _actSkipsUsed;
 
-    public void ObserveRunAndAct(string? runId, int? actIndex) {
+    /// <summary>
+    /// Returns the reason the budget was reset, if any. Callers (e.g.,
+    /// CardRewardSkipGatePatch.SetRewards postfix) use this to fire a
+    /// "card skips reset" chat receipt at the moment of reset.
+    /// </summary>
+    public BudgetResetReason ObserveRunAndAct(string? runId, int? actIndex) {
         if (runId != null && runId != _lastSeenRunId) {
             _actSkipsUsed = 0;
             _lastSeenRunId = runId;
             _lastSeenActIndex = actIndex;
-            return;
+            return BudgetResetReason.RunChanged;
         }
         if (actIndex.HasValue && actIndex != _lastSeenActIndex) {
             _actSkipsUsed = 0;
             _lastSeenActIndex = actIndex;
+            return BudgetResetReason.ActChanged;
         }
+        return BudgetResetReason.None;
     }
 
     public bool IsSkipAllowed(int actLimit) {
@@ -47,3 +54,9 @@ internal sealed class SkipBudgetTracker {
 }
 
 internal readonly record struct SkipBudgetSnapshot(int UsedThisAct, int LimitThisAct, int RemainingThisAct);
+
+internal enum BudgetResetReason {
+    None,
+    RunChanged,
+    ActChanged,
+}

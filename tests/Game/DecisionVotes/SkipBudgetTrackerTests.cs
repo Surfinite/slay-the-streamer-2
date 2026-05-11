@@ -80,6 +80,33 @@ public class SkipBudgetTrackerTests {
     }
 
     [Fact]
+    public void ObserveRunAndAct_ReturnsRunChanged_OnNewRun() {
+        var t = new SkipBudgetTracker();
+        t.ObserveRunAndAct("run-1", 0);
+        Assert.Equal(BudgetResetReason.RunChanged, t.ObserveRunAndAct("run-2", 0));
+    }
+
+    [Fact]
+    public void ObserveRunAndAct_ReturnsActChanged_OnActJumpSameRun() {
+        var t = new SkipBudgetTracker();
+        t.ObserveRunAndAct("run-1", 0);
+        Assert.Equal(BudgetResetReason.ActChanged, t.ObserveRunAndAct("run-1", 1));
+    }
+
+    [Fact]
+    public void ObserveRunAndAct_ReturnsNone_OnIdenticalRunAndAct() {
+        var t = new SkipBudgetTracker();
+        t.ObserveRunAndAct("run-1", 0);
+        Assert.Equal(BudgetResetReason.None, t.ObserveRunAndAct("run-1", 0));
+    }
+
+    [Fact]
+    public void ObserveRunAndAct_ReturnsRunChanged_OnFirstObservation() {
+        var t = new SkipBudgetTracker();
+        Assert.Equal(BudgetResetReason.RunChanged, t.ObserveRunAndAct("run-1", 0));
+    }
+
+    [Fact]
     public void Snapshot_PositiveLimit_ReturnsCorrectRemaining() {
         var t = new SkipBudgetTracker();
         t.RecordSkip();

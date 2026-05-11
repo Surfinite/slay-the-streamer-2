@@ -2,11 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.Cards;      // CardCreationResult (for completion source generic arg)
+using MegaCrit.Sts2.Core.Nodes.Cards.Holders; // NCardHolder
 using MegaCrit.Sts2.Core.Nodes.Rewards;       // NRewardButton (spike-corrected namespace)
 using MegaCrit.Sts2.Core.Nodes.CommonUi;      // NProceedButton
 using MegaCrit.Sts2.Core.Nodes.Screens;       // NRewardsScreen
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection; // NCardRewardSelectionScreen
 using MegaCrit.Sts2.Core.Rewards;             // CardReward, Reward
 using MegaCrit.Sts2.Core.Runs;                // RunManager, RunState
 using SlayTheStreamer2.Game.Bootstrap;        // SettingsResult, ChatSettings
@@ -21,10 +25,20 @@ internal static class CardRewardSkipGatePatch {
     private static readonly SkipBudgetTracker _tracker = new();
     private static CardSkipCounterLabel? _activeLabel;
 
+    /// <summary>
+    /// Set true when the card sub-screen exits without an explicit user action
+    /// (back-out via Escape→Resume). Consumed and reset by the next RewardSkippedFrom
+    /// postfix call, which would otherwise spuriously decrement the budget.
+    /// Decision 18 (Mode B) explicitly allows looking-without-committing — see notes/06.
+    /// </summary>
+    private static bool _suppressNextCardSkip;
+
     private static readonly Lazy<FieldInfo?> _rewardButtonsField =
         new(() => AccessTools.Field(typeof(NRewardsScreen), "_rewardButtons"));
     private static readonly Lazy<FieldInfo?> _proceedButtonField =
         new(() => AccessTools.Field(typeof(NRewardsScreen), "_proceedButton"));
+    private static readonly Lazy<FieldInfo?> _subScreenCompletionSourceField =
+        new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_completionSource"));
 
     /// <summary>
     /// Skip gate enforces only when card-vote infrastructure is fully available.
@@ -235,12 +249,23 @@ internal static class CardRewardSkipGatePatch {
                 if (!IsCardRewardButton(button)) return;
                 if (!ShouldEnforceSkipGate()) return;   // settings-check BEFORE recording (per spec)
 
+                // Back-out suppression: if the player just opened the card sub-screen and
+                // backed out via Escape→Resume (no card click, no alternate click), vanilla
+                // emits RewardSkipped via NRewardButton.GetReward → OnSelectWrapper false path.
+                // Decision 18 (Mode B) says looking-without-committing must NOT cost a skip.
+                // The _ExitTree prefix on NCardRewardSelectionScreen detects this case and
+                // sets _suppressNextCardSkip; consume it here and skip the decrement.
+                if (_suppressNextCardSkip) {
+                    _suppressNextCardSkip = false;
+                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] RewardSkippedFrom suppressed: sub-screen back-out without explicit action (Mode B preserves looking-for-free)");
+                    return;
+                }
+
                 // Mid-vote skip guard: if a card vote is currently in progress, the streamer
                 // is using the sub-screens Skip path to abort the vote (vanilla still fires
                 // RewardSkippedFrom on the card button as part of the dismiss flow). Don't
                 // decrement the budget for this — the vote will drop silently when the
-                // resume hits IsInstanceValid. The deeper "abort-and-retry" exploit is
-                // tracked in notes/06 as v0.2 polish (patch OnAlternateRewardSelected).
+                // resume hits IsInstanceValid.
                 if (CardRewardVotePatch.VoteInProgress) {
                     TiLog.Info("[SlayTheStreamer2][card-skip-gate] RewardSkippedFrom fired while vote in progress; not decrementing budget");
                     return;
@@ -263,6 +288,39 @@ internal static class CardRewardSkipGatePatch {
                 }
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] RewardSkippedFrom postfix failed", ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sub-screen back-out detection. Decision 18 (Mode B) explicitly allows the streamer
+    /// to look at card options and back out via Escape→Resume without paying a skip cost.
+    /// But vanilla emits NRewardButton.RewardSkipped on the back-out path (via OnSelectWrapper
+    /// returning false), which would otherwise hit our RewardSkippedFrom postfix and decrement.
+    ///
+    /// The distinguishing signal is `_completionSource.Task.IsCompleted` BEFORE vanilla
+    /// _ExitTree runs:
+    ///   - true  → explicit action (SelectCard or OnAlternateRewardSelected) already SetResult
+    ///             → legitimate skip / claim flow → don't suppress
+    ///   - false → vanilla is about to SetResult(empty, false) → it's a back-out → suppress
+    ///             the next RewardSkippedFrom decrement
+    /// Implemented as a Prefix so we read the state before vanilla mutates it.
+    /// </summary>
+    [HarmonyPatch(typeof(NCardRewardSelectionScreen), "_ExitTree")]
+    internal static class NCardRewardSelectionScreen_ExitTree_Prefix {
+        static bool Prepare() => _subScreenCompletionSourceField.Value is not null;
+
+        static void Prefix(NCardRewardSelectionScreen __instance) {
+            try {
+                var cs = _subScreenCompletionSourceField.Value?.GetValue(__instance)
+                    as TaskCompletionSource<Tuple<IEnumerable<NCardHolder>, bool>>;
+                if (cs is null) return;
+                if (!cs.Task.IsCompleted) {
+                    _suppressNextCardSkip = true;
+                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] sub-screen back-out detected (completion source pending); next RewardSkippedFrom will be suppressed");
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] _ExitTree prefix could not read completion source: {ex.Message}");
             }
         }
     }

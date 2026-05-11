@@ -4,6 +4,20 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Plan B.2.1 design pivot — pending Surfinite confirmation 2026-05-11
+
+End of session 2026-05-10: Surfinite signalled a flip on the look-vs-skip cost model. Decision 18 in the v4 spec chose Mode B ("skip allowed regardless of look, within per-act budget"), and commit `bc7060f` implemented the back-out-suppression that made looking-without-picking cost-free. **Surfinite reversed this**: looking-without-picking SHOULD cost a skip; skipping-without-looking SHOULD also cost a skip; **skipping-without-looking might be made entirely impossible** (force the streamer to engage with the cards visually before any skip is allowed).
+
+Implications to settle tomorrow:
+- Likely revert (or repurpose) `bc7060f` — the back-out-suppression flag in CardRewardSkipGatePatch.
+- If "skip-without-looking impossible" is chosen: need to gate the parent rewards screen's Skip button on whether the card sub-screen was ever opened. Implementation sketch: patch parent's OnProceedButtonPressed prefix to block when `HasUnclaimedCardReward && !_subScreenWasOpenedThisRewardsScreen` (new flag set by NCardRewardSelectionScreen._Ready postfix).
+- If "look-then-skip costs" is chosen: simpler — let RewardSkippedFrom decrement on every fire, including the back-out path. Just delete the suppression flag.
+- Spec amendment likely needed for Decision 18.
+
+Surfinite said: "I haven't tested the newest commit yet, but I'm starting to find it difficult to focus so I'm not going to test again, and will confirm what the behaviour should be tomorrow."
+
+---
+
 ## Vanilla bugs to file with MegaCrit (B.2.1 operator-validation discoveries, 2026-05-10)
 
 - [ ] **Escape-from-card-select softlocks the Skip button.** Repro: open the card sub-screen via the rewards screen Card item → press Escape → click Resume on the pause menu (returns to parent rewards screen with card unclaimed) → click Skip. Skip button does not respond; player is softlocked unless they go back through the card sub-screen and pick (or abandon the run). Reproduced with our mod active (skip gate did NOT call `DisallowSkipping` in this scenario — confirmed via diagnostic logs in commit 335dd49) so the issue is in vanilla state-machine handling of the Escape→Resume back-out path; not caused by our patches. **Surfinite to file via the appropriate vanilla bug-report channel.**

@@ -39,7 +39,7 @@ internal static class NeowBlessingVotePatch {
             try {
                 var rm = MegaCrit.Sts2.Core.Runs.RunManager.Instance;
                 if (rm == null) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded — RunManager.Instance not reachable");
+                    TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded:RunManager.Instance not reachable");
                     RunIdGuardEnabled = false;
                 } else {
                     // Verify the type shape: RunManager exposes DebugOnlyGetState; deeper Rng.StringSeed
@@ -47,12 +47,12 @@ internal static class NeowBlessingVotePatch {
                     var rmType = rm.GetType();
                     var stateMethod = rmType.GetMethod("DebugOnlyGetState");
                     if (stateMethod == null) {
-                        TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded — DebugOnlyGetState() not found");
+                        TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded:DebugOnlyGetState() not found");
                         RunIdGuardEnabled = false;
                     }
                 }
             } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] run-ID guard degraded — Prepare soft check threw: {ex.Message}");
+                TiLog.Warn($"[SlayTheStreamer2][neow-vote] run-ID guard degraded:Prepare soft check threw: {ex.Message}");
                 RunIdGuardEnabled = false;
             }
 
@@ -97,15 +97,15 @@ internal static class NeowBlessingVotePatch {
                 var state = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
                 runIdAtStart = state?.Rng?.StringSeed;
                 if (runIdAtStart == null) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded for this vote — null state or null seed at start");
+                    TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded for this vote:null state or null seed at start");
                 }
             } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] run-ID guard degraded for this vote — {ex.Message}");
+                TiLog.Warn($"[SlayTheStreamer2][neow-vote] run-ID guard degraded for this vote:{ex.Message}");
             }
         }
 
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
-            TiLog.Debug("[SlayTheStreamer2][neow-vote] repeat click during open vote — suppressed");
+            TiLog.Debug("[SlayTheStreamer2][neow-vote] repeat click during open vote; suppressed");
             return false;
         }
 

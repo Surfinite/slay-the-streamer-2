@@ -9,6 +9,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
+using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
@@ -122,12 +123,12 @@ internal static class CardRewardVotePatch {
             try {
                 var rm = RunManager.Instance;
                 if (rm == null) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded — RunManager.Instance not reachable");
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded:RunManager.Instance not reachable");
                     RunIdGuardEnabled = false;
                 } else {
                     var stateMethod = rm.GetType().GetMethod("DebugOnlyGetState");
                     if (stateMethod is null) {
-                        TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded — DebugOnlyGetState() not found");
+                        TiLog.Warn("[SlayTheStreamer2][card-vote] run-ID guard degraded:DebugOnlyGetState() not found");
                         RunIdGuardEnabled = false;
                     }
                     // Don't deeply walk Rng.StringSeed here — state may be null at Prepare
@@ -135,7 +136,7 @@ internal static class CardRewardVotePatch {
                     // log Warn and treat that vote as guard-disabled.
                 }
             } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][card-vote] run-ID guard degraded — Prepare soft check threw: {ex.Message}");
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] run-ID guard degraded:Prepare soft check threw: {ex.Message}");
                 RunIdGuardEnabled = false;
             }
 
@@ -181,7 +182,7 @@ internal static class CardRewardVotePatch {
 
         // Atomic vote-in-progress flip
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
-            TiLog.Debug("[SlayTheStreamer2][card-vote] repeat click during open vote — suppressed");
+            TiLog.Debug("[SlayTheStreamer2][card-vote] repeat click during open vote; suppressed");
             return false;
         }
 
@@ -275,6 +276,12 @@ internal static class CardRewardVotePatch {
         try {
             if (!GodotObject.IsInstanceValid(screen)) {
                 TiLog.Warn("[SlayTheStreamer2][card-vote] resume: screen no longer valid; dropping");
+                // Most likely cause: vanilla teardown raced our resume Post (run-abandon,
+                // game-over, etc.) and freed the screen before IsAbandoned/IsGameOver
+                // checks could fire below. Chat saw the normal close receipt already
+                // ("Chat chose X: Y"); send the cancellation override so chat knows
+                // the pick didn't actually apply.
+                SendCancellationReceipt();
                 return;
             }
 
@@ -380,11 +387,20 @@ internal static class CardRewardVotePatch {
     }
 
     /// <summary>
-    /// Block sub-screen alternate-reward selections (Skip / Reroll / gold-instead) while a
+    /// Block sub-screen alternate-reward selections (Skip / gold-instead / etc.) while a
     /// card vote is in progress. Once chat is voting, the streamer's agency has been
-    /// transferred — they can't see the tally trending the wrong way and bail. Sub-screen
+    /// transferred -- they can't see the tally trending the wrong way and bail. Sub-screen
     /// stays open until the vote completes; resume's SelectCard re-call closes it normally.
-    /// Outside of a vote, alternates work as vanilla intends (reroll, skip, etc.).
+    /// Outside of a vote, alternates work as vanilla intends.
+    ///
+    /// NOTE: this prefix does NOT block reroll on its own. Vanilla wires the reroll
+    /// button click as two statements -- OnAlternateRewardSelected(AfterSelected) AND
+    /// TaskHelper.RunSafely(rewardOption.OnSelect()) (see
+    /// NCardRewardSelectionScreen.RefreshOptions line 209-213). The reroll alternative's
+    /// AfterSelected is None, so vanilla's OnAlternateRewardSelected body is a no-op
+    /// either way -- blocking it changes nothing for reroll. The actual reroll runs in
+    /// OnSelect() which calls CardReward.Reroll(). See CardReward_Reroll_Prefix below
+    /// for the parallel block on that path.
     /// </summary>
     [HarmonyPatch(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected")]
     internal static class NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix {
@@ -392,7 +408,37 @@ internal static class CardRewardVotePatch {
         static bool Prefix() {
             if (_voteInProgress == 1) {
                 TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
-                return false;   // skip vanilla — sub-screen stays open until vote resumes via SelectCard
+                return false;   // skip vanilla; sub-screen stays open until vote resumes via SelectCard
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Block CardReward.Reroll() when a vote is in progress. Vanilla's reroll button
+    /// click invokes this method via the CardRewardAlternative.OnSelect callback (see
+    /// the design note on NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix
+    /// above). Without this prefix, the streamer could click reroll late in the
+    /// countdown after seeing chat's trending vote, vanilla would shuffle _options,
+    /// and our resume's options-signature check would only fire AFTER the timer
+    /// expired (firing a "Vote result ignored" cancellation). That's bad UX -- chat
+    /// gets a misleading "we voted but it was ignored" rather than the simpler "you
+    /// can't reroll mid-vote".
+    ///
+    /// Patching an `async Task`-returning method: Harmony's Prefix runs synchronously
+    /// before the async state machine spins up. Returning false skips vanilla; setting
+    /// `__result = Task.CompletedTask` keeps any caller-side `await` from NREing on a
+    /// null Task. TaskHelper.RunSafely is the typical caller and tolerates failures,
+    /// but a completed Task is cleaner.
+    /// </summary>
+    [HarmonyPatch(typeof(CardReward), nameof(CardReward.Reroll))]
+    internal static class CardReward_Reroll_Prefix {
+        static bool Prepare() => true;
+        static bool Prefix(ref System.Threading.Tasks.Task __result) {
+            if (_voteInProgress == 1) {
+                TiLog.Info("[SlayTheStreamer2][card-vote] CardReward.Reroll blocked: vote in progress");
+                __result = System.Threading.Tasks.Task.CompletedTask;
+                return false;
             }
             return true;
         }

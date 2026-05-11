@@ -164,7 +164,7 @@ public sealed class TwitchIrcChatService : IChatService {
             case CapAckEvent: HasTags = true; break;
             case CapNakEvent:
                 HasTags = false;
-                TiLog.Warn("[TwitchIrcChatService] CAP NAK — falling back to no-tags mode");
+                TiLog.Warn("[TwitchIrcChatService] CAP NAK; falling back to no-tags mode");
                 break;
             case PingEvent ping:
                 _ = _transport!.WriteLineAsync($"PONG :{ping.Token}", _cts!.Token);
@@ -176,7 +176,7 @@ public sealed class TwitchIrcChatService : IChatService {
                 HandleNotice(notice);
                 break;
             case ReconnectEvent:
-                TiLog.Info("[TwitchIrcChatService] received RECONNECT — reconnecting");
+                TiLog.Info("[TwitchIrcChatService] received RECONNECT; reconnecting");
                 try { _transport?.Dispose(); } catch { }
                 // The read loop will exit on null/exception; ScheduleReconnect kicks in.
                 _cts?.Cancel();

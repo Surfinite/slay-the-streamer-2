@@ -180,7 +180,7 @@ public sealed class VoteSession : IDisposable {
         }
         _winnerTcs.TrySetResult(winner);
         if (!_anyoneAwaited)
-            TiLog.Warn($"VoteSession {Id} closed with winner {winner} but AwaitWinnerAsync was never called — caller likely forgot to consume the result.");
+            TiLog.Warn($"VoteSession {Id} closed with winner {winner} but AwaitWinnerAsync was never called; caller likely forgot to consume the result.");
         Closed?.Invoke(this, this);
         return winner;
     }

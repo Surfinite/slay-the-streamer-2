@@ -67,6 +67,7 @@ Deferred to v0.2 as new-design problems (not in the original mod or its
 base-mod dependency, so each is a fresh design pass rather than a port):
 - Event choice voting
 - Shop purchase voting
+- **Sealed-deck draft start** — Tempus's StS1 mod opened a run with a sealed deck that chat drafted, then chat played the role of "make the deck worse" through ongoing voting. Major mode pivot, not a small feature; specced as a post-B.3 sub-plan.
 
 Out of scope entirely:
 - Chat bubbles on monsters

@@ -4,17 +4,21 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
-## Plan B.2.1 design pivot — pending Surfinite confirmation 2026-05-11
+## Plan B.2.1 design pivot — RESOLVED 2026-05-11: Mandatory-look (b)
 
-End of session 2026-05-10: Surfinite signalled a flip on the look-vs-skip cost model. Decision 18 in the v4 spec chose Mode B ("skip allowed regardless of look, within per-act budget"), and commit `bc7060f` implemented the back-out-suppression that made looking-without-picking cost-free. **Surfinite reversed this**: looking-without-picking SHOULD cost a skip; skipping-without-looking SHOULD also cost a skip; **skipping-without-looking might be made entirely impossible** (force the streamer to engage with the cards visually before any skip is allowed).
+**Chosen**: option (b) "mandatory-look". Keep `bc7060f` (looking-via-back-out remains free) AND block parent-Skip when any pending card-reward button hasn't had its sub-screen opened. Skipping-without-looking is now impossible; the streamer must visually engage with each card reward before any path that would skip it. Per-card-button budget: if pending count exceeds remaining budget, parent Skip is also blocked — so under default `cardSkipsPerAct: 1`, skipping two cards on the same screen is impossible (would cost 2 skips, budget allows 1).
 
-Implications to settle tomorrow:
-- Likely revert (or repurpose) `bc7060f` — the back-out-suppression flag in CardRewardSkipGatePatch.
-- If "skip-without-looking impossible" is chosen: need to gate the parent rewards screen's Skip button on whether the card sub-screen was ever opened. Implementation sketch: patch parent's OnProceedButtonPressed prefix to block when `HasUnclaimedCardReward && !_subScreenWasOpenedThisRewardsScreen` (new flag set by NCardRewardSelectionScreen._Ready postfix).
-- If "look-then-skip costs" is chosen: simpler — let RewardSkippedFrom decrement on every fire, including the back-out path. Just delete the suppression flag.
-- Spec amendment likely needed for Decision 18.
+**Spec amendment**: Decision 18 in [`docs/superpowers/specs/2026-05-10-plan-b-2-1-card-reward-vote-design-v4.md`](../docs/superpowers/specs/2026-05-10-plan-b-2-1-card-reward-vote-design-v4.md) is amended (see "Decision 18 amendment 2026-05-11" callout in that file).
 
-Surfinite said: "I haven't tested the newest commit yet, but I'm starting to find it difficult to focus so I'm not going to test again, and will confirm what the behaviour should be tomorrow."
+**Implementation surface** (added in plan-b-2-1/20.x commits to `src/Game/DecisionVotes/CardRewardSkipGatePatch.cs`):
+- `_openedCardRewardButtonIds: HashSet<ulong>` static — per-rewards-screen tracking of which NRewardButton instances had their sub-screen opened. Cleared in `SetRewards` postfix (fresh screen) and `AfterOverlayClosed` postfix (defensive).
+- `NRewardButton_OnRelease_Prefix` — when the streamer releases a card-reward NRewardButton (CardReward or SpecialCardReward), record `GetInstanceId()` in the opened set. Vanilla's sync click handler at [NRewardButton.cs:214](../decompiled/sts2/MegaCrit/sts2/Core/Nodes/Rewards/NRewardButton.cs#L214), runs before the async `GetReward()` opens the sub-screen.
+- `NRewardsScreen_OnProceedButtonPressed_Prefix` — the gate. Counts pending card rewards (alive in `_rewardButtons` minus already-sub-screen-skipped in `_skippedRewardButtons`); blocks click when any pending button isn't in opened set (mandatory-look), or when `_actSkipsUsed + pending > limit` (budget). Calls `DisallowSkipping` as belt-and-suspenders on budget block.
+- `NRewardsScreen_AfterOverlayClosed_BudgetPrefix` — charges budget per pending card reward when the screen closes. This is the only place to observe the parent-Skip path: vanilla's `OnProceedButtonPressed` → `NOverlayStack.Remove` → `AfterOverlayClosed` iterates remaining children and calls `Reward.OnSkipped()` per button. No `RewardSkipped` signal is emitted on that path — `RewardSkippedFrom_Postfix` never sees it. Without this prefix, parent-Skip would skip cards for **free** budget-wise.
+
+**Vanilla quirk identified during design**: the parent's Proceed-as-Skip click bypasses the `RewardSkipped` signal entirely. Sub-screen Skip (via `OnAlternateRewardSelected`) DOES fire `RewardSkipped` on the button. So `RewardSkippedFrom_Postfix` only catches the sub-screen path; `AfterOverlayClosed_BudgetPrefix` catches the parent path. Both paths now decrement budget exactly once.
+
+**Known v0.1 quirk**: terminal screens with un-seen `combat_reward_ftue` route through `RewardFtueCheck` instead of actually proceeding ([NRewardsScreen.cs:444](../decompiled/sts2/MegaCrit/sts2/Core/Nodes/Screens/NRewardsScreen.cs#L444)). The OnProceedButtonPressed prefix runs both times the streamer clicks (once for FTUE trigger, once for real proceed). Acceptable — FTUE only fires once per save profile, budget is only charged in `AfterOverlayClosed` (which doesn't fire during FTUE), so no double-charge.
 
 ---
 

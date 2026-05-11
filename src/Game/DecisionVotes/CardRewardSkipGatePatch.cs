@@ -29,12 +29,26 @@ internal static class CardRewardSkipGatePatch {
     /// Set true when the card sub-screen exits without an explicit user action
     /// (back-out via Escape→Resume). Consumed and reset by the next RewardSkippedFrom
     /// postfix call, which would otherwise spuriously decrement the budget.
-    /// Decision 18 (Mode B) explicitly allows looking-without-committing — see notes/06.
+    /// Mandatory-look (the 2026-05-11 design pivot — amends Decision 18) preserves
+    /// looking-for-free: budget only ticks when the streamer commits to skip, not
+    /// when they peek and back out.
     /// </summary>
     private static bool _suppressNextCardSkip;
 
+    /// <summary>
+    /// Per-rewards-screen tracking of which NRewardButton instances had their card
+    /// sub-screen opened. Populated by the NRewardButton.OnRelease prefix below for
+    /// CardReward / SpecialCardReward buttons; consulted by OnProceedButtonPressed
+    /// prefix to enforce mandatory-look. Cleared in SetRewards postfix (fresh
+    /// rewards screen → fresh tracking) and AfterOverlayClosed postfix (defensive,
+    /// in case a screen is torn down without a subsequent SetRewards).
+    /// </summary>
+    private static readonly HashSet<ulong> _openedCardRewardButtonIds = new();
+
     private static readonly Lazy<FieldInfo?> _rewardButtonsField =
         new(() => AccessTools.Field(typeof(NRewardsScreen), "_rewardButtons"));
+    private static readonly Lazy<FieldInfo?> _skippedRewardButtonsField =
+        new(() => AccessTools.Field(typeof(NRewardsScreen), "_skippedRewardButtons"));
     private static readonly Lazy<FieldInfo?> _proceedButtonField =
         new(() => AccessTools.Field(typeof(NRewardsScreen), "_proceedButton"));
     private static readonly Lazy<FieldInfo?> _subScreenCompletionSourceField =
@@ -66,6 +80,13 @@ internal static class CardRewardSkipGatePatch {
         if (_proceedButtonField.Value is null) {
             TiLog.Warn("[SlayTheStreamer2][card-skip-gate] _proceedButton field not found; label will fallback to top-right of parent");
         }
+        // _skippedRewardButtons is a soft requirement: without it, CountPendingCardRewards
+        // can't filter out already-sub-screen-skipped buttons, so the AfterOverlayClosed
+        // budget prefix may over-charge on screens that mixed sub-screen skip + parent skip.
+        // Mandatory-look itself still works (it's keyed on opened-set, not skipped list).
+        if (_skippedRewardButtonsField.Value is null) {
+            TiLog.Warn("[SlayTheStreamer2][card-skip-gate] _skippedRewardButtons field not found; budget charge may double-count on mixed-skip screens");
+        }
         return true;
     }
 
@@ -96,9 +117,12 @@ internal static class CardRewardSkipGatePatch {
 
     /// <summary>
     /// True iff at least one card reward remains unclaimed/unskipped on the screen.
-    /// Vanilla removes claimed/skipped buttons from _rewardButtons in RewardCollectedFrom
-    /// / RewardSkippedFrom (verified in spike notes) — so any CardReward-wrapping
-    /// NRewardButton still in the list is unclaimed.
+    /// Vanilla removes claimed buttons from _rewardButtons in RewardCollectedFrom, but
+    /// sub-screen-skipped buttons stay in _rewardButtons (they're added to
+    /// _skippedRewardButtons instead, see NRewardsScreen.RewardSkippedFrom). For the
+    /// "should skip be allowed?" check at SetRewards time, "unclaimed" means either
+    /// still-pending OR already-skipped — both are CardReward buttons whose ultimate
+    /// fate depends on subsequent action, so we don't filter by _skippedRewardButtons here.
     /// </summary>
     private static bool HasUnclaimedCardReward(NRewardsScreen screen) {
         var buttons = GetRewardButtons(screen);
@@ -107,6 +131,38 @@ internal static class CardRewardSkipGatePatch {
             return false;
         }
         return buttons.Any(b => GodotObject.IsInstanceValid(b) && IsCardRewardButton(b));
+    }
+
+    /// <summary>
+    /// Snapshot of pending card-reward buttons on a rewards screen, for the mandatory-look
+    /// gate. "Pending" = NRewardButton in _rewardButtons (still alive) that wraps a
+    /// CardReward/SpecialCardReward AND is NOT yet in _skippedRewardButtons. These are
+    /// the buttons the parent's Proceed-as-Skip click would newly skip via vanilla's
+    /// AfterOverlayClosed → Reward.OnSkipped() iteration (sub-screen-skipped buttons
+    /// have already been charged through the RewardSkippedFrom postfix).
+    /// </summary>
+    private readonly record struct PendingCardRewards(int Total, int Unopened);
+
+    private static PendingCardRewards CountPendingCardRewards(NRewardsScreen screen) {
+        var buttons = GetRewardButtons(screen);
+        if (buttons is null) return new PendingCardRewards(0, 0);
+
+        var skippedRaw = _skippedRewardButtonsField.Value?.GetValue(screen);
+        var skipped = skippedRaw as IReadOnlyList<Control>
+            ?? (skippedRaw as IEnumerable<Control>)?.ToList()
+            ?? (IReadOnlyList<Control>)Array.Empty<Control>();
+
+        int total = 0;
+        int unopened = 0;
+        foreach (var b in buttons) {
+            if (!GodotObject.IsInstanceValid(b)) continue;
+            if (b is not NRewardButton rb) continue;
+            if (rb.Reward is not (CardReward or SpecialCardReward)) continue;
+            if (skipped.Contains(b)) continue;   // already counted via RewardSkippedFrom
+            total++;
+            if (!_openedCardRewardButtonIds.Contains(rb.GetInstanceId())) unopened++;
+        }
+        return new PendingCardRewards(total, unopened);
     }
 
     /// <summary>
@@ -198,6 +254,12 @@ internal static class CardRewardSkipGatePatch {
 
         static void Postfix(NRewardsScreen __instance) {
             try {
+                // Fresh rewards screen → fresh mandatory-look tracking. Old buttons were
+                // QueueFreed by RemoveButton in vanilla SetRewards; their instance IDs
+                // can never recur on the new buttons, but clearing keeps the set bounded
+                // and removes the "stale-but-harmless" mental footnote.
+                _openedCardRewardButtonIds.Clear();
+
                 if (!ShouldEnforceSkipGate()) return;
 
                 var runState = TryGetRunState();
@@ -226,6 +288,47 @@ internal static class CardRewardSkipGatePatch {
         }
     }
 
+    /// <summary>
+    /// Charges per-pending-card budget when the rewards screen closes. This is the only
+    /// place the parent's Proceed-as-Skip path can be observed: vanilla's OnProceedButtonPressed
+    /// removes the screen via NOverlayStack.Remove (non-terminal) or kicks off
+    /// ProceedFromTerminalRewardsScreen (terminal), both of which lead here. AfterOverlayClosed
+    /// then iterates remaining children and calls Reward.OnSkipped() per button — no
+    /// RewardSkipped signal is fired on that path, so RewardSkippedFrom_Postfix never sees
+    /// it. Without this prefix, parent-Skip would skip cards for FREE budget-wise.
+    ///
+    /// Pending count filters out sub-screen-skipped buttons (already in _skippedRewardButtons,
+    /// already charged through RewardSkippedFrom). Sub-screen-claimed buttons are absent
+    /// from _rewardButtons entirely (RemoveButton in RewardCollectedFrom). So this prefix
+    /// only charges for buttons whose skip side-effect is about to fire NOW.
+    /// </summary>
+    [HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
+    internal static class NRewardsScreen_AfterOverlayClosed_BudgetPrefix {
+        static bool Prepare() => PrepareHardChecks();
+
+        static void Prefix(NRewardsScreen __instance) {
+            try {
+                if (!ShouldEnforceSkipGate()) return;
+                if (CardRewardVotePatch.VoteInProgress) {
+                    TiLog.Info("[SlayTheStreamer2][card-skip-gate] AfterOverlayClosed: vote in progress; skipping budget charge");
+                    return;
+                }
+
+                var pending = CountPendingCardRewards(__instance);
+                if (pending.Total == 0) return;
+
+                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
+                for (int i = 0; i < pending.Total; i++) {
+                    _tracker.RecordSkip();
+                    SendSkipReceipt(settings.CardSkipsPerAct);
+                }
+                TiLog.Info($"[SlayTheStreamer2][card-skip-gate] AfterOverlayClosed: charged {pending.Total} card-skip(s) from parent-Skip path");
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] AfterOverlayClosed budget prefix failed", ex);
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
     internal static class NRewardsScreen_AfterOverlayClosed_Postfix {
         static bool Prepare() => true;   // No reflected fields needed.
@@ -237,6 +340,11 @@ internal static class CardRewardSkipGatePatch {
                 _activeLabel.QueueFree();
             }
             _activeLabel = null;
+
+            // Defensive — SetRewards postfix already clears, but if a screen tears down
+            // without a subsequent SetRewards (e.g., abandon-run mid-screen), this keeps
+            // the set bounded.
+            _openedCardRewardButtonIds.Clear();
         }
     }
 
@@ -293,10 +401,11 @@ internal static class CardRewardSkipGatePatch {
     }
 
     /// <summary>
-    /// Sub-screen back-out detection. Decision 18 (Mode B) explicitly allows the streamer
-    /// to look at card options and back out via Escape→Resume without paying a skip cost.
-    /// But vanilla emits NRewardButton.RewardSkipped on the back-out path (via OnSelectWrapper
-    /// returning false), which would otherwise hit our RewardSkippedFrom postfix and decrement.
+    /// Sub-screen back-out detection. Mandatory-look (the 2026-05-11 design pivot —
+    /// amends Decision 18) preserves looking-for-free: opening a card sub-screen and
+    /// backing out via Escape→Resume must NOT cost a skip. But vanilla emits
+    /// NRewardButton.RewardSkipped on the back-out path (via OnSelectWrapper returning
+    /// false), which would otherwise hit our RewardSkippedFrom postfix and decrement.
     ///
     /// The distinguishing signal is `_completionSource.Task.IsCompleted` BEFORE vanilla
     /// _ExitTree runs:
@@ -321,6 +430,85 @@ internal static class CardRewardSkipGatePatch {
                 }
             } catch (Exception ex) {
                 TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] _ExitTree prefix could not read completion source: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mandatory-look tracker: fires when the streamer releases a card-reward NRewardButton.
+    /// Vanilla's OnRelease (NRewardButton.cs:214) is the sync click handler that kicks off
+    /// `GetReward()` — which awaits `Reward.OnSelectWrapper()` and opens the
+    /// NCardRewardSelectionScreen sub-screen for CardReward/SpecialCardReward.
+    ///
+    /// This is the cleanest "the streamer is about to look at this card reward" signal —
+    /// sync, fires before the async sub-screen open, and is keyed to the specific button
+    /// instance. We just record the instance ID so the OnProceedButtonPressed gate below
+    /// can check it later. Non-card rewards (gold, potion, relic) skip the add (they claim
+    /// directly without a sub-screen — mandatory-look doesn't apply).
+    /// </summary>
+    [HarmonyPatch(typeof(NRewardButton), "OnRelease")]
+    internal static class NRewardButton_OnRelease_Prefix {
+        static bool Prepare() => true;
+
+        static void Prefix(NRewardButton __instance) {
+            try {
+                if (!ShouldEnforceSkipGate()) return;
+                if (!GodotObject.IsInstanceValid(__instance)) return;
+                if (__instance.Reward is not (CardReward or SpecialCardReward)) return;
+                _openedCardRewardButtonIds.Add(__instance.GetInstanceId());
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] OnRelease prefix could not record opened button: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The mandatory-look gate. Blocks the parent's Proceed/Skip click when any
+    /// pending (alive + not-yet-sub-screen-skipped) card-reward button hasn't had its
+    /// sub-screen opened. Also enforces per-card budget — if pending count would exceed
+    /// remaining budget, blocks AND calls DisallowSkipping as belt-and-suspenders.
+    ///
+    /// pending == 0 means either (a) no card rewards on screen or (b) all card rewards
+    /// already claimed or sub-screen-skipped → no further skip side effects happen via
+    /// this click → vanilla can run unmodified.
+    ///
+    /// Known v0.1 quirk: terminal screens with un-seen "combat_reward_ftue" route through
+    /// RewardFtueCheck instead of actually proceeding. The streamer sees a tutorial, then
+    /// has to click Proceed again. Our prefix runs both times; the second run would re-check
+    /// pending (potentially still > 0 if no skip happened first time). Acceptable — FTUE
+    /// only fires once per save profile, and the budget hasn't been charged yet either (we
+    /// charge in AfterOverlayClosed prefix, not here).
+    /// </summary>
+    [HarmonyPatch(typeof(NRewardsScreen), "OnProceedButtonPressed")]
+    internal static class NRewardsScreen_OnProceedButtonPressed_Prefix {
+        static bool Prepare() => PrepareHardChecks();
+
+        static bool Prefix(NRewardsScreen __instance) {
+            try {
+                if (!ShouldEnforceSkipGate()) return true;
+                if (CardRewardVotePatch.VoteInProgress) return true;   // vote will handle its own resume
+
+                var pending = CountPendingCardRewards(__instance);
+                if (pending.Total == 0) return true;   // nothing to skip — let vanilla through
+
+                if (pending.Unopened > 0) {
+                    TiLog.Info($"[SlayTheStreamer2][card-skip-gate] parent Skip blocked: mandatory-look unsatisfied for {pending.Unopened}/{pending.Total} pending card reward(s)");
+                    return false;
+                }
+
+                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
+                int limit = settings.CardSkipsPerAct;
+                if (limit >= 0 && _tracker.ActSkipsUsed + pending.Total > limit) {
+                    int remaining = Math.Max(0, limit - _tracker.ActSkipsUsed);
+                    TiLog.Info($"[SlayTheStreamer2][card-skip-gate] parent Skip blocked: would cost {pending.Total} skip(s); only {remaining}/{limit} budget remaining");
+                    __instance.DisallowSkipping();
+                    return false;
+                }
+
+                return true;
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] OnProceedButtonPressed prefix failed; falling back to vanilla", ex);
+                return true;
             }
         }
     }

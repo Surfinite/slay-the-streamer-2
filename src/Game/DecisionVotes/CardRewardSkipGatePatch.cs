@@ -51,6 +51,21 @@ internal static class CardRewardSkipGatePatch {
         new(() => AccessTools.Field(typeof(NRewardsScreen), "_proceedButton"));
 
     /// <summary>
+    /// Dev-console hook: zero the per-act counter and refresh the on-screen label if
+    /// it's currently mounted. Preserves run/act memory so the next SetRewards
+    /// observation doesn't fire a spurious "reset" chat receipt.
+    /// </summary>
+    internal static int ResetBudgetForDevConsole() {
+        int previousUsed = _tracker.ActSkipsUsed;
+        _tracker.ResetCounterOnly();
+        if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)
+            && ModEntry.Settings is SettingsResult.Success success) {
+            _activeLabel.UpdateText(_tracker.Snapshot(success.Settings.CardSkipsPerAct));
+        }
+        return previousUsed;
+    }
+
+    /// <summary>
     /// Skip gate enforces only when card-vote infrastructure is fully available.
     /// Temporary Twitch disconnect mid-run does NOT disable the gate (chat reconnect
     /// + backlog handles that). Permanent missing-infrastructure degrades to vanilla.

@@ -51,6 +51,15 @@ internal sealed class SkipBudgetTracker {
         _lastSeenActIndex = null;
         _lastSeenRunId = null;
     }
+
+    /// <summary>
+    /// Dev-console-only: zero the counter without disturbing run/act memory.
+    /// Differs from ResetForTests in that the NEXT ObserveRunAndAct call won't fire
+    /// a spurious RunChanged receipt (since we still remember the current run/act).
+    /// </summary>
+    internal void ResetCounterOnly() {
+        _actSkipsUsed = 0;
+    }
 }
 
 internal readonly record struct SkipBudgetSnapshot(int UsedThisAct, int LimitThisAct, int RemainingThisAct);

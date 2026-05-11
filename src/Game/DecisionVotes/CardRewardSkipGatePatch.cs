@@ -72,7 +72,12 @@ internal static class CardRewardSkipGatePatch {
     private static bool IsCardRewardButton(Control button) {
         if (!GodotObject.IsInstanceValid(button)) return false;
         if (button is not NRewardButton rb) return false;
-        return rb.Reward is CardReward;
+        // Two distinct card-reward types in vanilla:
+        //  - CardReward: choose-1-of-3 (opens NCardRewardSelectionScreen sub-screen)
+        //  - SpecialCardReward: single guaranteed card (no sub-screen, just claim or skip)
+        // Both add a card to the deck and both should count against the per-act budget.
+        // SpecialCardReward extends Reward directly (NOT CardReward), so we check both.
+        return rb.Reward is CardReward or SpecialCardReward;
     }
 
     /// <summary>

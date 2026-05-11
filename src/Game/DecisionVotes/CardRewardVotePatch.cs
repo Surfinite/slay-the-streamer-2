@@ -378,4 +378,23 @@ internal static class CardRewardVotePatch {
             "Vote result ignored — card selection changed before apply",
             OutgoingMessagePriority.Normal);
     }
+
+    /// <summary>
+    /// Block sub-screen alternate-reward selections (Skip / Reroll / gold-instead) while a
+    /// card vote is in progress. Once chat is voting, the streamer's agency has been
+    /// transferred — they can't see the tally trending the wrong way and bail. Sub-screen
+    /// stays open until the vote completes; resume's SelectCard re-call closes it normally.
+    /// Outside of a vote, alternates work as vanilla intends (reroll, skip, etc.).
+    /// </summary>
+    [HarmonyPatch(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected")]
+    internal static class NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix {
+        static bool Prepare() => true;
+        static bool Prefix() {
+            if (_voteInProgress == 1) {
+                TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
+                return false;   // skip vanilla — sub-screen stays open until vote resumes via SelectCard
+            }
+            return true;
+        }
+    }
 }

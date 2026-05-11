@@ -270,6 +270,7 @@ From the meta-review's Optional Enhancements table — flagged for future consid
 
 ## v0.2+ (explicitly out of scope for v0.1)
 
+- **Sealed-deck draft start** — Tempus's original StS1 mod opened a run with a **sealed deck** that chat drafted, then chat played the role of "make the deck worse" through subsequent voting. We're currently building the picker-style "chat helps choose" framing, but the sealed-deck-draft start is the other defining feature of the original mod and likely something the streamer community will ask about. Probably a Plan E or post-B.3 sub-plan. Mechanics to spec out: how the starting deck is generated (random pool? chat-drafted via repeated votes? all-rare? all-curses?), whether the streamer's character pick is still vanilla or chat-voted, how it interacts with first-run unlock gating, and whether it's a toggleable mode or always-on. Surfinite flagged 2026-05-11 as needing to be on the roadmap, not in flight.
 - **StS2 co-op multiplayer.** API is multiplayer-aware (`VoteCoordinator` is instance-based per Reviewer 6's catch); full multi-streamer impl deferred.
 - **Subscriber/mod/VIP-only voting filters.** `ChatMessage` already exposes badge flags; future filter is a `where`-clause in `VoteCoordinator.Start` consumers.
 - **Localised receipts.** Add peer static helpers (`SpanishReceipts.cs` etc.) + `Func<VoteSnapshot, ReceiptKind, string>` to `VoteCoordinator.Start`.

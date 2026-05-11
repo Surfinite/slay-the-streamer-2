@@ -34,6 +34,11 @@ public partial class CardSkipCounterLabel : RichTextLabel {
         var label = new CardSkipCounterLabel { Name = "CardSkipCounterLabel" };
         label.BbcodeEnabled = true;
         label.FitContent = true;
+        // Pass clicks through to the underlying scene. The anchor band overlaps the
+        // proceed/skip button area; default Control.MouseFilter is Stop, which would
+        // swallow clicks on the bottom half of that button. Ignore lets the click
+        // reach the button beneath.
+        label.MouseFilter = Control.MouseFilterEnum.Ignore;
         // Right-aligned, vertically positioned just above the proceed button area.
         // Proceed button observed at GlobalPosition.Y ~= 0.83 (1920x1080); anchor band
         // 0.74-0.82 puts the label directly above it without overlapping the rewards

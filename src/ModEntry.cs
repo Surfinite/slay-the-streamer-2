@@ -138,6 +138,8 @@ public static class ModEntry {
                         scheduler: scheduler,
                         discovery: discovery,
                         scraper: scraper);
+                    var twitchForEscalation = Chat;
+                    youtube.EscalationRequested += (_, e) => OnYouTubeEscalation(twitchForEscalation, e);
                     _ = youtube.ConnectAsync(settings.YoutubeChannelId);
                 }
                 YouTube = youtube;
@@ -242,6 +244,18 @@ public static class ModEntry {
             _ =>
                 "slay-the-streamer-2 connected (Twitch). YouTube: no live broadcast found, retrying.",
         };
+    }
+
+    /// <summary>
+    /// Wired to YouTubeChatService.EscalationRequested. Fires once after the
+    /// YT consecutive-reconnect counter hits 30 (~30 minutes of failure). Surfaces
+    /// the receipt on Twitch at High priority so chatters know the YT setting
+    /// likely needs the streamer's attention.
+    /// </summary>
+    private static void OnYouTubeEscalation(TwitchIrcChatService twitch, YouTubeEscalationRequestedEventArgs e) {
+        var msg = "YouTube: still not connected after repeated retries — check \"youtubeChannelId\" in settings (see logs for details).";
+        _ = twitch.SendMessageAsync(msg, OutgoingMessagePriority.High);
+        TiLog.Warn($"[ModEntry] YouTube escalation fired after {e.ConsecutiveReconnectCount} reconnects; reason={e.LastStatusReason}");
     }
 
     private static string? BuildYouTubeStateReceipt(YouTubeChatService youtube, ChatConnectionState newState) {

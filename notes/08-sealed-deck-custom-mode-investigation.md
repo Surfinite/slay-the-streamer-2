@@ -249,6 +249,78 @@ Items this investigation cannot answer from the decompile alone. **Q3, Q5, Q7 re
 6. **Does `BlockingPlayerChoiceContext` interact safely with our mod's Harmony patches?** None of our current patches fire during the draft (we don't patch `CardSelectCmd.FromSimpleGridForRewards`), but if a vote happens to be live from a prior screen when the draft starts, we should verify the chat thread doesn't try to mutate state on a screen that's no longer there. Likely fine; flag for the smoke when sealed-deck v1 lands.
 7. **[RESOLVED 2026-05-12] Does MegaCrit filter the Necrobinder pool so the streamer can't end up unplayable?** **No — but the gameplay impact is less severe than ArmadilloTea's Discord claim suggested.** Verified via decompile 2026-05-12: the "needed" cards (`Bodyguard`, `Unleash` for Necrobinder; same shape for `Zap`/`Dualcast` on Defect, likely others) are `CardRarity.Basic`. The SealedDeck pool uses `CardCreationOptions(..., CardRarityOddsType.RegularEncounter)`. `CardFactory.RollForRarity` ([CardFactory.cs:199-220](../decompiled/sts2/MegaCrit/sts2/Core/Factories/CardFactory.cs#L199-L220)) only rolls Common/Uncommon/Rare under RegularEncounter odds — Basic is never selected. So Basic-rarity character-identity cards do not appear in vanilla SealedDeck drafts regardless of seed. **However**: ArmadilloTea's framing of "Necrobinder is unplayable without these" is one community opinion, not a structural truth. A skilled streamer drafting 10 of 30 has substantial flexibility; the character plays differently without the Osty-centric Basics but is not categorically broken. Surfinite (2026-05-12) overrode this concern: keep per-character must-include support in the "polish, may never happen" bucket. Future polish patch targets if needed: inject Basic must-includes into `source` before the grid opens ([SealedDeck.cs:31](../decompiled/sts2/MegaCrit/sts2/Core/Models/Modifiers/SealedDeck.cs#L31)), or append directly to `player.Deck` after the draft completes.
 
+## Draft modifier — parallel research (2026-05-12)
+
+Surfinite asked 2026-05-12 for the same shape of research on the sibling `Draft` modifier, since it's mutually exclusive with `SealedDeck` (and `Insanity`) and represents the alternative "deck-clearing pre-run choice" path. Quick findings — mostly the same shape as SealedDeck with one major implication for our existing patches.
+
+### Vanilla implementation
+
+[`decompiled/sts2/MegaCrit/sts2/Core/Models/Modifiers/Draft.cs`](../decompiled/sts2/MegaCrit/sts2/Core/Models/Modifiers/Draft.cs) — 41 lines, single class. Same architecture as `SealedDeck`: `Draft : ModifierModel`, `ClearsPlayerDeck => true`, `GenerateNeowOption` returns the draft Task.
+
+The core method is `OfferRewards(Player player)` ([Draft.cs:20-40](../decompiled/sts2/MegaCrit/sts2/Core/Models/Modifiers/Draft.cs#L20-L40)):
+
+```csharp
+CardCreationOptions creationOptions = new CardCreationOptions(
+    new ReadOnlySingleElementList<CardPoolModel>(player.Character.CardPool),
+    CardCreationSource.Other,
+    CardRarityOddsType.RegularEncounter
+).WithFlags(CardCreationFlags.NoUpgradeRoll);
+
+for (int i = 0; i < 10; i++)                                     // N = 10 picks
+{
+    CardReward reward = new CardReward(creationOptions, 3, player)  // 3-card pick each
+    {
+        CanSkip = false
+    };
+    await reward.Populate();
+    if (LocalContext.IsMe(player))
+    {
+        await reward.OnSelectWrapper();
+    }
+}
+// Same PandorasBox scrub as SealedDeck (lines 35-39)
+```
+
+### Differences vs SealedDeck
+
+| Dimension | SealedDeck | Draft |
+|---|---|---|
+| UX shape | One grid of 30 cards, streamer picks 10 | 10 sequential `pick-1-of-3` screens |
+| Effective N total | 10 from 30 | 10 from up to 30 (3×10 = 30 cards, but each pick fresh-rolls; in practice fewer unique cards seen because of resampling) |
+| Card-creation flags | `NoUpgradeRoll \| ForceRarityOddsChange` | `NoUpgradeRoll` only |
+| Skippable? | No (`Cancelable = false` on `CardSelectorPrefs`) | No (`CanSkip = false` on each `CardReward`) |
+| Rarity weighting | Forced rarity-odds-change variant (`Roll`) | Player's normal modified odds (`RollWithBaseOdds`) — relics like the rarity-shifting ones would influence the Draft pool but not the SealedDeck pool |
+| Screen opened | `CardSelectCmd.FromSimpleGridForRewards` → simple-grid card selector | `CardReward.OnSelectWrapper` → `NCardRewardSelectionScreen.ShowScreen` ([CardReward.cs:149](../decompiled/sts2/MegaCrit/sts2/Core/Rewards/CardReward.cs#L149)) — **the exact same screen our B.2.1 `CardRewardVotePatch` hooks** |
+
+### The big implication: Draft routes through our patched surface
+
+Our B.2.1 card-reward voting patches hook `NCardRewardSelectionScreen.SelectCard`. When the `Draft` modifier is active, the streamer's draft flow opens that screen 10 times in a row, inside the Neow event. **With our mod loaded, chat would automatically vote on each of those 10 picks.** The streamer doesn't drive the draft — they kick it off and then watch chat pick the deck card-by-card.
+
+This is significantly different from `SealedDeck` (where the streamer alone drafts via a grid screen we don't patch). The two vanilla modifiers map onto two completely different chat-vs-streamer experiences:
+
+- **`SealedDeck` + our mod** ≈ Tempus's original StS1 mod: streamer drafts the deck alone, chat antagonizes via subsequent in-run voting.
+- **`Draft` + our mod** ≈ a fully chat-controlled deck construction: chat builds the entire deck by voting on 10 sequential card rewards before the run even starts.
+
+Neither is implemented as a designed feature today — it's an emergent interaction between vanilla and our existing patches. Worth deliberately deciding on for v0.2 sealed-deck-mode rather than letting whichever happens by accident be the default.
+
+### Caveats specific to Draft
+
+1. **All the `SealedDeck` Basic-rarity caveats apply identically.** Same `CardCreationOptions(..., CardRarityOddsType.RegularEncounter)`, same `RollForRarity`, same exclusion of Basic. So `Bodyguard`/`Unleash`/`Zap`/`Dualcast` etc. won't show up in any of the 10 picks either. Documented as a known limitation; not a blocker.
+2. **B.2.1 patch behaviour during Draft is unverified.** The vote patch will fire, but the per-act skip budget tracking (which lives on `NRewardsScreen`, the *parent* rewards screen — not involved here because Draft opens `NCardRewardSelectionScreen` directly) won't be exercised. `CanSkip = false` means skip-related vote paths can't be triggered anyway. Likely fine; would benefit from a smoke playthrough before relying on it.
+3. **Reset-receipt timing edge case.** Our `SetRewards_Postfix` budget-reset detection fires on `NRewardsScreen`, not `NCardRewardSelectionScreen`. Draft opens 10 sub-screens before the first real `NRewardsScreen` of Act 1 ever appears, so reset receipts should still fire at the expected "first combat of Act 1" moment, not during the draft. Still worth a smoke to confirm.
+4. **Card pool exposure is sequential, not gridwise.** A skilled streamer (or chat) might see common cards repeated across the 10 picks because each pick re-rolls the pool. Less "draft a balanced deck" feel, more "react to whatever shows up". For a chat-driven build, this is probably good (high variance, more drama); for a streamer-only build, SealedDeck's grid view is the better fit.
+5. **`Draft` and `SealedDeck` and `Insanity` are mutually exclusive** ([`ModelDb.cs:227-232`](../decompiled/sts2/MegaCrit/sts2/Core/Models/ModelDb.cs#L227-L232)) — only one can be ticked at a time. Streamer commits to a single pre-run experience.
+
+### Implication for the v0.2 sealed-deck-mode spec
+
+The original spec note in [notes/06](06-followups-and-deferred.md) assumes Sealed Deck shape (streamer drafts alone). With `Draft` available as a vanilla alternative that naturally produces a "chat picks the entire deck" experience via our existing patches with zero new code, the v0.2 design decision now has at least three candidate shapes to evaluate, all reachable via vanilla modifiers:
+
+- **A**: Vanilla `SealedDeck` modifier — streamer drafts grid solo, no chat input on the draft. Closest to Tempus's StS1 mod.
+- **B**: Vanilla `Draft` modifier — chat votes on all 10 picks via our existing card-reward vote patches. Heavier chat-control. Free with no extra code.
+- **C**: Hybrid — use `SealedDeck` then add a Neow-vote-before-draft step (the polish item from the main investigation). Streamer drafts the deck, but chat gets the standard Neow bonus before the draft starts.
+
+Picking which to ship — or whether to ship multiple as configurable streamer-side options — is a future spec/design decision, not a research call.
+
 ## Cross-references
 
 - [notes/06-followups-and-deferred.md](06-followups-and-deferred.md) — the v0.2+ section has the original sealed-deck-mode notes (corrected 2026-05-12 to "streamer drafts, not chat drafts").

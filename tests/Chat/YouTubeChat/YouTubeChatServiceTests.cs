@@ -62,6 +62,108 @@ public class YouTubeChatServiceTests {
     }
 
     [Fact]
+    public async Task Reconnect_ArmsTimer_After_Reconnecting_Transition() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var discovery = new StubDiscovery { NextResult = null };   // forces NoLiveBroadcastFound
+        var svc = MakeService(discovery: discovery, clock: clock, scheduler: scheduler);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.Reconnecting) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        // Wait a brief moment for the ArmReconnect call to land (it happens on the
+        // connect-task continuation after the state-change post).
+        for (int i = 0; i < 30 && scheduler.PendingCount == 0; i++) await Task.Delay(10);
+        Assert.True(scheduler.PendingCount > 0, "expected a pending reconnect timer");
+        // First reconnect after a non-429 failure uses the 60s base ± 10s jitter.
+        var delay = scheduler.NextDueDelay!.Value;
+        Assert.InRange(delay.TotalSeconds, 50, 70);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task RateLimit_429_With_RetryAfter_Uses_Header() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var scraper = new StubScraperWithSequence();
+        // Throw 429 with Retry-After=180s on the cursor-establishing poll.
+        scraper.PollExceptions.Enqueue(new YouTubeHttpStatusException(
+            System.Net.HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(180), "429"));
+        var svc = MakeService(scraper: scraper, clock: clock, scheduler: scheduler);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.Reconnecting) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        for (int i = 0; i < 30 && scheduler.PendingCount == 0; i++) await Task.Delay(10);
+        Assert.Equal(YouTubeChatStatusReason.RateLimited, svc.LastStatusReason);
+        Assert.True(scheduler.PendingCount > 0);
+        var delay = scheduler.NextDueDelay!.Value;
+        // 180s + [0, +10s) jitter band.
+        Assert.InRange(delay.TotalSeconds, 175, 195);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Consecutive_429_Backs_Off_Exponentially() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var scraper = new StubScraperWithSequence();
+        // Three 429s without Retry-After header → backoff 60→120→240.
+        for (int i = 0; i < 3; i++) {
+            scraper.PollExceptions.Enqueue(new YouTubeHttpStatusException(
+                System.Net.HttpStatusCode.TooManyRequests, retryAfter: null, "429"));
+        }
+        var svc = MakeService(scraper: scraper, clock: clock, scheduler: scheduler);
+        var observedDelays = new List<double>();
+        async Task WaitForArmedTimer() {
+            for (int i = 0; i < 200 && scheduler.PendingCount == 0; i++) await Task.Delay(10);
+        }
+        await svc.ConnectAsync("UCfake");
+
+        // First 429: ~60s.
+        await WaitForArmedTimer();
+        observedDelays.Add(scheduler.NextDueDelay!.Value.TotalSeconds);
+        // Fire the reconnect timer → re-runs connect flow → next 429.
+        scheduler.Advance(scheduler.NextDueDelay!.Value);
+        // Second 429: ~120s.
+        for (int i = 0; i < 200 && (scheduler.PendingCount == 0 || scheduler.NextDueDelay!.Value.TotalSeconds < 100); i++)
+            await Task.Delay(10);
+        observedDelays.Add(scheduler.NextDueDelay!.Value.TotalSeconds);
+        scheduler.Advance(scheduler.NextDueDelay!.Value);
+        // Third 429: ~240s.
+        for (int i = 0; i < 200 && (scheduler.PendingCount == 0 || scheduler.NextDueDelay!.Value.TotalSeconds < 200); i++)
+            await Task.Delay(10);
+        observedDelays.Add(scheduler.NextDueDelay!.Value.TotalSeconds);
+
+        Assert.InRange(observedDelays[0], 50, 70);
+        Assert.InRange(observedDelays[1], 110, 130);
+        Assert.InRange(observedDelays[2], 230, 250);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Dispose_Cancels_Pending_Reconnect_Timer() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var discovery = new StubDiscovery { NextResult = null };
+        var svc = MakeService(discovery: discovery, clock: clock, scheduler: scheduler);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.Reconnecting) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        for (int i = 0; i < 30 && scheduler.PendingCount == 0; i++) await Task.Delay(10);
+        Assert.True(scheduler.PendingCount > 0);
+        svc.Dispose();
+        Assert.Equal(0, scheduler.PendingCount);
+    }
+
+    [Fact]
     public async Task SteadyState_Emits_Subsequent_Poll_Messages() {
         var scraper = new StubScraperWithSequence();
         // Cursor-establishing poll: empty, short timeout so loop fires soon.

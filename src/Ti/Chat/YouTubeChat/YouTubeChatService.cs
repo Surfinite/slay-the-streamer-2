@@ -28,9 +28,14 @@ public sealed class YouTubeChatService : IChatService {
     private string? _clientVersion;
     private Task? _connectTask;
     private Task? _pollLoopTask;
+    private IDisposable? _retryTimer;
+    private int _consecutive429Count;
 
     private static readonly TimeSpan PollMin = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan PollMax = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ReconnectBase = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan ReconnectJitter = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ReconnectCap = TimeSpan.FromSeconds(600);
 
     public ChatConnectionState State => _state;
     public bool IsConnected => _state is
@@ -191,8 +196,17 @@ public sealed class YouTubeChatService : IChatService {
         Task.FromException(new NotSupportedException("YouTubeChatService is read-only (D3)."));
 
     public void Dispose() {
-        Interlocked.Exchange(ref _disposed, 1);
-        // Full teardown in Task 22.
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        try { _cts?.Cancel(); } catch { }
+        try { _cts?.Dispose(); } catch { }
+        try { _retryTimer?.Dispose(); } catch { }
+        _retryTimer = null;
+        if (_state != ChatConnectionState.Disposed) {
+            var old = _state;
+            _state = ChatConnectionState.Disposed;
+            var args = new ChatConnectionChangedEventArgs(old, ChatConnectionState.Disposed, "Dispose");
+            try { _dispatcher.Post(() => ConnectionStateChanged?.Invoke(this, args)); } catch { }
+        }
     }
 
     private void TransitionTo(
@@ -206,6 +220,54 @@ public sealed class YouTubeChatService : IChatService {
         TiLog.Info($"[YouTubeChatService] {old} -> {next}: {reason} (reason={statusReason})");
         var args = new ChatConnectionChangedEventArgs(old, next, reason);
         _dispatcher.Post(() => ConnectionStateChanged?.Invoke(this, args));
+
+        if (next == ChatConnectionState.ConnectedReadOnly) {
+            _consecutive429Count = 0;
+        } else if (next == ChatConnectionState.Reconnecting) {
+            ArmReconnect();
+        }
+    }
+
+    private void ArmReconnect() {
+        if (Volatile.Read(ref _disposed) == 1) return;
+        _retryTimer?.Dispose();
+        var delay = NextReconnectDelay(LastError);
+        _retryTimer = _scheduler.Schedule(delay, () => {
+            if (Volatile.Read(ref _disposed) == 1) return;
+            // Clear ephemeral state and re-run connect flow.
+            _videoId = null;
+            _continuation = null;
+            _apiKey = null;
+            _clientVersion = null;
+            try { _cts?.Cancel(); } catch { }
+            try { _cts?.Dispose(); } catch { }
+            _cts = new CancellationTokenSource();
+            TransitionTo(ChatConnectionState.Connecting, "reconnect timer fired", YouTubeChatStatusReason.None);
+            _connectTask = Task.Run(() => RunConnectAsync(_cts.Token));
+        });
+    }
+
+    private TimeSpan NextReconnectDelay(Exception? lastError) {
+        if (lastError is YouTubeHttpStatusException { StatusCode: System.Net.HttpStatusCode.TooManyRequests } ex) {
+            _consecutive429Count++;
+            if (ex.RetryAfter is { } retryAfter && retryAfter > TimeSpan.Zero) {
+                // Honor server-provided Retry-After + [0, +jitter) one-sided jitter.
+                var jitter = TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * ReconnectJitter.TotalMilliseconds);
+                return retryAfter + jitter;
+            }
+            // Exponential backoff: 60s -> 120s -> 240s -> 480s -> 600s (cap).
+            var backoff = TimeSpan.FromSeconds(
+                Math.Min(60 * Math.Pow(2, _consecutive429Count - 1), ReconnectCap.TotalSeconds));
+            return ClampJitter(backoff);
+        }
+        _consecutive429Count = 0;
+        return ClampJitter(ReconnectBase);
+    }
+
+    private static TimeSpan ClampJitter(TimeSpan baseDelay) {
+        var jitterMs = (Random.Shared.NextDouble() - 0.5) * 2 * ReconnectJitter.TotalMilliseconds;
+        var total = baseDelay + TimeSpan.FromMilliseconds(jitterMs);
+        return total < TimeSpan.Zero ? TimeSpan.Zero : total;
     }
 }
 

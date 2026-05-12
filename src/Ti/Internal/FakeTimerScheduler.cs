@@ -10,6 +10,24 @@ public sealed class FakeTimerScheduler : ITimerScheduler {
 
     public FakeTimerScheduler(FakeClock clock) { _clock = clock; }
 
+    /// <summary>Number of currently scheduled callbacks (one-shot + periodic).</summary>
+    public int PendingCount => _entries.Count;
+
+    /// <summary>
+    /// Time remaining until the next scheduled callback fires, or null if no
+    /// callbacks are pending. Useful for asserting reconnect cadence in tests.
+    /// </summary>
+    public TimeSpan? NextDueDelay {
+        get {
+            DateTimeOffset? earliest = null;
+            foreach (var e in _entries)
+                if (earliest is null || e.NextFire < earliest) earliest = e.NextFire;
+            if (earliest is null) return null;
+            var delta = earliest.Value - _clock.UtcNow;
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+        }
+    }
+
     public IDisposable Schedule(TimeSpan delay, Action callback) {
         var entry = new Entry { NextFire = _clock.UtcNow + delay, Interval = null, Callback = callback };
         _entries.Add(entry);

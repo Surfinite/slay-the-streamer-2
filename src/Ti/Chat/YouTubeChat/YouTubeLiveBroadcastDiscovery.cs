@@ -30,7 +30,17 @@ internal sealed class YouTubeLiveBroadcastDiscovery : IYouTubeLiveBroadcastDisco
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var match = CanonicalWatchRegex.Match(body);
             if (!match.Success) {
-                TiLog.Debug($"[YouTubeLiveBroadcastDiscovery] no canonical /watch link for {channelId} (body length={body.Length})");
+                // Diagnostic: log enough to identify what page YouTube returned (consent wall,
+                // stripped mobile, real-but-no-broadcast, etc.). Truncated to keep log volume sane.
+                var sample = body.Length > 1500 ? body.Substring(0, 1500) : body;
+                var hasConsent = body.Contains("consent.youtube.com", StringComparison.OrdinalIgnoreCase);
+                var hasCanonical = body.Contains("canonical", StringComparison.OrdinalIgnoreCase);
+                var hasOgUrl = body.Contains("og:url", StringComparison.OrdinalIgnoreCase);
+                var hasWatchUrl = body.Contains("youtube.com/watch?v=", StringComparison.OrdinalIgnoreCase);
+                TiLog.Info($"[YouTubeLiveBroadcastDiscovery] no canonical match for {channelId}: " +
+                    $"body length={body.Length}, hasConsent={hasConsent}, hasCanonical={hasCanonical}, " +
+                    $"hasOgUrl={hasOgUrl}, hasWatchUrl={hasWatchUrl}");
+                TiLog.Info($"[YouTubeLiveBroadcastDiscovery] body[0..1500]={sample}");
                 return null;
             }
             return match.Groups[1].Value;

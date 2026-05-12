@@ -4,6 +4,38 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## YouTube chat parallel integration — acceptance gate results (partial, 2026-05-12)
+
+Operator-validation run against `yt-chat-v0.2` work. Both currently-runnable steps **PASSED**; remaining steps deferred pending FrostPrime contact or alternative live YT broadcast access.
+
+- [x] **Step 0 — Vanilla regression** (Twitch-only, new code path). Mod loaded at `344db72`. New aggregator + IChatConsumer split + B.2.1 skip-gate-routing-via-GetChildState proven non-regressing.
+- [x] **Step 1 — YT-only smoke** (valid `youtubeChannelId` + deliberately bad `oauthToken`). Validated end-to-end against FrostPrime's live channel `UCnrdFUk_XfPJooztStcHG4g` (videoId `II6NztxNhEQ` at the time). Surfinite's `1` chat message → counted as YT vote → applied to in-game state. Card-skip gate degraded correctly. No chat receipts fired.
+- [ ] **Step 2 — Dual-platform happy path** (3 runs). Deferred: requires valid Twitch + valid YT both live. Surfinite needs to contact FrostPrime before doing more live YT testing, OR use own/friend's stream.
+- [ ] **Step 3 — YT failure modes** (sub-steps 3a-3e). Partial offline-doable: typo'd channel ID (3c) can be tested anytime. 3a/3b/3d/3e require live broadcast control.
+- [ ] **Step 4 — Split tally label correctness**. Deferred (needs dual-platform vote in flight).
+- [ ] **Step 5 — Cross-platform double-count** (D1). Deferred (needs control of both platforms).
+- [ ] **Step 6 — Twitch-only-deployment + D6 settings parsing**. Doable offline anytime — pure settings-JSON variants.
+- [ ] **Step 7 — Receipt flap suppression + delivery**. Deferred (would need triggered YT state churn).
+
+### Fixes that landed during operator-validation Step 1
+
+Four real-world bugs surfaced and were fixed live during the Step 1 run (Surfinite + Claude pairing):
+
+1. **`yt-chat/15.2`**: `CONSENT=YES+cb` cookie sent via `DefaultRequestHeaders.Add("Cookie", ...)` instead of `CookieContainer.Add(Uri, Cookie)`. The container path silently dropped the cookie when `Cookie.Domain` had a leading dot — known .NET quirk. Symptom: request landed at `consent.youtube.com` instead of channel page; body length 556KB vs the expected 1.1MB.
+2. **`yt-chat/16.2`**: `YouTubeLiveBroadcastDiscovery` body-parses `<link rel="canonical" href="https://www.youtube.com/watch?v=VIDEOID">` instead of inspecting `RequestMessage.RequestUri` after redirect. YouTube no longer redirects `/channel/{ID}/live` → `/watch?v=...` (verified live; they now serve the live page directly with canonical link in the body).
+3. **`yt-chat/17.2`**: `ContinuationRegex` extended to accept `reloadContinuationData` as a third container type (alongside `invalidationContinuationData` and `timedContinuationData`) AND to include `%` in the character class (URL-encoded `%3D` padding is the actual byte sequence in live tokens). Symmetric fix to `ExtractContinuation` JSON path inside `PollAsync`.
+4. **`yt-chat/29.2`**: Vote-start gate in `NeowBlessingVotePatch` / `CardRewardVotePatch` loosened from `is ConnectedReadWrite` to `is (ConnectedReadWrite or ConnectedReadOnly)`. The v4 spec's "votes flow in YT-only mode" promise was being defeated by the existing patches which gated on the stricter CRW (Twitch-can-send). Receipt-send sites kept strict CRW because they actually invoke `SendMessageAsync` and correctly need to no-op in YT-only mode.
+
+### Findings worth preserving
+
+- **YouTube's `/channel/{ID}/live` no longer redirects to `/watch?v=...`** as of 2026-05-12. The live videoId is embedded in the page body. Likely a YouTube change within the past ~year. Discovery via body-parse is the right shape going forward.
+- **`.NET CookieContainer.Add(Uri, Cookie)` with `Cookie.Domain` having a leading dot silently fails**. Direct header (`DefaultRequestHeaders.Add("Cookie", ...)`) is the robust workaround — this matches what every cross-language scraper library does anyway.
+- **YouTube uses three continuation container types**: `reloadContinuationData` (initial page), `invalidationContinuationData` (steady state, most common), `timedContinuationData` (steady state, alternate). All three should be matched.
+- **YouTube member badges live in `authorBadges[]`, NOT `message.runs[]`**. Visual `#3 / #4` member-level pills don't appear in the chat-message text our scraper extracts; no risk of badge-as-vote false positives.
+- **Scraper version log line** (`[YouTubeLiveChatScraper] scraper yt-scraper-2026-05-12-a active; tracking videoId=...`) is genuinely the primary debug signal during operator-validation. Keep it.
+
+---
+
 ## Plan B.2.1 design pivot — RESOLVED 2026-05-11: Mandatory-look + Model 2 (transactional)
 
 **Chosen path (after two iterations)**:

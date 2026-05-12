@@ -22,7 +22,7 @@ public class VoterTests : IDisposable {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
         var chat = new FakeChatService();
         chat.ConnectAsync("c", new ChatCredentials("u", "abc")).GetAwaiter().GetResult();
-        var coord = new VoteCoordinator(chat, clock, new FakeTimerScheduler(clock), new ImmediateDispatcher(), new Random(0));
+        var coord = new VoteCoordinator(chat, new[] { ChatPlatformNames.Twitch }, clock, new FakeTimerScheduler(clock), new ImmediateDispatcher(), new Random(0));
         Voter.Default = coord;
 
         var s = Voter.Start("test", new[] { "a", "b" }, TimeSpan.FromSeconds(10));

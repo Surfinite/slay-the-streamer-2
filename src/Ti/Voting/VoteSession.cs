@@ -23,6 +23,9 @@ public sealed class VoteSession : IDisposable {
     private readonly DateTimeOffset _openedAt;
     private readonly Dictionary<int, int> _tallies;
     private readonly Dictionary<string, int> _votersByKey = new();
+    private readonly IReadOnlyList<string> _configuredPlatforms;
+    private readonly Dictionary<(string Platform, int OptionIndex), int> _talliesByPlatform = new();
+    private readonly Dictionary<string, DateTimeOffset> _lastVoteByPlatform = new();
     private readonly Regex _voteRegex;
     private readonly IDisposable _closeTimer;
     private readonly IDisposable? _periodicTimer;
@@ -46,6 +49,10 @@ public sealed class VoteSession : IDisposable {
     public int? WinnerIndex { get; private set; }
     public TimeSpan TimeRemaining => MaxZero(_openedAt + Duration - _clock.UtcNow);
     public IReadOnlyDictionary<int, int> Tallies => new Dictionary<int, int>(_tallies);
+    public IReadOnlyList<string> ConfiguredPlatforms => _configuredPlatforms;
+    public IReadOnlyDictionary<(string Platform, int OptionIndex), int>? TalliesByPlatform =>
+        _configuredPlatforms.Count > 1 ? _talliesByPlatform : null;
+    public IReadOnlyDictionary<string, DateTimeOffset> LastVoteByPlatform => _lastVoteByPlatform;
 
     public event EventHandler<VoteSession>? TallyChanged;
     public event EventHandler<VoteSession>? Closed;
@@ -57,6 +64,7 @@ public sealed class VoteSession : IDisposable {
         IMainThreadDispatcher dispatcher, Random random,
         VoteParsingPolicy parsingPolicy, VoteReceiptPolicy receiptPolicy,
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt,
+        IReadOnlyList<string> configuredPlatforms,
         int voteId) {
 
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id required", nameof(id));
@@ -73,15 +81,22 @@ public sealed class VoteSession : IDisposable {
                 throw new ArgumentException($"option {i} has wrong Index ({options[i].Index})", nameof(options));
         }
         if (duration < TimeSpan.FromSeconds(1)) throw new ArgumentException("duration must be >= 1s", nameof(duration));
+        if (configuredPlatforms is null) throw new ArgumentNullException(nameof(configuredPlatforms));
+        if (configuredPlatforms.Count == 0)
+            throw new ArgumentException("configuredPlatforms must not be empty", nameof(configuredPlatforms));
 
         Id = id; Label = label; Options = options; Duration = duration;
         VoteId = voteId;
         _chat = chat; _clock = clock; _scheduler = scheduler; _dispatcher = dispatcher;
         _random = random; _parsing = parsingPolicy; _receipts = receiptPolicy;
         _formatReceipt = formatReceipt;
+        _configuredPlatforms = configuredPlatforms;
 
         _openedAt = clock.UtcNow;
         _tallies = options.ToDictionary(o => o.Index, _ => 0);
+        foreach (var platform in _configuredPlatforms)
+            for (int i = 0; i < options.Count; i++)
+                _talliesByPlatform[(platform, i)] = 0;
         _voteRegex = BuildRegex(parsingPolicy);
 
         _chat.MessageReceived += OnChatMessage;
@@ -148,8 +163,29 @@ public sealed class VoteSession : IDisposable {
         }
         _votersByKey[key] = idx;
         _tallies[idx]++;
+
+        // Per-platform side-dict maintenance.
+        // Platform is voter-stable (same VoterKey → same prefix → same platform),
+        // so the prior vote's platform == current msg's platform.
+        var platform = PlatformOf(msg);
+        if (existing) {
+            var priorKey = (platform, prior);
+            if (_talliesByPlatform.TryGetValue(priorKey, out var priorCount) && priorCount > 0)
+                _talliesByPlatform[priorKey] = priorCount - 1;
+        }
+        var nextKey = (platform, idx);
+        _talliesByPlatform[nextKey] = _talliesByPlatform.TryGetValue(nextKey, out var nextCount)
+            ? nextCount + 1
+            : 1;
+        _lastVoteByPlatform[platform] = _clock.UtcNow;
+
         TallyChanged?.Invoke(this, this);
     }
+
+    private static string PlatformOf(ChatMessage msg) =>
+        msg.VoterKey.StartsWith("yt:", StringComparison.Ordinal)
+            ? ChatPlatformNames.YouTube
+            : ChatPlatformNames.Twitch;
 
     public int CloseNow() {
         if (_state == VoteSessionState.Closed)

@@ -13,6 +13,7 @@ namespace SlayTheStreamer2.Ti.Voting;
 /// </summary>
 public sealed class VoteCoordinator : IDisposable {
     private readonly IChatConsumer _chat;
+    private readonly IReadOnlyList<string> _configuredPlatforms;
     private readonly IClock _clock;
     private readonly ITimerScheduler _scheduler;
     private readonly IMainThreadDispatcher _dispatcher;
@@ -20,16 +21,21 @@ public sealed class VoteCoordinator : IDisposable {
     private int _nextVoteId = 0;
 
     public IChatConsumer Chat => _chat;
+    public IReadOnlyList<string> ConfiguredPlatforms => _configuredPlatforms;
     public IMainThreadDispatcher Dispatcher => _dispatcher;
     public VoteSession? CurrentSession { get; private set; }
 
     public VoteCoordinator(
         IChatConsumer chat,
+        IReadOnlyList<string> configuredPlatforms,
         IClock clock,
         ITimerScheduler scheduler,
         IMainThreadDispatcher dispatcher,
         Random? random = null) {
         _chat = chat ?? throw new ArgumentNullException(nameof(chat));
+        _configuredPlatforms = configuredPlatforms ?? throw new ArgumentNullException(nameof(configuredPlatforms));
+        if (configuredPlatforms.Count == 0)
+            throw new ArgumentException("configuredPlatforms must not be empty", nameof(configuredPlatforms));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -64,6 +70,7 @@ public sealed class VoteCoordinator : IDisposable {
             parsingPolicy: parsing ?? VoteParsingPolicy.Default,
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
             formatReceipt: formatReceipt,
+            configuredPlatforms: _configuredPlatforms,
             voteId: voteId);
 
         CurrentSession = session;

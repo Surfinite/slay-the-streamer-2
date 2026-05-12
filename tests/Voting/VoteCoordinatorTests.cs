@@ -19,7 +19,8 @@ public class VoteCoordinatorTests {
         _chat.ConnectAsync("test", new ChatCredentials("bot", "abc")).GetAwaiter().GetResult();
     }
 
-    private VoteCoordinator NewCoord() => new(_chat, _clock, _scheduler, _dispatcher, _rng);
+    private VoteCoordinator NewCoord() =>
+        new(_chat, new[] { ChatPlatformNames.Twitch }, _clock, _scheduler, _dispatcher, _rng);
 
     [Fact]
     public void Start_BuildsOptionListWithCorrectIndices() {
@@ -92,7 +93,7 @@ public class VoteCoordinatorTests {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
         var scheduler = new FakeTimerScheduler(clock);
         var dispatcher = new ImmediateDispatcher();
-        var coord = new VoteCoordinator(chat, clock, scheduler, dispatcher);
+        var coord = new VoteCoordinator(chat, new[] { ChatPlatformNames.Twitch }, clock, scheduler, dispatcher);
         Assert.Same(dispatcher, coord.Dispatcher);
     }
 }

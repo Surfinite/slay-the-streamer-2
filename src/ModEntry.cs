@@ -110,7 +110,12 @@ public static class ModEntry {
                     scheduler: scheduler,
                     sendCapacity: 20,
                     sendWindow: TimeSpan.FromSeconds(30));
-                Coordinator = new VoteCoordinator(Chat, clock, scheduler, dispatcher);
+                Coordinator = new VoteCoordinator(
+                    Chat,
+                    new[] { ChatPlatformNames.Twitch },
+                    clock,
+                    scheduler,
+                    dispatcher);
                 Voter.Default = Coordinator;
 
                 Chat.ConnectionStateChanged += (_, e) => {

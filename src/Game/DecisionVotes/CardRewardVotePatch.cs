@@ -193,6 +193,17 @@ internal static class CardRewardVotePatch {
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
+        // Single-option vote is degenerate (chat "votes" on the only option). Skip
+        // the vote ceremony and let vanilla apply the streamer's click directly --
+        // streamer-side it's still a click, chat-side they would have just been told
+        // "Vote: #0 SomeCard" with nothing to choose against. Surfinite's request
+        // 2026-05-12 after Discord feedback about edge cases (e.g., relics that
+        // collapse rewards to a single option).
+        if (options.Count <= 1) {
+            TiLog.Info($"[SlayTheStreamer2][card-vote] single-option reward; skipping vote (option: {options[0].Card.Title})");
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
         var optionsSnapshot = options.ToList();
         var holdersSnapshot = holders.ToList();
         var labels = optionsSnapshot.Select(o => o.Card.Title).ToList();   // SPIKE-CORRECTED: was Card.Name.GetText()

@@ -117,6 +117,16 @@ internal static class NeowBlessingVotePatch {
         var optionsSnapshot = liveOptions.ToList();
         var labels = optionsSnapshot.Select(o => o.Title.GetFormattedText()).ToList();
 
+        // Single-option Neow bonus is degenerate (chat "votes" on the only option).
+        // Skip the ceremony, let vanilla apply the streamer's click directly. Mirrors
+        // CardRewardVotePatch's same-named check; Surfinite's request 2026-05-12 after
+        // Discord feedback flagged it as a real edge case.
+        if (labels.Count <= 1) {
+            TiLog.Info($"[SlayTheStreamer2][neow-vote] single-option blessing; skipping vote (option: {labels[0]})");
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+
         VoteSession session;
         try {
             session = coordinator.Start("Neow's Bonus", labels, TimeSpan.FromSeconds(30));

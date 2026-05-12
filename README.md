@@ -9,7 +9,7 @@ Workshop [1610759491](https://steamcommunity.com/sharedfiles/filedetails/?id=161
 
 - **B.1 Neow vote** shipped 2026-05-10 (`plan-b-1-complete` tag) — chat votes on Neow's blessing end-to-end with real Twitch IRC.
 - **B.2.1 card reward vote** shipped 2026-05-11 (`plan-b-2-1-complete` tag) — chat votes on which of the typically-3 cards the streamer adds to deck; mandatory-look skip gate prevents skipping-without-engaging; per-act skip budget (default `cardSkipsPerAct: 1`) caps how often the streamer can override chat.
-- **v0.2 YouTube chat parallel integration** landed 2026-05-12 — optional `youtubeChannelId` setting wires a read-only YouTube live-chat reader alongside Twitch via a `MultiChatService` aggregator. Votes from both platforms merge into a single tally; in-game label renders per-platform rows when YT is configured. Chat receipts continue to fire on Twitch only (YouTube posting requires Google verification / OAuth, intentionally not pursued). Per-vote nonce (`!NN` suffix, optional opt-in) lets stream-delayed YT viewers vote precisely on a specific vote ID without colliding with back-to-back votes; bare `#N` still works, preserving the StS1 "Skip Gang" `#0 = skip` convention. End-to-end validated 2026-05-12 against a real live YouTube broadcast (chain: discovery → page-parse → poll → JSON-extract → vote-regex → tally → UI rendering → game-state apply).
+- **v0.2 YouTube chat parallel integration** landed 2026-05-12 — optional `youtubeChannelId` setting wires a read-only YouTube live-chat reader alongside Twitch via a `MultiChatService` aggregator. Votes from both platforms merge into a single tally; in-game label renders per-platform rows when YT is configured. Chat receipts continue to fire on Twitch only (YouTube posting requires Google verification / OAuth, intentionally not pursued). Per-vote nonce (`!NN` suffix, optional opt-in) lets stream-delayed YT viewers vote precisely on a specific vote ID without colliding with back-to-back votes; bare `#N` still works, with option numbers stable across votes (no Noita-style alternation) so chat doesn't have to remember a shifting numbering scheme. End-to-end validated 2026-05-12 against a real live YouTube broadcast (chain: discovery → page-parse → poll → JSON-extract → vote-regex → tally → UI rendering → game-state apply).
 
 Remaining v0.1 slices: B.2.2 start-of-act Ancient-rarity relic vote (StS2 replaced StS1 boss relics with these — granted by Event encounters like Pael / Tezcatara), B.2.3 map path vote, B.2.4 in-game settings UI, B.3 act boss. **Not yet for end users** — installation requires manual JSON config and the modded save is its own profile (no unlock progression yet).
 
@@ -69,15 +69,18 @@ underlying Twitch Integration base mod) covered:
 - Map path selection
 - Act boss (custom screen — likely needs its own sub-plan, B.3)
 
+Works via vanilla Custom Mode with no mod-side code:
+- **Sealed-deck draft start** — vanilla StS2 already ships a `SealedDeck` modifier in Custom Mode. Streamer ticks it on the Custom Run screen, picks the character, embarks. The Neow event becomes a single "Sealed Deck" option that opens a 30-card grid; the streamer drafts 10 from 30 (vanilla numbers, hardcoded). Run continues from there with our existing B.2.1 card-reward / Ancients / etc. voting intact. Tempus's StS1 mod had a streamer-drafted sealed deck and then chat antagonised via subsequent voting; vanilla StS2's Custom Mode produces the same experience without any mod-side draft screen of our own. See [`notes/08`](notes/08-sealed-deck-custom-mode-investigation.md) for the full investigation. Note: vanilla Custom Mode is locked behind 3 standard-mode wins.
+- **Chat-controlled deck construction** — the sibling `Draft` modifier (mutually exclusive with `SealedDeck`) opens 10 sequential pick-1-of-3 reward screens for the streamer to build the run's deck. Because those screens are exactly the surface our B.2.1 card-reward voting hooks, ticking `Draft` in Custom Mode produces a fully chat-controlled deck construction with zero new code from us.
+
 Deferred to v0.2 as new-design problems (not in the original mod or its
 base-mod dependency, so each is a fresh design pass rather than a port):
 - Event choice voting
 - Shop purchase voting
-- **Sealed-deck draft start** — Tempus's StS1 mod opened a run with a sealed deck that chat drafted, then chat played the role of "make the deck worse" through ongoing voting. Major mode pivot, not a small feature; specced as a post-B.3 sub-plan.
-
-Out of scope entirely:
 - Chat bubbles on monsters
 - Custom monster names
+
+Out of scope entirely:
 - Twitch Extension overlays
 - Sending data back to Twitch beyond outgoing chat receipts
 

@@ -113,13 +113,48 @@ public sealed class MultiChatService : IChatConsumer {
         }
     }
 
-    public void Disconnect() { /* implemented in Task 12 */ }
+    public void Disconnect() {
+        foreach (var c in _children.Values) {
+            try { c.Disconnect(); } catch (Exception ex) {
+                TiLog.Warn($"[MultiChatService] child Disconnect threw: {ex.Message}");
+            }
+        }
+    }
 
-    public Task SendMessageAsync(
+    public async Task SendMessageAsync(
         string text,
         OutgoingMessagePriority priority = OutgoingMessagePriority.Normal,
-        CancellationToken ct = default) =>
-        throw new NotImplementedException("Wired in Task 12");
+        CancellationToken ct = default) {
+        var sendable = _children.Values.Where(c => c.CanSend).ToList();
+        if (sendable.Count == 0) {
+            TiLog.Debug("[MultiChatService] SendMessageAsync: no CanSend children; receipt skipped");
+            return;
+        }
+        int successCount = 0;
+        foreach (var c in sendable) {
+            try { await c.SendMessageAsync(text, priority, ct); successCount++; }
+            catch (Exception ex) {
+                TiLog.Warn($"[MultiChatService] child SendMessageAsync threw: {ex.Message}");
+            }
+        }
+        if (successCount == 0) {
+            TiLog.Warn($"[MultiChatService] SendMessageAsync: all {sendable.Count} sendable children failed; receipt dropped");
+        }
+    }
 
-    public void Dispose() { /* implemented in Task 12 */ }
+    public void Dispose() {
+        for (int i = 0; i < _stateHandlers.Count; i++) {
+            var (name, handler) = _stateHandlers[i];
+            if (_children.TryGetValue(name, out var child)) {
+                try { child.ConnectionStateChanged -= handler; }
+                catch { /* swallow; child may already be disposed */ }
+            }
+        }
+        foreach (var c in _children.Values) {
+            try { c.MessageReceived -= OnChildMessageReceived; } catch { }
+            try { c.Dispose(); } catch (Exception ex) {
+                TiLog.Warn($"[MultiChatService] child Dispose threw: {ex.Message}");
+            }
+        }
+    }
 }

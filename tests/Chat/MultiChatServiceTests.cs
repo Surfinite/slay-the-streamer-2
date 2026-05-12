@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using SlayTheStreamer2.Ti.Chat;
 using Xunit;
 
@@ -121,5 +122,55 @@ public class MultiChatServiceTests {
 
         twitch.SimulateState(ChatConnectionState.ConnectedReadWrite);  // aggregate: Connecting -> CRW
         Assert.Equal(2, aggregateFireCount);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_Routes_To_CanSend_Children_Only() {
+        var twitch = new FakeChatService(); twitch.SetCanSend(true);
+        var youtube = new FakeChatService(); youtube.SetCanSend(false);
+        var multi = new MultiChatService(
+            (ChatPlatformNames.Twitch, twitch),
+            (ChatPlatformNames.YouTube, youtube));
+        await multi.SendMessageAsync("hello");
+        Assert.Single(twitch.Sent);
+        Assert.Empty(youtube.Sent);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_Zero_CanSend_Children_Completes_Silently() {
+        var twitch = new FakeChatService(); twitch.SetCanSend(false);
+        var multi = new MultiChatService((ChatPlatformNames.Twitch, twitch));
+        await multi.SendMessageAsync("hello");
+        Assert.Empty(twitch.Sent);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_All_Sends_Throw_Returns_Without_Throwing() {
+        var twitch = new FakeChatService(); twitch.SetCanSend(true); twitch.SimulateSendThrow();
+        var multi = new MultiChatService((ChatPlatformNames.Twitch, twitch));
+        await multi.SendMessageAsync("hello"); // no exception
+    }
+
+    [Fact]
+    public void Disconnect_Propagates_To_All_Children() {
+        var twitch = new FakeChatService(); twitch.SimulateState(ChatConnectionState.ConnectedReadWrite);
+        var youtube = new FakeChatService(); youtube.SimulateState(ChatConnectionState.ConnectedReadOnly);
+        var multi = new MultiChatService(
+            (ChatPlatformNames.Twitch, twitch),
+            (ChatPlatformNames.YouTube, youtube));
+        multi.Disconnect();
+        Assert.True(twitch.DisconnectCalled);
+        Assert.True(youtube.DisconnectCalled);
+    }
+
+    [Fact]
+    public void Dispose_Disposes_All_Children_Even_If_One_Throws() {
+        var twitch = new FakeChatService(); twitch.SimulateDisposeThrow();
+        var youtube = new FakeChatService();
+        var multi = new MultiChatService(
+            (ChatPlatformNames.Twitch, twitch),
+            (ChatPlatformNames.YouTube, youtube));
+        multi.Dispose();
+        Assert.True(youtube.DisposeCalled);
     }
 }

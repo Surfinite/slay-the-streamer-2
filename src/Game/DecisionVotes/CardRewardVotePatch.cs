@@ -175,8 +175,13 @@ internal static class CardRewardVotePatch {
         // Chat-readiness gate
         var coordinator = Voter.Default;
         if (coordinator is null) return true;
-        if (coordinator.Chat.State is not ChatConnectionState.ConnectedReadWrite) {
-            TiLog.Debug($"[SlayTheStreamer2][card-vote] chat not in ConnectedReadWrite (state={coordinator.Chat.State}); bailing to vanilla");
+        // Vote-start gate: any chat state where we can READ messages is sufficient.
+        // ConnectedReadOnly covers v0.2 YT-only-mode (Twitch terminal, YT alive): YT
+        // messages still flow into VoteSession; receipts won't fire but the vote runs.
+        // Receipt-send sites independently check ConnectedReadWrite per D3.
+        if (coordinator.Chat.State is not (ChatConnectionState.ConnectedReadWrite
+                                        or ChatConnectionState.ConnectedReadOnly)) {
+            TiLog.Debug($"[SlayTheStreamer2][card-vote] chat not readable (state={coordinator.Chat.State}); bailing to vanilla");
             return true;
         }
 

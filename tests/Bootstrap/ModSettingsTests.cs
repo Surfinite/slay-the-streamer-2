@@ -12,7 +12,7 @@ public class ModSettingsTests {
         SettingsResult missing = new SettingsResult.Missing("x");
         SettingsResult malformed = new SettingsResult.Malformed("x", "y");
         SettingsResult success = new SettingsResult.Success(
-            new ChatSettings("foo", new ChatCredentials("bar", "abc123"), 1),
+            new ChatSettings("foo", new ChatCredentials("bar", "abc123"), 1, null),
             new[] { "warn" });
         Assert.NotNull(missing);
         Assert.NotNull(malformed);
@@ -290,6 +290,88 @@ public class ModSettingsTests {
             var success = Assert.IsType<SettingsResult.Success>(result);
             Assert.Equal(-1, success.Settings.CardSkipsPerAct);
             Assert.DoesNotContain(success.Warnings, w => w.Contains("cardSkipsPerAct"));
+        } finally { File.Delete(path); }
+    }
+
+    // --- youtubeChannelId (D6 v4 trim-first; YT-only disable on malformed) ---
+
+    /// <summary>Builds the required-fields JSON, optionally splicing in a youtubeChannelId fragment.</summary>
+    private static string BaseJsonWithOptionalYouTube(string? youtubeFragment) =>
+        "{\"schemaVersion\":1,\"channel\":\"foo\",\"username\":\"bar\",\"oauthToken\":\"abcdefghijklmnopqrstuvwxyz1234\",\"cardSkipsPerAct\":1"
+        + (youtubeFragment is null ? "" : "," + youtubeFragment)
+        + "}";
+
+    [Fact]
+    public void YoutubeChannelId_Absent_Returns_Success_With_Null() {
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube(null));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Null(success.Settings.YoutubeChannelId);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void YoutubeChannelId_JsonNull_Returns_Success_With_Null() {
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube("\"youtubeChannelId\":null"));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Null(success.Settings.YoutubeChannelId);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void YoutubeChannelId_EmptyString_Returns_Success_With_Null() {
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube("\"youtubeChannelId\":\"\""));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Null(success.Settings.YoutubeChannelId);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void YoutubeChannelId_WhitespaceOnly_Returns_Success_With_Null_No_Warning() {
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube("\"youtubeChannelId\":\"   \""));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Null(success.Settings.YoutubeChannelId);
+            Assert.DoesNotContain(success.Warnings, w => w.Contains("youtubeChannelId", StringComparison.OrdinalIgnoreCase));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void YoutubeChannelId_Valid_NonEmpty_Preserved() {
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube("\"youtubeChannelId\":\"UCabc123def456\""));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal("UCabc123def456", success.Settings.YoutubeChannelId);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void YoutubeChannelId_WhitespaceSurroundingValid_Trimmed() {
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube("\"youtubeChannelId\":\"  UCabc123def456  \""));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal("UCabc123def456", success.Settings.YoutubeChannelId);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void YoutubeChannelId_ContainsControlChar_Returns_Success_With_Warning_And_Null() {
+        //  is SOH — a non-whitespace control character. Per D6 v4, this disables YT only,
+        // not the whole mod (Success with warning + null YT, Twitch still loads).
+        var path = WriteTempJson(BaseJsonWithOptionalYouTube("\"youtubeChannelId\":\"UC\\u0001abc\""));
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Null(success.Settings.YoutubeChannelId);
+            Assert.Contains(success.Warnings, w => w.Contains("youtubeChannelId", StringComparison.OrdinalIgnoreCase));
         } finally { File.Delete(path); }
     }
 

@@ -7,7 +7,7 @@ using SlayTheStreamer2.Ti.Chat;
 
 namespace SlayTheStreamer2.Game.Bootstrap;
 
-public sealed record ChatSettings(string Channel, ChatCredentials Credentials, int CardSkipsPerAct);
+public sealed record ChatSettings(string Channel, ChatCredentials Credentials, int CardSkipsPerAct, string? YoutubeChannelId);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -86,8 +86,29 @@ public static class ModSettings {
                 }
             }
 
+            // youtubeChannelId (optional, D6 v4 trim-first). Malformed values disable YT only,
+            // not the whole mod — Twitch continues. Empty / whitespace-only → silent null.
+            string? youtubeChannelId = null;
+            if (root.TryGetProperty("youtubeChannelId", out var ytEl) && ytEl.ValueKind != JsonValueKind.Null) {
+                if (ytEl.ValueKind != JsonValueKind.String) {
+                    warnings.Add("youtubeChannelId must be a string; YouTube integration disabled.");
+                } else {
+                    var ytRaw = ytEl.GetString() ?? "";
+                    var trimmed = ytRaw.Trim();
+                    if (trimmed.Length == 0) {
+                        // Empty / whitespace-only → clamp to null silently (common paste artifact).
+                        youtubeChannelId = null;
+                    } else if (trimmed.Any(char.IsControl)) {
+                        warnings.Add("youtubeChannelId malformed (control characters); YouTube integration disabled.");
+                        youtubeChannelId = null;
+                    } else {
+                        youtubeChannelId = trimmed;
+                    }
+                }
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
-            return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds, cardSkipsPerAct), warnings);
+            return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId), warnings);
         }
     }
 

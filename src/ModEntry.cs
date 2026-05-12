@@ -30,6 +30,12 @@ public static class ModEntry {
     internal static SettingsResult? Settings { get; private set; }
     internal static string? ModVersion { get; private set; }
 
+    // D8 startup + state-change receipt bookkeeping (Task 27).
+    private static readonly TimeSpan ReceiptDebounce = TimeSpan.FromSeconds(120);
+    private static DateTimeOffset _lastYouTubeReceiptAt = DateTimeOffset.MinValue;
+    private static bool _twitchStartupReceiptSent;
+    private static ChatConnectionState _lastYouTubeStateForReceipt = ChatConnectionState.Disconnected;
+
     public static void Init() {
         try {
             GodotMainThreadId = System.Environment.CurrentManagedThreadId;
@@ -156,6 +162,13 @@ public static class ModEntry {
                     scheduler,
                     dispatcher);
                 Voter.Default = Coordinator;
+
+                // D8 receipts: startup (one-shot on Twitch connect) + YT state-change
+                // (120s debounce). Twitch is the only platform receipts are sent on (D3).
+                var twitchForReceipts = Chat;
+                var youtubeForReceipts = youtube;
+                multi.ChildConnectionStateChanged += (_, e) =>
+                    OnChildConnectionStateChanged(twitchForReceipts, youtubeForReceipts, e);
             }
 
             // 8. Apply Harmony patches with diagnostic logging.
@@ -174,5 +187,81 @@ public static class ModEntry {
             Log.Error($"[SlayTheStreamer2] FATAL: Init failed; subsequent game " +
                 $"behavior unmodified. Exception: {e}");
         }
+    }
+
+    /// <summary>
+    /// Wired to MultiChatService.ChildConnectionStateChanged. Sends two kinds of D8
+    /// receipts on Twitch:
+    ///   - Startup receipt: one-shot on Twitch's first ConnectedReadWrite transition.
+    ///     Extends B.1's existing startup receipt with YT status when YT is configured.
+    ///   - YouTube state-change receipt: mid-session, gated by 120s debounce so a
+    ///     flapping YT connection doesn't spam Twitch chat.
+    /// </summary>
+    private static void OnChildConnectionStateChanged(
+        TwitchIrcChatService twitch,
+        YouTubeChatService? youtube,
+        ChildConnectionStateChangedEventArgs e) {
+        try {
+            // Twitch first-time-connected receipt (startup).
+            if (e.ChildName == ChatPlatformNames.Twitch &&
+                e.Inner.NewState == ChatConnectionState.ConnectedReadWrite &&
+                !_twitchStartupReceiptSent) {
+                _twitchStartupReceiptSent = true;
+                var msg = BuildStartupReceipt(youtube);
+                _ = twitch.SendMessageAsync(msg, OutgoingMessagePriority.High);
+            }
+
+            // YouTube state-change receipts (mid-session) — gated by 120s debounce.
+            if (e.ChildName == ChatPlatformNames.YouTube && youtube is not null) {
+                var now = DateTimeOffset.UtcNow;
+                var stateChangedFromLast = e.Inner.NewState != _lastYouTubeStateForReceipt;
+                var inDebounce = (now - _lastYouTubeReceiptAt) < ReceiptDebounce;
+
+                if (!stateChangedFromLast || inDebounce) return;
+
+                var receipt = BuildYouTubeStateReceipt(youtube, e.Inner.NewState);
+                if (receipt is not null) {
+                    _ = twitch.SendMessageAsync(receipt, OutgoingMessagePriority.Normal);
+                    _lastYouTubeReceiptAt = now;
+                    _lastYouTubeStateForReceipt = e.Inner.NewState;
+                }
+            }
+        } catch (Exception ex) {
+            TiLog.Error("[ModEntry] OnChildConnectionStateChanged handler threw", ex);
+        }
+    }
+
+    private static string BuildStartupReceipt(YouTubeChatService? youtube) {
+        // Per Task 27 spec: exact wording — receipt-text strings are used by
+        // operator-validation Step 7 verification, so they MUST match.
+        if (youtube is null)
+            return "slay-the-streamer-2 connected (Twitch).";
+        return youtube.State switch {
+            ChatConnectionState.ConnectedReadOnly =>
+                "slay-the-streamer-2 connected (Twitch & YouTube tracking).",
+            _ =>
+                "slay-the-streamer-2 connected (Twitch). YouTube: no live broadcast found, retrying.",
+        };
+    }
+
+    private static string? BuildYouTubeStateReceipt(YouTubeChatService youtube, ChatConnectionState newState) {
+        return newState switch {
+            ChatConnectionState.ConnectedReadOnly =>
+                "YouTube connected: tracking chat.",
+            ChatConnectionState.Reconnecting => youtube.LastStatusReason switch {
+                YouTubeChatStatusReason.NoLiveBroadcastFound =>
+                    "YouTube: no live broadcast found, retrying.",
+                YouTubeChatStatusReason.LiveBroadcastEnded =>
+                    "YouTube: live broadcast ended; will resume when next broadcast starts.",
+                YouTubeChatStatusReason.NetworkError =>
+                    "YouTube: connection lost; will retry.",
+                YouTubeChatStatusReason.RateLimited =>
+                    "YouTube: temporarily rate-limited; will retry.",
+                YouTubeChatStatusReason.ScraperParseFailed =>
+                    "YouTube: connection issue; will retry.",
+                _ => "YouTube disconnected; will retry every ~60s.",
+            },
+            _ => null,
+        };
     }
 }

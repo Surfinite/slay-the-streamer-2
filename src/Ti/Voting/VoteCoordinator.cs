@@ -8,22 +8,22 @@ namespace SlayTheStreamer2.Ti.Voting;
 
 /// <summary>
 /// Owner of the per-streamer-channel vote lifecycle. One instance per
-/// IChatService. Holds the currently-active VoteSession and enforces the
+/// IChatConsumer. Holds the currently-active VoteSession and enforces the
 /// "strictly one open vote per coordinator" invariant.
 /// </summary>
 public sealed class VoteCoordinator : IDisposable {
-    private readonly IChatService _chat;
+    private readonly IChatConsumer _chat;
     private readonly IClock _clock;
     private readonly ITimerScheduler _scheduler;
     private readonly IMainThreadDispatcher _dispatcher;
     private readonly Random _random;
 
-    public IChatService Chat => _chat;
+    public IChatConsumer Chat => _chat;
     public IMainThreadDispatcher Dispatcher => _dispatcher;
     public VoteSession? CurrentSession { get; private set; }
 
     public VoteCoordinator(
-        IChatService chat,
+        IChatConsumer chat,
         IClock clock,
         ITimerScheduler scheduler,
         IMainThreadDispatcher dispatcher,

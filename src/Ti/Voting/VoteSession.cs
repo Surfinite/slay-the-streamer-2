@@ -8,7 +8,7 @@ using SlayTheStreamer2.Ti.Internal;
 namespace SlayTheStreamer2.Ti.Voting;
 
 public sealed class VoteSession : IDisposable {
-    private readonly IChatService _chat;
+    private readonly IChatConsumer _chat;
     private readonly IClock _clock;
     private readonly ITimerScheduler _scheduler;
     private readonly IMainThreadDispatcher _dispatcher;
@@ -52,7 +52,7 @@ public sealed class VoteSession : IDisposable {
 
     internal VoteSession(
         string id, string label, IReadOnlyList<VoteOption> options, TimeSpan duration,
-        IChatService chat, IClock clock, ITimerScheduler scheduler,
+        IChatConsumer chat, IClock clock, ITimerScheduler scheduler,
         IMainThreadDispatcher dispatcher, Random random,
         VoteParsingPolicy parsingPolicy, VoteReceiptPolicy receiptPolicy,
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt) {

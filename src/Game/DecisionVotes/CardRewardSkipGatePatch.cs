@@ -80,10 +80,26 @@ internal static class CardRewardSkipGatePatch {
         if (ModEntry.Settings is not SettingsResult.Success) return false;
         if (!CardRewardVotePatch.PreparedSuccessfully) return false;
         if (Voter.Default == null) return false;
-        var chatState = Voter.Default.Chat?.State;
-        if (chatState is ChatConnectionState.AuthenticationFailed
-                      or ChatConnectionState.JoinFailed
-                      or ChatConnectionState.Disposed) return false;
+
+        // Route Twitch-state-check explicitly (v4 Round-2 C-3): the aggregate
+        // MultiChatService.State is best-of-children, which would mask Twitch
+        // terminal failures when YT is alive. The gate exists to ensure
+        // receipts can fire — and per D3 receipts only fire on Twitch — so
+        // route through GetChildState(Twitch) when the chat is a multi.
+        if (Voter.Default.Chat is MultiChatService multi) {
+            var twitchState = multi.GetChildState(ChatPlatformNames.Twitch);
+            if (twitchState is ChatConnectionState.AuthenticationFailed
+                            or ChatConnectionState.JoinFailed
+                            or ChatConnectionState.Disposed) return false;
+        } else {
+            // Direct-Twitch path (defensive — shouldn't happen post-v4 since
+            // ModEntry always wires a MultiChatService; tests may inject a
+            // FakeChatService directly).
+            var chatState = Voter.Default.Chat?.State;
+            if (chatState is ChatConnectionState.AuthenticationFailed
+                          or ChatConnectionState.JoinFailed
+                          or ChatConnectionState.Disposed) return false;
+        }
         return true;
     }
 

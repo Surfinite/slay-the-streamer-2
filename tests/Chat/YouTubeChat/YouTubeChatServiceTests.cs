@@ -35,6 +35,53 @@ public class YouTubeChatServiceTests {
         Assert.Equal(YouTubeChatStatusReason.None, svc.LastStatusReason);
     }
 
+    [Fact]
+    public async Task ConnectAsync_Successful_Transitions_To_ConnectedReadOnly() {
+        var svc = MakeService();
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.ConnectedReadOnly) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(ChatConnectionState.ConnectedReadOnly, svc.State);
+        Assert.Equal(YouTubeChatStatusReason.None, svc.LastStatusReason);
+    }
+
+    [Fact]
+    public async Task Discovery_Returns_Null_Transitions_To_Reconnecting() {
+        var discovery = new StubDiscovery { NextResult = null };
+        var svc = MakeService(discovery: discovery);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.Reconnecting) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(YouTubeChatStatusReason.NoLiveBroadcastFound, svc.LastStatusReason);
+    }
+
+    [Fact]
+    public async Task Initial_Cursor_Establishing_Poll_Does_Not_Emit_Messages() {
+        // Cursor-establishing poll has 1 backlog message. Subsequent steady-state
+        // polls also return messages, but with a long timeoutMs to avoid racing.
+        var scraper = new StubScraperWithSequence();
+        scraper.PollResults.Enqueue(new PollResult(
+            new[] { new ParsedChatMessage("UC1", "U1", "#0", false, false) },
+            "CONT1", 60_000));
+        // Subsequent polls stall on the long-timeout fallback in the stub.
+        var svc = MakeService(scraper: scraper);
+        int received = 0;
+        svc.MessageReceived += (_, _) => received++;
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.ConnectedReadOnly) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(0, received);   // initial-poll backlog suppressed
+    }
+
     // Helper — injects fake discovery/scraper/dispatcher/clock/scheduler.
     private static YouTubeChatService MakeService(
         IYouTubeLiveBroadcastDiscovery? discovery = null,

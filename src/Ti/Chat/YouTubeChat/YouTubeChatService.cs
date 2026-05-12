@@ -21,6 +21,12 @@ public sealed class YouTubeChatService : IChatService {
     private int _disposed;   // Interlocked
     private ChatConnectionState _state = ChatConnectionState.Disconnected;
     private string? _channelId;
+    private CancellationTokenSource? _cts;
+    private string? _videoId;
+    private string? _continuation;
+    private string? _apiKey;
+    private string? _clientVersion;
+    private Task? _connectTask;
 
     public ChatConnectionState State => _state;
     public bool IsConnected => _state is
@@ -49,9 +55,67 @@ public sealed class YouTubeChatService : IChatService {
     }
 
     public Task ConnectAsync(string channel, ChatCredentials? creds = null, CancellationToken ct = default) {
-        // Implemented in Task 20.
-        _channelId = channel;
+        if (Volatile.Read(ref _disposed) == 1) return Task.CompletedTask;
+        if (_state != ChatConnectionState.Disconnected) return Task.CompletedTask;
+        _channelId = channel ?? throw new ArgumentNullException(nameof(channel));
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        TransitionTo(ChatConnectionState.Connecting, "ConnectAsync called", YouTubeChatStatusReason.None);
+        _connectTask = Task.Run(() => RunConnectAsync(_cts.Token));
         return Task.CompletedTask;
+    }
+
+    private async Task RunConnectAsync(CancellationToken ct) {
+        try {
+            var videoId = await _discovery.FindLiveVideoIdAsync(_channelId!, ct).ConfigureAwait(false);
+            if (videoId is null) {
+                TransitionTo(ChatConnectionState.Reconnecting,
+                    "no live broadcast found", YouTubeChatStatusReason.NoLiveBroadcastFound);
+                // Reconnect timer arm comes in Task 22.
+                return;
+            }
+            _videoId = videoId;
+
+            var pageResult = await _scraper.ParseInitialPageAsync(videoId, ct).ConfigureAwait(false);
+            if (pageResult is null) {
+                TransitionTo(ChatConnectionState.Reconnecting,
+                    "initial page parse failed", YouTubeChatStatusReason.ScraperParseFailed);
+                return;
+            }
+            _apiKey = pageResult.InnertubeApiKey;
+            _clientVersion = pageResult.ClientVersion;
+
+            // Cursor-establishing poll: messages discarded.
+            var cursorResult = await _scraper.PollAsync(
+                _apiKey, _clientVersion, pageResult.InitialContinuation, ct).ConfigureAwait(false);
+            if (cursorResult.NextContinuation is null) {
+                TransitionTo(ChatConnectionState.Reconnecting,
+                    "cursor-establishing poll returned no continuation",
+                    YouTubeChatStatusReason.LiveBroadcastEnded);
+                return;
+            }
+            if (cursorResult.Messages.Count > 0) {
+                TiLog.Debug($"[YouTubeChatService] cursor-established; suppressed {cursorResult.Messages.Count} backlog messages");
+            }
+            _continuation = cursorResult.NextContinuation;
+
+            TransitionTo(ChatConnectionState.ConnectedReadOnly,
+                "initial connect succeeded", YouTubeChatStatusReason.None);
+
+            // Steady-state poll loop starts in Task 21.
+        } catch (OperationCanceledException) {
+            // expected on Disconnect/Dispose
+        } catch (YouTubeHttpStatusException ex) {
+            LastError = ex;
+            var reason = ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                ? YouTubeChatStatusReason.RateLimited
+                : YouTubeChatStatusReason.NetworkError;
+            TransitionTo(ChatConnectionState.Reconnecting,
+                $"HTTP {(int)ex.StatusCode} during connect", reason);
+        } catch (Exception ex) {
+            LastError = ex;
+            TransitionTo(ChatConnectionState.Reconnecting,
+                $"connect failed: {ex.GetType().Name}", YouTubeChatStatusReason.NetworkError);
+        }
     }
 
     public void Disconnect() {

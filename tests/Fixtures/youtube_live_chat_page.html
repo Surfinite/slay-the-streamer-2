@@ -1,0 +1,154 @@
+<!doctype html>
+<!--
+  SYNTHETIC fixture — modelled on the public shape of YouTube's `https://www.youtube.com/live_chat?v={VIDEO_ID}`
+  response, as documented in pytchat (https://github.com/taizan-hokuto/pytchat),
+  youtube-chat (https://github.com/LinaTsukusu/youtube-chat), and
+  chat-downloader (https://github.com/xenova/chat-downloader).
+
+  This file is consumed by YouTubeLiveChatScraperTests.ParseInitialPageAsync to verify the
+  scraper extracts:
+    * INNERTUBE_API_KEY               (regex: "INNERTUBE_API_KEY":"([A-Za-z0-9_-]+)")
+    * INNERTUBE_CONTEXT clientVersion (regex: "INNERTUBE_CONTEXT"[^{]*\{[^}]*"client"\s*:\s*\{[^}]*"clientVersion"\s*:\s*"([0-9.]+)")
+    * initial continuation token      (regex: "(?:invalidationContinuationData|timedContinuationData)"\s*:\s*\{[^}]*"continuation"\s*:\s*"([A-Za-z0-9_=-]+)")
+
+  All visible identifiers are synthetic placeholders. API key value matches the public-shape
+  prefix `AIzaSy` that YouTube has used for years, but the rest is randomized fixture content.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live Chat</title>
+</head>
+<body>
+<div id="contents"></div>
+<script nonce="FIXTUREnonce001">
+window["ytcfg"] = {data_: {
+  "INNERTUBE_API_KEY":"AIzaSyFIXTURE_synthetic_innertube_key_001",
+  "INNERTUBE_CLIENT_NAME":"WEB",
+  "INNERTUBE_CLIENT_VERSION":"2.20260512.00.00",
+  "INNERTUBE_CONTEXT":{
+    "client":{
+      "hl":"en",
+      "gl":"US",
+      "clientName":"WEB",
+      "clientVersion":"2.20260512.00.00.00",
+      "userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36,gzip(gfe)",
+      "timeZone":"UTC",
+      "platform":"DESKTOP"
+    },
+    "user":{"lockedSafetyMode":false},
+    "request":{"useSsl":true,"internalExperimentFlags":[]}
+  },
+  "INNERTUBE_CONTEXT_CLIENT_NAME":1
+}};
+</script>
+<script nonce="FIXTUREnonce001">
+window["ytInitialData"] = {
+  "responseContext":{
+    "serviceTrackingParams":[
+      {"service":"CSI","params":[{"key":"c","value":"WEB"},{"key":"cver","value":"2.20260512.00.00.00"}]}
+    ],
+    "mainAppWebResponseContext":{"loggedOut":true},
+    "webResponseContextExtensionData":{"hasDecorated":true}
+  },
+  "contents":{
+    "liveChatRenderer":{
+      "actions":[
+        {
+          "addChatItemAction":{
+            "item":{
+              "liveChatViewerEngagementMessageRenderer":{
+                "id":"FIXTUREengagement001",
+                "timestampUsec":"1746979200000000",
+                "icon":{"iconType":"YOUTUBE_ROUND"},
+                "message":{"runs":[{"text":"Welcome to live chat! Remember to guard your privacy and abide by our community guidelines."}]},
+                "actionButton":{"buttonRenderer":{"style":"STYLE_BLUE_TEXT","size":"SIZE_DEFAULT"}}
+              }
+            },
+            "clientId":"FIXTUREclient000"
+          }
+        }
+      ],
+      "clientMessages":{
+        "reconnectMessage":{"runs":[{"text":"Reconnecting..."}]},
+        "unableToReconnectMessage":{"runs":[{"text":"Connection lost"}]},
+        "reconnectedMessage":{"runs":[{"text":"Reconnected"}]},
+        "genericErrorMessage":{"runs":[{"text":"Something went wrong"}]}
+      },
+      "continuations":[
+        {
+          "invalidationContinuationData":{
+            "timeoutMs":5000,
+            "continuation":"0ofMyANaGlhVUM0VHRkZmaXh0dXJlMDAxLWluaXRpYWwtY29udGludWF0aW9uLXRva2VuLXBheWxvYWQtZml4dHVyZS0yMDI2LTA1LTEy",
+            "invalidationId":{
+              "objectSource":1056,
+              "objectId":"FIXTUREinvalidation001",
+              "topic":"chat~FIXTUREvid001~000000001",
+              "subscribeToGcmTopics":true,
+              "protoCreationTimestampMs":"1746979200000"
+            }
+          }
+        }
+      ],
+      "popoutMessage":{"runs":[{"text":"This chat will be replaced by the chat from the new live video."}]},
+      "emojis":[],
+      "trustedEmbedsUrlPrefix":"https://www.youtube.com/embed/",
+      "liveChatHeaderRenderer":{
+        "overflowMenu":{"menuRenderer":{"items":[]}},
+        "viewSelector":{
+          "sortFilterSubMenuRenderer":{
+            "subMenuItems":[
+              {"title":"Top chat","selected":true,"continuation":{"reloadContinuationData":{"continuation":"0ofMyAN-fixture-top-chat-continuation-token"}}},
+              {"title":"Live chat","selected":false,"continuation":{"reloadContinuationData":{"continuation":"0ofMyAN-fixture-live-chat-continuation-token"}}}
+            ]
+          }
+        }
+      }
+    }
+  },
+  "currentVideoEndpoint":{
+    "watchEndpoint":{"videoId":"FIXTUREvid001"}
+  },
+  "trackingParams":"CAAQuy4iEwiFIXTUREtracking",
+  "continuationContents":{
+    "liveChatContinuation":{
+      "continuations":[
+        {
+          "invalidationContinuationData":{
+            "timeoutMs":5000,
+            "continuation":"0ofMyANaGlhVUM0VHRkZmaXh0dXJlMDAxLWluaXRpYWwtY29udGludWF0aW9uLXRva2VuLXBheWxvYWQtZml4dHVyZS0yMDI2LTA1LTEy",
+            "invalidationId":{
+              "objectSource":1056,
+              "objectId":"FIXTUREinvalidation001",
+              "topic":"chat~FIXTUREvid001~000000001",
+              "subscribeToGcmTopics":true,
+              "protoCreationTimestampMs":"1746979200000"
+            }
+          }
+        }
+      ],
+      "actions":[],
+      "actionPanel":{
+        "liveChatMessageInputRenderer":{
+          "inputField":{"liveChatTextInputFieldRenderer":{"placeholder":{"runs":[{"text":"Say something..."}]},"maxCharacterLimit":200}}
+        }
+      },
+      "viewerName":"FIXTURE viewer"
+    }
+  }
+};
+</script>
+<script nonce="FIXTUREnonce001">
+// Some YouTube responses also embed an additional script defining ytcfg.set(...) calls.
+// Include a shape-faithful one here so any fallback parsers that look for ytcfg.set still find values.
+(function() {
+  if (window.ytcfg && window.ytcfg.set) {
+    window.ytcfg.set({
+      "INNERTUBE_API_KEY":"AIzaSyFIXTURE_synthetic_innertube_key_001",
+      "INNERTUBE_CONTEXT_CLIENT_VERSION":"2.20260512.00.00.00"
+    });
+  }
+})();
+</script>
+</body>
+</html>

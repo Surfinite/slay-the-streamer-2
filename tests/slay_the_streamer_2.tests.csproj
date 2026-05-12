@@ -31,4 +31,16 @@
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
+
+  <!--
+    Test fixtures (e.g. tests/Fixtures/youtube_live_chat_*.{html,json}) must be
+    present in the test runtime working directory so FixtureLoader.Load can
+    File.ReadAllText("Fixtures/<name>") at test time. Introduced for the YouTube
+    chat integration spike (Task 1 of plans/2026-05-12-youtube-chat-integration.md).
+  -->
+  <ItemGroup>
+    <None Update="Fixtures\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

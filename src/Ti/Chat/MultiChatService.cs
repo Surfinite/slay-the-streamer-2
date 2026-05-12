@@ -35,9 +35,8 @@ public sealed class MultiChatService : IChatConsumer {
 
         _children = children.ToDictionary(c => c.Name, c => c.Service, StringComparer.Ordinal);
         ConfiguredPlatforms = names;
+        _lastAggregateState = AggregateState();
 
-        // Event wiring stubs — handlers stored for Task 11 to use (and Task 12's Dispose to unsubscribe).
-        // For Task 10 the handlers are no-ops; Task 11 replaces them with real forwarding logic.
         foreach (var (name, child) in children) {
             child.MessageReceived += OnChildMessageReceived;
             var capturedName = name;
@@ -57,7 +56,8 @@ public sealed class MultiChatService : IChatConsumer {
 
     public event EventHandler<ChatMessage>? MessageReceived;
     public event EventHandler<ChildConnectionStateChangedEventArgs>? ChildConnectionStateChanged;
-    public event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;   // wired in Task 11
+    public event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;
+    private ChatConnectionState _lastAggregateState;
 
     public ChatConnectionState GetChildState(string name) {
         if (_children.TryGetValue(name, out var child)) return child.State;
@@ -93,12 +93,24 @@ public sealed class MultiChatService : IChatConsumer {
         return ChatConnectionState.Disconnected;
     }
 
-    private void OnChildMessageReceived(object? sender, ChatMessage msg) {
-        // Task 11 will forward to MessageReceived.
-    }
+    private void OnChildMessageReceived(object? sender, ChatMessage msg) =>
+        MessageReceived?.Invoke(this, msg);
 
     private void OnChildConnectionStateChangedInternal(string name, object? sender, ChatConnectionChangedEventArgs e) {
-        // Task 11 will compute aggregate + fire ChildConnectionStateChanged / ConnectionStateChanged.
+        var newAggregate = AggregateState();
+        var oldAggregate = _lastAggregateState;
+        _lastAggregateState = newAggregate;
+
+        var childArgs = new ChildConnectionStateChangedEventArgs(name, e);
+        try { ChildConnectionStateChanged?.Invoke(this, childArgs); }
+        catch (Exception ex) { TiLog.Error("[MultiChatService] ChildConnectionStateChanged handler threw", ex); }
+
+        if (newAggregate != oldAggregate) {
+            var aggArgs = new ChatConnectionChangedEventArgs(oldAggregate, newAggregate,
+                $"child '{name}' transition triggered aggregate change");
+            try { ConnectionStateChanged?.Invoke(this, aggArgs); }
+            catch (Exception ex) { TiLog.Error("[MultiChatService] ConnectionStateChanged handler threw", ex); }
+        }
     }
 
     public void Disconnect() { /* implemented in Task 12 */ }

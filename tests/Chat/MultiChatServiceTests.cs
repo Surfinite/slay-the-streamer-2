@@ -77,4 +77,49 @@ public class MultiChatServiceTests {
             (ChatPlatformNames.YouTube, youtube));
         Assert.Equal(ChatConnectionState.AuthenticationFailed, multi.State);
     }
+
+    [Fact]
+    public void MessageReceived_From_Child_Forwards_Through_Multi() {
+        var twitch = new FakeChatService();
+        var multi = new MultiChatService((ChatPlatformNames.Twitch, twitch));
+        ChatMessage? received = null;
+        multi.MessageReceived += (_, m) => received = m;
+        twitch.SimulateIncoming(new ChatMessage(
+            UserId: "1", Login: "a", DisplayName: "A", Text: "#0",
+            ReceivedAt: DateTimeOffset.UtcNow,
+            IsSubscriber: false, IsModerator: false, IsVip: false));
+        Assert.NotNull(received);
+        Assert.Equal("1", received!.UserId);
+    }
+
+    [Fact]
+    public void ChildConnectionStateChanged_Fires_On_Child_Transition() {
+        var twitch = new FakeChatService();
+        var multi = new MultiChatService((ChatPlatformNames.Twitch, twitch));
+        ChildConnectionStateChangedEventArgs? captured = null;
+        multi.ChildConnectionStateChanged += (_, e) => captured = e;
+        twitch.SimulateState(ChatConnectionState.ConnectedReadWrite);
+        Assert.NotNull(captured);
+        Assert.Equal(ChatPlatformNames.Twitch, captured!.ChildName);
+    }
+
+    [Fact]
+    public void Aggregate_ConnectionStateChanged_Fires_Only_When_Aggregate_Changes() {
+        var twitch = new FakeChatService();
+        var youtube = new FakeChatService();
+        var multi = new MultiChatService(
+            (ChatPlatformNames.Twitch, twitch),
+            (ChatPlatformNames.YouTube, youtube));
+        int aggregateFireCount = 0;
+        multi.ConnectionStateChanged += (_, _) => aggregateFireCount++;
+
+        twitch.SimulateState(ChatConnectionState.Connecting);   // aggregate: Disconnected -> Connecting
+        Assert.Equal(1, aggregateFireCount);
+
+        youtube.SimulateState(ChatConnectionState.Connecting);  // aggregate stays Connecting
+        Assert.Equal(1, aggregateFireCount);
+
+        twitch.SimulateState(ChatConnectionState.ConnectedReadWrite);  // aggregate: Connecting -> CRW
+        Assert.Equal(2, aggregateFireCount);
+    }
 }

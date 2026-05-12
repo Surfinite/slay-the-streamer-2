@@ -32,4 +32,46 @@ public class VoteSessionVoteNonceTests : VoteSessionTestBase {
         }
         Assert.Equal(0, lastSession!.VoteId);
     }
+
+    [Fact]
+    public void BareNumber_Without_Nonce_Counts() {
+        var session = CreateSession(voteId: 42);
+        InjectTwitchVoteText(session, userId: "u1", text: "#1");
+        Assert.Equal(1, session.Tallies[1]);
+    }
+
+    [Fact]
+    public void Nonce_Matching_VoteId_Counts() {
+        var session = CreateSession(voteId: 42);
+        InjectTwitchVoteText(session, userId: "u1", text: "#1!42");
+        Assert.Equal(1, session.Tallies[1]);
+    }
+
+    [Fact]
+    public void Nonce_NonPadded_Matches_When_Numeric_Equal() {
+        var session = CreateSession(voteId: 4);
+        InjectTwitchVoteText(session, userId: "u1", text: "#1!4");
+        Assert.Equal(1, session.Tallies[1]);
+    }
+
+    [Fact]
+    public void Nonce_ZeroPadded_Also_Matches() {
+        var session = CreateSession(voteId: 4);
+        InjectTwitchVoteText(session, userId: "u1", text: "#1!04");
+        Assert.Equal(1, session.Tallies[1]);
+    }
+
+    [Fact]
+    public void Stale_Nonce_Is_Dropped() {
+        var session = CreateSession(voteId: 42);
+        InjectTwitchVoteText(session, userId: "u1", text: "#1!41");
+        Assert.Equal(0, session.Tallies[1]);
+    }
+
+    [Fact]
+    public void OutOfRange_Nonce_Is_Dropped() {
+        var session = CreateSession(voteId: 42);
+        InjectTwitchVoteText(session, userId: "u1", text: "#1!100");
+        Assert.Equal(0, session.Tallies[1]);
+    }
 }

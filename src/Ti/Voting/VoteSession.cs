@@ -123,7 +123,7 @@ public sealed class VoteSession : IDisposable {
             (false, true) => "!?",
             _ => ""
         };
-        return new Regex($@"^{prefix}(\d+)(?:\s|$)", RegexOptions.Compiled);
+        return new Regex($@"^{prefix}(\d+)(?:!(\d+))?(?:\s|$)", RegexOptions.Compiled);
     }
 
     private static bool IsChatOnline(ChatConnectionState state) =>
@@ -148,6 +148,18 @@ public sealed class VoteSession : IDisposable {
         if (!match.Success) return;
         if (!int.TryParse(match.Groups[1].Value, out var idx)) return;
         if (idx < 0 || idx >= Options.Count) return;
+
+        if (match.Groups[2].Success) {
+            if (!int.TryParse(match.Groups[2].Value, out var nonce)) return;
+            if (nonce < 0 || nonce > 99) {
+                TiLog.Debug($"[VoteSession] vote {VoteId:D2}: dropped vote with out-of-range nonce {nonce}");
+                return;
+            }
+            if (nonce != VoteId) {
+                TiLog.Debug($"[VoteSession] vote {VoteId:D2}: dropped vote with stale nonce {nonce:D2}");
+                return;
+            }
+        }
 
         var key = msg.VoterKey;
         var existing = _votersByKey.TryGetValue(key, out var prior);

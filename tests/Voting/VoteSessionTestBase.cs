@@ -143,6 +143,24 @@ public abstract class VoteSessionTestBase {
     }
 
     /// <summary>
+    /// Simulate a Twitch chat vote with a raw text payload (e.g. "#1!42" to
+    /// exercise vote-nonce parsing). The session parameter exists for
+    /// readability — the base owns the FakeChatService both sides share.
+    /// </summary>
+    protected void InjectTwitchVoteText(VoteSession session, string userId, string text) {
+        _ = session;
+        Chat.Inject(new ChatMessage(
+            UserId: userId,
+            Login: $"login_{userId}",
+            DisplayName: $"login_{userId}",
+            Text: text,
+            ReceivedAt: Clock.UtcNow,
+            IsSubscriber: false,
+            IsModerator: false,
+            IsVip: false));
+    }
+
+    /// <summary>
     /// Simulate a YouTube chat vote: UserId is prefixed with "yt:" per the
     /// D9 contract (ChatMessage.VoterKey then resolves to "yt:&lt;channelId&gt;"
     /// and VoteSession.PlatformOf classifies it as YouTube).

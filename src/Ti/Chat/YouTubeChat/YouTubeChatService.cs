@@ -27,6 +27,10 @@ public sealed class YouTubeChatService : IChatService {
     private string? _apiKey;
     private string? _clientVersion;
     private Task? _connectTask;
+    private Task? _pollLoopTask;
+
+    private static readonly TimeSpan PollMin = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan PollMax = TimeSpan.FromSeconds(10);
 
     public ChatConnectionState State => _state;
     public bool IsConnected => _state is
@@ -101,7 +105,9 @@ public sealed class YouTubeChatService : IChatService {
             TransitionTo(ChatConnectionState.ConnectedReadOnly,
                 "initial connect succeeded", YouTubeChatStatusReason.None);
 
-            // Steady-state poll loop starts in Task 21.
+            // Start steady-state poll loop. Initial poll's NextTimeoutMs seeds the cadence.
+            int seedTimeoutMs = cursorResult.NextTimeoutMs;
+            _pollLoopTask = Task.Run(() => RunPollLoopAsync(seedTimeoutMs, ct));
         } catch (OperationCanceledException) {
             // expected on Disconnect/Dispose
         } catch (YouTubeHttpStatusException ex) {
@@ -119,7 +125,63 @@ public sealed class YouTubeChatService : IChatService {
     }
 
     public void Disconnect() {
-        // Implemented in Task 21.
+        if (Volatile.Read(ref _disposed) == 1) return;
+        try { _cts?.Cancel(); } catch { }
+        TransitionTo(ChatConnectionState.Disconnected, "Disconnect called", YouTubeChatStatusReason.None);
+    }
+
+    private async Task RunPollLoopAsync(int seedTimeoutMs, CancellationToken ct) {
+        int lastTimeoutMs = seedTimeoutMs <= 0 ? 5000 : seedTimeoutMs;
+        while (!ct.IsCancellationRequested && _state == ChatConnectionState.ConnectedReadOnly) {
+            var clampedMs = Math.Clamp(lastTimeoutMs, (int)PollMin.TotalMilliseconds, (int)PollMax.TotalMilliseconds);
+            try { await Task.Delay(TimeSpan.FromMilliseconds(clampedMs), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+            if (Volatile.Read(ref _disposed) == 1) return;
+            if (_state != ChatConnectionState.ConnectedReadOnly) return;
+
+            try {
+                var result = await _scraper.PollAsync(_apiKey!, _clientVersion!, _continuation!, ct).ConfigureAwait(false);
+                if (result.NextContinuation is null) {
+                    TransitionTo(ChatConnectionState.Reconnecting,
+                        "poll returned no continuation; broadcast ended",
+                        YouTubeChatStatusReason.LiveBroadcastEnded);
+                    return;
+                }
+                foreach (var msg in result.Messages) {
+                    if (Volatile.Read(ref _disposed) == 1) return;
+                    var chatMessage = new ChatMessage(
+                        UserId: $"yt:{msg.AuthorChannelId}",
+                        Login: msg.AuthorDisplayName,
+                        DisplayName: msg.AuthorDisplayName,
+                        Text: msg.Text,
+                        ReceivedAt: _clock.UtcNow,
+                        IsSubscriber: msg.IsChatMember,
+                        IsModerator: msg.IsChatModerator,
+                        IsVip: false);
+                    LastMessageReceivedAt = _clock.UtcNow;
+                    var captured = chatMessage;
+                    _dispatcher.Post(() => MessageReceived?.Invoke(this, captured));
+                }
+                _continuation = result.NextContinuation;
+                lastTimeoutMs = result.NextTimeoutMs;
+            } catch (OperationCanceledException) {
+                return;
+            } catch (YouTubeHttpStatusException ex) {
+                LastError = ex;
+                var reason = ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    ? YouTubeChatStatusReason.RateLimited
+                    : YouTubeChatStatusReason.NetworkError;
+                TransitionTo(ChatConnectionState.Reconnecting,
+                    $"poll HTTP {(int)ex.StatusCode}", reason);
+                return;
+            } catch (Exception ex) {
+                LastError = ex;
+                TransitionTo(ChatConnectionState.Reconnecting,
+                    $"poll failed: {ex.GetType().Name}",
+                    YouTubeChatStatusReason.NetworkError);
+                return;
+            }
+        }
     }
 
     public Task SendMessageAsync(

@@ -62,6 +62,52 @@ public class YouTubeChatServiceTests {
     }
 
     [Fact]
+    public async Task SteadyState_Emits_Subsequent_Poll_Messages() {
+        var scraper = new StubScraperWithSequence();
+        // Cursor-establishing poll: empty, short timeout so loop fires soon.
+        scraper.PollResults.Enqueue(new PollResult(Array.Empty<ParsedChatMessage>(), "CONT1", 50));
+        // First steady-state poll: should emit the message.
+        scraper.PollResults.Enqueue(new PollResult(
+            new[] { new ParsedChatMessage("UC1", "U1", "#0", false, false) },
+            "CONT2", 60_000));
+        var svc = MakeService(scraper: scraper);
+        var received = new List<ChatMessage>();
+        svc.MessageReceived += (_, m) => received.Add(m);
+        await svc.ConnectAsync("UCfake");
+        // Wait briefly for steady-state poll to run.
+        // Poll loop clamps timeout to [1s,10s], so first steady-state poll happens after ~1s.
+        for (int i = 0; i < 30 && received.Count == 0; i++) await Task.Delay(50);
+        Assert.Single(received);
+        Assert.Equal("#0", received[0].Text);
+        Assert.StartsWith("yt:", received[0].UserId);
+    }
+
+    [Fact]
+    public async Task SteadyState_NullContinuation_Transitions_To_Reconnecting_With_LiveBroadcastEnded() {
+        var scraper = new StubScraperWithSequence();
+        scraper.PollResults.Enqueue(new PollResult(Array.Empty<ParsedChatMessage>(), "CONT1", 50));   // cursor
+        scraper.PollResults.Enqueue(new PollResult(Array.Empty<ParsedChatMessage>(), null, 0));        // ended
+        var svc = MakeService(scraper: scraper);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.Reconnecting) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(YouTubeChatStatusReason.LiveBroadcastEnded, svc.LastStatusReason);
+    }
+
+    [Fact]
+    public async Task Disconnect_Transitions_To_Disconnected() {
+        var svc = MakeService();
+        await svc.ConnectAsync("UCfake");
+        // Allow connect flow to settle to a non-Disconnected state before Disconnect.
+        for (int i = 0; i < 20 && svc.State == ChatConnectionState.Disconnected; i++) await Task.Delay(10);
+        svc.Disconnect();
+        Assert.Equal(ChatConnectionState.Disconnected, svc.State);
+    }
+
+    [Fact]
     public async Task Initial_Cursor_Establishing_Poll_Does_Not_Emit_Messages() {
         // Cursor-establishing poll has 1 backlog message. Subsequent steady-state
         // polls also return messages, but with a long timeoutMs to avoid racing.

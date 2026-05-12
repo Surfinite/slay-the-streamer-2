@@ -31,8 +31,13 @@ internal sealed class YouTubeLiveChatScraper : IYouTubeLiveChatScraper {
         @"""INNERTUBE_CONTEXT""[\s\S]*?""client""\s*:\s*\{[\s\S]*?""clientVersion""\s*:\s*""([0-9.]+)""",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    // Continuation tokens are URL-encoded (trailing %3D padding from base64) and can appear
+    // under three container types — verified 2026-05-12 against FrostPrime's live page.
+    // Character class includes % (URL-encode prefix) in addition to URL-safe base64 chars.
+    // reloadContinuationData is the typical container on the initial-page load; timed/invalidation
+    // are seen in steady-state polling responses but can also appear on the initial page.
     private static readonly Regex ContinuationRegex = new(
-        @"""(?:invalidationContinuationData|timedContinuationData)""\s*:\s*\{[\s\S]*?""continuation""\s*:\s*""([A-Za-z0-9_=-]+)""",
+        @"""(?:invalidationContinuationData|timedContinuationData|reloadContinuationData)""\s*:\s*\{[\s\S]*?""continuation""\s*:\s*""([A-Za-z0-9_%=-]+)""",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
     private readonly IYouTubeHttp _http;
@@ -221,6 +226,8 @@ internal sealed class YouTubeLiveChatScraper : IYouTubeLiveChatScraper {
             data = invalidation;
         } else if (first.TryGetProperty("timedContinuationData", out var timed)) {
             data = timed;
+        } else if (first.TryGetProperty("reloadContinuationData", out var reload)) {
+            data = reload;
         } else {
             return (null, 0);
         }

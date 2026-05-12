@@ -41,6 +41,7 @@ public sealed class VoteSession : IDisposable {
     public string Label { get; }
     public IReadOnlyList<VoteOption> Options { get; }
     public TimeSpan Duration { get; }
+    public int VoteId { get; }
     public VoteSessionState State => _state;
     public int? WinnerIndex { get; private set; }
     public TimeSpan TimeRemaining => MaxZero(_openedAt + Duration - _clock.UtcNow);
@@ -55,7 +56,8 @@ public sealed class VoteSession : IDisposable {
         IChatConsumer chat, IClock clock, ITimerScheduler scheduler,
         IMainThreadDispatcher dispatcher, Random random,
         VoteParsingPolicy parsingPolicy, VoteReceiptPolicy receiptPolicy,
-        Func<VoteSnapshot, ReceiptKind, string>? formatReceipt) {
+        Func<VoteSnapshot, ReceiptKind, string>? formatReceipt,
+        int voteId) {
 
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id required", nameof(id));
         if (string.IsNullOrWhiteSpace(label)) throw new ArgumentException("label required", nameof(label));
@@ -73,6 +75,7 @@ public sealed class VoteSession : IDisposable {
         if (duration < TimeSpan.FromSeconds(1)) throw new ArgumentException("duration must be >= 1s", nameof(duration));
 
         Id = id; Label = label; Options = options; Duration = duration;
+        VoteId = voteId;
         _chat = chat; _clock = clock; _scheduler = scheduler; _dispatcher = dispatcher;
         _random = random; _parsing = parsingPolicy; _receipts = receiptPolicy;
         _formatReceipt = formatReceipt;
@@ -233,7 +236,8 @@ public sealed class VoteSession : IDisposable {
             Tallies: new Dictionary<int, int>(_tallies),
             State: _state, WinnerIndex: WinnerIndex,
             RandomTieAmong: _tieAmong, NoVotesReceived: _noVotesReceived,
-            DisconnectGap: liveGap);
+            DisconnectGap: liveGap,
+            VoteId: VoteId);
     }
 
     public void Dispose() {

@@ -17,6 +17,7 @@ public sealed class VoteCoordinator : IDisposable {
     private readonly ITimerScheduler _scheduler;
     private readonly IMainThreadDispatcher _dispatcher;
     private readonly Random _random;
+    private int _nextVoteId = 0;
 
     public IChatConsumer Chat => _chat;
     public IMainThreadDispatcher Dispatcher => _dispatcher;
@@ -54,13 +55,16 @@ public sealed class VoteCoordinator : IDisposable {
             optionList.Add(new VoteOption(i, options[i]));
 
         var id = $"{Slug(label)}-{_clock.UtcNow:yyyyMMddTHHmmssfff}";
+        var voteId = _nextVoteId;
+        _nextVoteId = (_nextVoteId + 1) % 100;
         var session = new VoteSession(
             id: id, label: label, options: optionList, duration: duration,
             chat: _chat, clock: _clock, scheduler: _scheduler,
             dispatcher: _dispatcher, random: _random,
             parsingPolicy: parsing ?? VoteParsingPolicy.Default,
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
-            formatReceipt: formatReceipt);
+            formatReceipt: formatReceipt,
+            voteId: voteId);
 
         CurrentSession = session;
         session.Closed += OnSessionEnded;

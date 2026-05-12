@@ -20,5 +20,6 @@ public sealed record VoteSnapshot(
     int? WinnerIndex,
     int? RandomTieAmong,                  // when WinnerIndex was picked from a tie, how many options were tied
     bool NoVotesReceived,                 // true if WinnerIndex was picked from all options because zero votes came in
-    TimeSpan DisconnectGap                // total time chat was offline during the vote (TimeSpan.Zero if none)
+    TimeSpan DisconnectGap,               // total time chat was offline during the vote (TimeSpan.Zero if none)
+    int VoteId                            // cycling 0..99 nonce assigned by VoteCoordinator; lets receipts/UI disambiguate consecutive votes
 );

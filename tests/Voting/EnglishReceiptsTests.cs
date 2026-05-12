@@ -24,7 +24,7 @@ public class EnglishReceiptsTests {
         return new VoteSnapshot(
             "card-reward-X", "card reward",
             opts, TimeSpan.FromSeconds(30), remaining ?? TimeSpan.FromSeconds(30),
-            tlies, state, winner, tieAmong, noVotes, disconnectGap ?? TimeSpan.Zero);
+            tlies, state, winner, tieAmong, noVotes, disconnectGap ?? TimeSpan.Zero, 0);
     }
 
     [Fact]

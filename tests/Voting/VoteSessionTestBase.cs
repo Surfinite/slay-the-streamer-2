@@ -40,8 +40,39 @@ public abstract class VoteSessionTestBase {
             random: Rng,
             parsingPolicy: parsing ?? VoteParsingPolicy.Default,
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
-            formatReceipt: null);
+            formatReceipt: null,
+            voteId: 0);
     }
+
+    protected VoteSession CreateSession(
+        int voteId = 0,
+        string label = "card reward",
+        TimeSpan? duration = null,
+        VoteParsingPolicy? parsing = null,
+        VoteReceiptPolicy? receipts = null,
+        string[]? options = null) {
+        var opts = options ?? new[] { "Bash", "Defend", "Strike" };
+        var optionList = new List<VoteOption>();
+        for (int i = 0; i < opts.Length; i++) optionList.Add(new VoteOption(i, opts[i]));
+
+        return new VoteSession(
+            id: $"{label}-test",
+            label: label,
+            options: optionList,
+            duration: duration ?? TimeSpan.FromSeconds(30),
+            chat: Chat,
+            clock: Clock,
+            scheduler: Scheduler,
+            dispatcher: Dispatcher,
+            random: Rng,
+            parsingPolicy: parsing ?? VoteParsingPolicy.Default,
+            receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
+            formatReceipt: null,
+            voteId: voteId);
+    }
+
+    protected VoteCoordinator CreateCoordinator() =>
+        new(Chat, Clock, Scheduler, Dispatcher, Rng);
 
     protected void Inject(string user, string text, string? userId = null) {
         userId ??= $"id-{user}";

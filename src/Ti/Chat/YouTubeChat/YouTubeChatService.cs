@@ -30,6 +30,10 @@ public sealed class YouTubeChatService : IChatService {
     private Task? _pollLoopTask;
     private IDisposable? _retryTimer;
     private int _consecutive429Count;
+    private int _consecutiveReconnectCount;
+    private bool _escalationSent;
+
+    private const int EscalationThreshold = 30;
 
     private static readonly TimeSpan PollMin = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan PollMax = TimeSpan.FromSeconds(10);
@@ -223,6 +227,8 @@ public sealed class YouTubeChatService : IChatService {
 
         if (next == ChatConnectionState.ConnectedReadOnly) {
             _consecutive429Count = 0;
+            _consecutiveReconnectCount = 0;
+            _escalationSent = false;
         } else if (next == ChatConnectionState.Reconnecting) {
             ArmReconnect();
         }
@@ -231,6 +237,13 @@ public sealed class YouTubeChatService : IChatService {
     private void ArmReconnect() {
         if (Volatile.Read(ref _disposed) == 1) return;
         _retryTimer?.Dispose();
+        _consecutiveReconnectCount++;
+        if (_consecutiveReconnectCount == EscalationThreshold && !_escalationSent) {
+            _escalationSent = true;
+            var escalationArgs = new YouTubeEscalationRequestedEventArgs(_consecutiveReconnectCount, LastStatusReason);
+            try { EscalationRequested?.Invoke(this, escalationArgs); }
+            catch (Exception ex) { TiLog.Error("[YouTubeChatService] EscalationRequested handler threw", ex); }
+        }
         var delay = NextReconnectDelay(LastError);
         _retryTimer = _scheduler.Schedule(delay, () => {
             if (Volatile.Read(ref _disposed) == 1) return;

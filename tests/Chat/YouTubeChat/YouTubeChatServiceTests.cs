@@ -62,6 +62,107 @@ public class YouTubeChatServiceTests {
     }
 
     [Fact]
+    public async Task Escalation_Fires_At_30th_Consecutive_Reconnect() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var discovery = new StubDiscovery { NextResult = null };
+        var svc = MakeService(discovery: discovery, clock: clock, scheduler: scheduler);
+        var events = new List<YouTubeEscalationRequestedEventArgs>();
+        svc.EscalationRequested += (_, e) => events.Add(e);
+        await svc.ConnectAsync("UCfake");
+        // Drive 30 consecutive reconnect cycles by advancing the scheduler past
+        // each timer's delay. Each cycle re-runs the connect flow which hits
+        // discovery == null and transitions Reconnecting again.
+        for (int i = 0; i < 30; i++) {
+            // Wait for the reconnect timer to be armed (state task ran on background).
+            for (int j = 0; j < 200 && scheduler.PendingCount == 0; j++) await Task.Delay(5);
+            Assert.True(scheduler.PendingCount > 0, $"timer missing at cycle {i}");
+            scheduler.Advance(scheduler.NextDueDelay!.Value);
+        }
+        // Wait briefly for the 30th transition to settle.
+        for (int j = 0; j < 50 && events.Count == 0; j++) await Task.Delay(10);
+        Assert.Single(events);
+        Assert.Equal(30, events[0].ConsecutiveReconnectCount);
+        Assert.Equal(YouTubeChatStatusReason.NoLiveBroadcastFound, events[0].LastStatusReason);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Escalation_Does_Not_Fire_If_Connection_Succeeds_Before_Threshold() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        // 29 fails, then success.
+        var discovery = new ToggleDiscovery();
+        for (int i = 0; i < 29; i++) discovery.Results.Enqueue(null);
+        discovery.Results.Enqueue("UCgood");
+        var svc = MakeService(discovery: discovery, clock: clock, scheduler: scheduler);
+        var events = new List<YouTubeEscalationRequestedEventArgs>();
+        svc.EscalationRequested += (_, e) => events.Add(e);
+        await svc.ConnectAsync("UCfake");
+        for (int i = 0; i < 29; i++) {
+            for (int j = 0; j < 200 && scheduler.PendingCount == 0; j++) await Task.Delay(5);
+            Assert.True(scheduler.PendingCount > 0, $"timer missing at cycle {i}");
+            scheduler.Advance(scheduler.NextDueDelay!.Value);
+        }
+        // Wait briefly for the 30th attempt (success) to flow.
+        for (int j = 0; j < 100 && svc.State != ChatConnectionState.ConnectedReadOnly; j++) await Task.Delay(10);
+        Assert.Equal(ChatConnectionState.ConnectedReadOnly, svc.State);
+        Assert.Empty(events);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Escalation_OneShot_Until_Counter_Resets() {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var scheduler = new FakeTimerScheduler(clock);
+        var discovery = new ToggleDiscovery();
+        // Pattern: 30 fails -> success -> 30 fails. Should fire twice.
+        for (int i = 0; i < 30; i++) discovery.Results.Enqueue(null);
+        discovery.Results.Enqueue("UCgood");
+        // After success, the steady-state poll loop runs and the connection-ended
+        // case must transition back to Reconnecting. To keep this test simple,
+        // we then arrange the next 30 attempts to also fail via repeat nulls.
+        for (int i = 0; i < 30; i++) discovery.Results.Enqueue(null);
+
+        // Use a scraper that returns null continuation immediately so the success
+        // flow exits ConnectedReadOnly back to Reconnecting (LiveBroadcastEnded),
+        // re-running connect flow which hits the next batch of nulls.
+        var scraper = new StubScraperWithSequence();
+        // For the one success: cursor-establishing poll returns valid continuation,
+        // then steady-state poll returns null continuation -> back to Reconnecting.
+        scraper.PollResults.Enqueue(new PollResult(Array.Empty<ParsedChatMessage>(), "CONT1", 50));
+        scraper.PollResults.Enqueue(new PollResult(Array.Empty<ParsedChatMessage>(), null, 0));
+
+        var svc = MakeService(discovery: discovery, scraper: scraper, clock: clock, scheduler: scheduler);
+        var events = new List<YouTubeEscalationRequestedEventArgs>();
+        svc.EscalationRequested += (_, e) => events.Add(e);
+        await svc.ConnectAsync("UCfake");
+        // Burst 1: 30 fails -> escalation #1.
+        for (int i = 0; i < 30; i++) {
+            for (int j = 0; j < 200 && scheduler.PendingCount == 0; j++) await Task.Delay(5);
+            Assert.True(scheduler.PendingCount > 0, $"timer missing at burst1 cycle {i}");
+            scheduler.Advance(scheduler.NextDueDelay!.Value);
+        }
+        for (int j = 0; j < 100 && events.Count == 0; j++) await Task.Delay(10);
+        Assert.Single(events);
+
+        // Now the next discovery call returns "UCgood" -> ConnectedReadOnly
+        // (steady-state poll then transitions back to Reconnecting via null continuation).
+        // Wait for that round-trip to complete.
+        for (int j = 0; j < 200 && scheduler.PendingCount == 0; j++) await Task.Delay(10);
+
+        // Burst 2: 30 more fails -> escalation #2.
+        for (int i = 0; i < 30; i++) {
+            for (int j = 0; j < 200 && scheduler.PendingCount == 0; j++) await Task.Delay(5);
+            Assert.True(scheduler.PendingCount > 0, $"timer missing at burst2 cycle {i}");
+            scheduler.Advance(scheduler.NextDueDelay!.Value);
+        }
+        for (int j = 0; j < 100 && events.Count < 2; j++) await Task.Delay(10);
+        Assert.Equal(2, events.Count);
+        svc.Dispose();
+    }
+
+    [Fact]
     public async Task Reconnect_ArmsTimer_After_Reconnecting_Transition() {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
         var scheduler = new FakeTimerScheduler(clock);
@@ -252,6 +353,17 @@ internal sealed class StubDiscovery : IYouTubeLiveBroadcastDiscovery {
     public Task<string?> FindLiveVideoIdAsync(string channelId, CancellationToken ct) {
         Interlocked.Increment(ref CallCount);
         return Task.FromResult(NextResult);
+    }
+}
+
+internal sealed class ToggleDiscovery : IYouTubeLiveBroadcastDiscovery {
+    public Queue<string?> Results { get; } = new();
+    public string? Fallback { get; set; } = null;
+    public int CallCount;
+    public Task<string?> FindLiveVideoIdAsync(string channelId, CancellationToken ct) {
+        Interlocked.Increment(ref CallCount);
+        if (Results.Count > 0) return Task.FromResult(Results.Dequeue());
+        return Task.FromResult(Fallback);
     }
 }
 

@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -69,8 +72,172 @@ internal sealed class YouTubeLiveChatScraper : IYouTubeLiveChatScraper {
         }
     }
 
-    public Task<PollResult> PollAsync(string apiKey, string clientVersion, string continuation, CancellationToken ct) =>
-        throw new NotImplementedException("Implemented in Task 18");
+    public async Task<PollResult> PollAsync(string apiKey, string clientVersion, string continuation, CancellationToken ct) {
+        try {
+            var url = new Uri($"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={Uri.EscapeDataString(apiKey)}");
+            var body = BuildPollRequestBody(clientVersion, continuation);
+            using var resp = await _http.PostJsonAsync(url, body, ct).ConfigureAwait(false);
+            var responseBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+
+            // continuationContents.liveChatContinuation is the wrapper for both actions[] and continuations[].
+            // Missing either node means the broadcast ended (or members-only-like; see fixture).
+            if (!root.TryGetProperty("continuationContents", out var contents) ||
+                !contents.TryGetProperty("liveChatContinuation", out var liveChatContinuation)) {
+                RecordFailure("continuationContents.liveChatContinuation_missing", responseBody);
+                return new PollResult(Array.Empty<ParsedChatMessage>(), null, 0);
+            }
+
+            var messages = new List<ParsedChatMessage>();
+            if (liveChatContinuation.TryGetProperty("actions", out var actions) &&
+                actions.ValueKind == JsonValueKind.Array) {
+                foreach (var action in actions.EnumerateArray()) {
+                    var parsed = TryParseAction(action);
+                    if (parsed is not null) messages.Add(parsed);
+                }
+            }
+
+            var (nextContinuation, nextTimeoutMs) = ExtractContinuation(liveChatContinuation);
+
+            RecordSuccess("(poll)");
+            return new PollResult(messages, nextContinuation, nextTimeoutMs);
+        } catch (Exception ex) {
+            TiLog.Debug($"[YouTubeLiveChatScraper] PollAsync threw: {ex.GetType().Name}: {ex.Message}");
+            return new PollResult(Array.Empty<ParsedChatMessage>(), null, 0);
+        }
+    }
+
+    private static string BuildPollRequestBody(string clientVersion, string continuation) {
+        // Minimal Innertube WEB context — matches what every cross-language scraper sends.
+        // Built with JsonSerializer (not string concat) so embedded quotes in clientVersion
+        // (unlikely but possible after a YouTube redesign) don't break the JSON.
+        var payload = new {
+            context = new {
+                client = new {
+                    clientName = "WEB",
+                    clientVersion = clientVersion,
+                },
+            },
+            continuation = continuation,
+        };
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private static ParsedChatMessage? TryParseAction(JsonElement action) {
+        // Path: action.addChatItemAction.item.{liveChatTextMessageRenderer | liveChatPaidMessageRenderer}
+        // Defensive at every step; any missing node returns null silently.
+        if (!action.TryGetProperty("addChatItemAction", out var addAction)) return null;
+        if (!addAction.TryGetProperty("item", out var item)) return null;
+
+        JsonElement renderer;
+        if (item.TryGetProperty("liveChatTextMessageRenderer", out var textRenderer)) {
+            renderer = textRenderer;
+        } else if (item.TryGetProperty("liveChatPaidMessageRenderer", out var paidRenderer)) {
+            // Paid messages WITH a message.runs body are extracted as normal text per spec.
+            // Sticker-only / text-less paid items fall out below when runs[] yields empty text.
+            renderer = paidRenderer;
+        } else {
+            // membership / sticker / engagement / other — skip silently.
+            return null;
+        }
+
+        // Author channel id is required (no anon-GUID fallback per Should-do #12).
+        if (!renderer.TryGetProperty("authorExternalChannelId", out var channelIdEl) ||
+            channelIdEl.ValueKind != JsonValueKind.String) {
+            TiLog.Debug("[YouTubeLiveChatScraper] dropped message: missing authorExternalChannelId");
+            return null;
+        }
+        var channelId = channelIdEl.GetString();
+        if (string.IsNullOrEmpty(channelId)) {
+            TiLog.Debug("[YouTubeLiveChatScraper] dropped message: empty authorExternalChannelId");
+            return null;
+        }
+
+        // Walk message.runs[]; concat any run that has a text field. Skip emoji/image-only runs.
+        if (!renderer.TryGetProperty("message", out var message)) {
+            TiLog.Debug("[YouTubeLiveChatScraper] dropped message: missing message field");
+            return null;
+        }
+        if (!message.TryGetProperty("runs", out var runs) || runs.ValueKind != JsonValueKind.Array) {
+            TiLog.Debug("[YouTubeLiveChatScraper] dropped message: missing runs[]");
+            return null;
+        }
+
+        var sb = new StringBuilder();
+        foreach (var run in runs.EnumerateArray()) {
+            if (run.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String) {
+                sb.Append(textEl.GetString());
+            }
+            // emoji/image runs without a text field: skipped silently per Should-do #28.
+        }
+        var text = sb.ToString();
+        if (string.IsNullOrEmpty(text)) {
+            // No text content at all (e.g. sticker-only paid item) — skip silently.
+            return null;
+        }
+
+        // Author display name from authorName.simpleText; fall back to empty if missing.
+        string displayName = string.Empty;
+        if (renderer.TryGetProperty("authorName", out var authorName) &&
+            authorName.TryGetProperty("simpleText", out var simpleText) &&
+            simpleText.ValueKind == JsonValueKind.String) {
+            displayName = simpleText.GetString() ?? string.Empty;
+        }
+
+        // Walk authorBadges[] for member (customThumbnails) and moderator (icon.iconType == "MODERATOR").
+        bool isMember = false, isModerator = false;
+        if (renderer.TryGetProperty("authorBadges", out var badges) && badges.ValueKind == JsonValueKind.Array) {
+            foreach (var badge in badges.EnumerateArray()) {
+                if (!badge.TryGetProperty("liveChatAuthorBadgeRenderer", out var br)) continue;
+                if (br.TryGetProperty("customThumbnails", out _)) isMember = true;
+                if (br.TryGetProperty("icon", out var icon) &&
+                    icon.TryGetProperty("iconType", out var iconType) &&
+                    iconType.ValueKind == JsonValueKind.String &&
+                    string.Equals(iconType.GetString(), "MODERATOR", StringComparison.Ordinal)) {
+                    isModerator = true;
+                }
+            }
+        }
+
+        return new ParsedChatMessage(
+            AuthorChannelId: channelId!,
+            AuthorDisplayName: displayName,
+            Text: text,
+            IsChatMember: isMember,
+            IsChatModerator: isModerator);
+    }
+
+    private static (string? Continuation, int TimeoutMs) ExtractContinuation(JsonElement liveChatContinuation) {
+        if (!liveChatContinuation.TryGetProperty("continuations", out var continuations) ||
+            continuations.ValueKind != JsonValueKind.Array ||
+            continuations.GetArrayLength() == 0) {
+            return (null, 0);
+        }
+        var first = continuations[0];
+        JsonElement data;
+        if (first.TryGetProperty("invalidationContinuationData", out var invalidation)) {
+            data = invalidation;
+        } else if (first.TryGetProperty("timedContinuationData", out var timed)) {
+            data = timed;
+        } else {
+            return (null, 0);
+        }
+        string? token = null;
+        if (data.TryGetProperty("continuation", out var contEl) && contEl.ValueKind == JsonValueKind.String) {
+            token = contEl.GetString();
+        }
+        int timeoutMs = 0;
+        if (data.TryGetProperty("timeoutMs", out var timeoutEl)) {
+            if (timeoutEl.ValueKind == JsonValueKind.Number && timeoutEl.TryGetInt32(out var t)) {
+                timeoutMs = t;
+            } else if (timeoutEl.ValueKind == JsonValueKind.String && int.TryParse(timeoutEl.GetString(), out var ts)) {
+                timeoutMs = ts;
+            }
+        }
+        return (token, timeoutMs);
+    }
 
     private void RecordSuccess(string videoId) {
         _lastFailureLocation = null;

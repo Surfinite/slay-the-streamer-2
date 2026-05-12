@@ -1,0 +1,82 @@
+{
+  "responseContext": {
+    "serviceTrackingParams": [
+      {
+        "service": "CSI",
+        "params": [
+          { "key": "c", "value": "WEB" },
+          { "key": "cver", "value": "2.20260512.00.00.00" }
+        ]
+      }
+    ]
+  },
+  "trackingParams": "CAAQuy4iEwiFIXTUREmalformedTrack",
+  "continuationContents": {
+    "liveChatContinuation": {
+      "continuations": [
+        {
+          "invalidationContinuationData": {
+            "timeoutMs": 5000,
+            "continuation": "0ofMyANaGlhVUM0VHRkZmaXh0dXJlbWFsZm9ybWVkLW5leHQtcG9sbC1jb250aW51YXRpb24tdG9rZW4tcGF5bG9hZC1maXh0dXJlLTIwMjYtMDUtMTI",
+            "invalidationId": {
+              "objectSource": 1056,
+              "objectId": "FIXTUREinvalidationmalformed001",
+              "topic": "chat~FIXTUREvid001~000000020",
+              "subscribeToGcmTopics": true,
+              "protoCreationTimestampMs": "1746979220000"
+            }
+          }
+        }
+      ],
+      "actions": [
+        {
+          "clickTrackingParams": "CAEQl98BIhMIFIXTUREmalformedClick001",
+          "addChatItemAction": {
+            "item": {
+              "liveChatTextMessageRenderer": {
+                "authorName": {
+                  "simpleText": "Fixture Malformed Author"
+                },
+                "authorPhoto": {
+                  "thumbnails": [
+                    { "url": "https://yt3.ggpht.com/fixture/malformed1=s32-c-k-c0x00ffffff-no-rj", "width": 32, "height": 32 }
+                  ]
+                },
+                "id": "ChwKGkNQalRGSVhUVVJFTWFsZm9ybWVkSWQwMDFGSVg",
+                "timestampUsec": "1746979220000000",
+                "authorExternalChannelId": "UCfixturemalformed001"
+              }
+            },
+            "clientId": "FIXTUREmalformedClient001"
+          }
+        },
+        {
+          "clickTrackingParams": "CAEQl98BIhMIFIXTUREvalidClick001",
+          "addChatItemAction": {
+            "item": {
+              "liveChatTextMessageRenderer": {
+                "message": {
+                  "runs": [
+                    { "text": "Valid message after malformed" }
+                  ]
+                },
+                "authorName": {
+                  "simpleText": "Fixture Valid Author"
+                },
+                "authorPhoto": {
+                  "thumbnails": [
+                    { "url": "https://yt3.ggpht.com/fixture/valid1=s32-c-k-c0x00ffffff-no-rj", "width": 32, "height": 32 }
+                  ]
+                },
+                "id": "ChwKGkNQalRGSVhUVVJFVmFsaWRJZDAwMUZJWFRVUkU",
+                "timestampUsec": "1746979221000000",
+                "authorExternalChannelId": "UCfixturevalid001"
+              }
+            },
+            "clientId": "FIXTUREvalidClient001"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -34,6 +34,45 @@ public class YouTubeLiveChatScraperTests {
         var scraper = new YouTubeLiveChatScraper(http);
         Assert.Null(await scraper.ParseInitialPageAsync("FIXTUREvid001", default));
     }
+
+    [Fact]
+    public async Task PollAsync_Normal_Text_Messages_Extracted() {
+        var body = FixtureLoader.Load("youtube_live_chat_2026-05-12.json");
+        var http = new PostBodyFakeHttp(body);
+        var scraper = new YouTubeLiveChatScraper(http);
+        var result = await scraper.PollAsync("KEY", "1.0.0.0", "CONT", default);
+        Assert.NotEmpty(result.Messages);
+        Assert.NotNull(result.NextContinuation);
+        Assert.True(result.NextTimeoutMs > 0);
+    }
+
+    [Fact]
+    public async Task PollAsync_Paid_Message_With_Text_Counted_As_Normal() {
+        var body = FixtureLoader.Load("youtube_live_chat_paid_message.json");
+        var http = new PostBodyFakeHttp(body);
+        var scraper = new YouTubeLiveChatScraper(http);
+        var result = await scraper.PollAsync("KEY", "1.0.0.0", "CONT", default);
+        Assert.Contains(result.Messages, m => m.Text.Contains("#1"));
+    }
+
+    [Fact]
+    public async Task PollAsync_MalformedRenderer_Skipped_Other_Messages_Parsed() {
+        var body = FixtureLoader.Load("youtube_live_chat_malformed_renderer.json");
+        var http = new PostBodyFakeHttp(body);
+        var scraper = new YouTubeLiveChatScraper(http);
+        var result = await scraper.PollAsync("KEY", "1.0.0.0", "CONT", default);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task PollAsync_MembersOnly_Like_Returns_Empty_With_Null_Continuation() {
+        var body = FixtureLoader.Load("youtube_live_chat_members_only.json");
+        var http = new PostBodyFakeHttp(body);
+        var scraper = new YouTubeLiveChatScraper(http);
+        var result = await scraper.PollAsync("KEY", "1.0.0.0", "CONT", default);
+        Assert.Empty(result.Messages);
+        Assert.Null(result.NextContinuation);
+    }
 }
 
 internal sealed class StaticBodyFakeHttp : IYouTubeHttp {

@@ -11,6 +11,11 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
     private EventHandler<VoteSession>? _closedHandler;
     private EventHandler<VoteSession>? _cancelledHandler;
 
+    // Cache-invalidation triggers — rebuild Text only when one of these changes.
+    private int _cachedSecondsLeft = -1;
+    private int _cachedTallyVersion = -1;
+    private bool _cachedVoteEchoActive;
+
     public static void AttachTo(VoteSession session) {
         var tree = (Engine.GetMainLoop() as SceneTree);
         if (tree?.Root is null) {
@@ -36,10 +41,9 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
     }
 
     /// <summary>
-    /// Per-frame poll for tally + time remaining. Intentionally polling-based
-    /// for B.1's minimal label — the cost is negligible for a 4-line text node,
-    /// and it sidesteps the cleanup complexity of multiple event subscriptions.
-    /// B.2's polished VoteOverlayControl should subscribe to TallyChanged instead.
+    /// Per-frame poll for tally + time remaining. Cached on (secondsLeft, tallyVersion, voteEchoActive)
+    /// so the StringBuilder/Dictionary path runs only when output would actually change. Renders
+    /// single-platform or split per-platform rows depending on <c>VoteSession.TalliesByPlatform</c>.
     /// </summary>
     public override void _Process(double delta) {
         if (!GodotObject.IsInstanceValid(this) || _session is null) return;
@@ -47,14 +51,68 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
                               or VoteSessionState.Cancelled
                               or VoteSessionState.Disposed) return;
 
-        var sb = new StringBuilder();
         var secondsLeft = Math.Max(0, (int)_session.TimeRemaining.TotalSeconds);
-        sb.AppendLine($"Chat voting — {secondsLeft}s left");
-        for (int i = 0; i < _session.Options.Count; i++) {
-            _session.Tallies.TryGetValue(i, out var count);
-            sb.AppendLine($"#{i} {_session.Options[i].Label}: {count}");
+        var tallyVersion = _session.TallyVersion;
+        var echoActive = ComputeEchoActive();
+
+        if (secondsLeft == _cachedSecondsLeft &&
+            tallyVersion == _cachedTallyVersion &&
+            echoActive == _cachedVoteEchoActive) {
+            return;
+        }
+
+        _cachedSecondsLeft = secondsLeft;
+        _cachedTallyVersion = tallyVersion;
+        _cachedVoteEchoActive = echoActive;
+
+        var sb = new StringBuilder();
+        // Vote-ID in header so YT viewers (who don't see Twitch receipts) can use the !NN syntax.
+        sb.AppendLine($"Chat voting [{_session.VoteId:D2}] — {secondsLeft}s left, type #N (or #N!{_session.VoteId:D2})");
+
+        var perPlatform = _session.TalliesByPlatform;
+        if (perPlatform is null) {
+            // Single-platform — original rendering path.
+            for (int i = 0; i < _session.Options.Count; i++) {
+                _session.Tallies.TryGetValue(i, out var count);
+                sb.AppendLine($"#{i} {_session.Options[i].Label}: {count}");
+            }
+        } else {
+            // Multi-platform — iterate ConfiguredPlatforms in registration order so configured-but-silent
+            // platforms still render their zero rows (no mid-vote rendering snap).
+            foreach (var platform in _session.ConfiguredPlatforms) {
+                sb.Append($"{Capitalize(platform)}: ");
+                for (int i = 0; i < _session.Options.Count; i++) {
+                    perPlatform.TryGetValue((platform, i), out var count);
+                    if (i > 0) sb.Append(", ");
+                    sb.Append($"{i}={count}");
+                }
+                if (IsVoteEchoVisible(platform)) {
+                    sb.Append(" ◀ just now");
+                }
+                sb.AppendLine();
+            }
         }
         Text = sb.ToString();
+    }
+
+    private bool ComputeEchoActive() {
+        if (_session is null) return false;
+        foreach (var platform in _session.ConfiguredPlatforms) {
+            if (IsVoteEchoVisible(platform)) return true;
+        }
+        return false;
+    }
+
+    private bool IsVoteEchoVisible(string platform) {
+        if (_session is null) return false;
+        return _session.LastVoteByPlatform.TryGetValue(platform, out var lastVote)
+               && DateTimeOffset.UtcNow - lastVote < TimeSpan.FromSeconds(3);
+    }
+
+    private static string Capitalize(string s) {
+        if (string.IsNullOrEmpty(s)) return s;
+        if (char.IsUpper(s[0])) return s;
+        return char.ToUpperInvariant(s[0]) + s.Substring(1);
     }
 
     public override void _ExitTree() {

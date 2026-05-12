@@ -11,7 +11,7 @@ namespace SlayTheStreamer2.Ti.Voting;
 public static class EnglishReceipts {
     public static string FormatOpen(VoteSnapshot s) {
         var numbers = string.Join(", ", s.Options.Select(o => o.Index.ToString()));
-        return $"Vote: {s.Label}! Type {numbers} — {(int)s.Duration.TotalSeconds}s left.";
+        return $"Vote [{s.VoteId:D2}]: {s.Label}! Type {numbers} — {(int)s.Duration.TotalSeconds}s left.";
     }
 
     public static string FormatPeriodicTally(VoteSnapshot s) {

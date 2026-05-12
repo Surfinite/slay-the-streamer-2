@@ -14,7 +14,8 @@ public class EnglishReceiptsTests {
         TimeSpan? remaining = null,
         TimeSpan? disconnectGap = null,
         IReadOnlyDictionary<int, int>? tallies = null,
-        IReadOnlyList<VoteOption>? options = null) {
+        IReadOnlyList<VoteOption>? options = null,
+        int voteId = 0) {
         var opts = options ?? new List<VoteOption> {
             new(0, "Bash"),
             new(1, "Defend"),
@@ -22,9 +23,18 @@ public class EnglishReceiptsTests {
         };
         var tlies = tallies ?? new Dictionary<int, int> { [0] = 0, [1] = 0, [2] = 0 };
         return new VoteSnapshot(
-            "card-reward-X", "card reward",
-            opts, TimeSpan.FromSeconds(30), remaining ?? TimeSpan.FromSeconds(30),
-            tlies, state, winner, tieAmong, noVotes, disconnectGap ?? TimeSpan.Zero, 0);
+            Id: "card-reward-X",
+            Label: "card reward",
+            Options: opts,
+            Duration: TimeSpan.FromSeconds(30),
+            TimeRemaining: remaining ?? TimeSpan.FromSeconds(30),
+            Tallies: tlies,
+            State: state,
+            WinnerIndex: winner,
+            RandomTieAmong: tieAmong,
+            NoVotesReceived: noVotes,
+            DisconnectGap: disconnectGap ?? TimeSpan.Zero,
+            VoteId: voteId);
     }
 
     [Fact]
@@ -96,5 +106,19 @@ public class EnglishReceiptsTests {
         var text = EnglishReceipts.FormatClose(s);
         Assert.Contains("8s", text);
         Assert.Contains("offline", text);
+    }
+
+    [Fact]
+    public void FormatOpen_Includes_ZeroPadded_VoteId() {
+        var s = Snap(voteId: 7);
+        var text = EnglishReceipts.FormatOpen(s);
+        Assert.Contains("Vote [07]", text);
+    }
+
+    [Fact]
+    public void FormatOpen_VoteId_99_Renders_Two_Digits() {
+        var s = Snap(voteId: 99);
+        var text = EnglishReceipts.FormatOpen(s);
+        Assert.Contains("Vote [99]", text);
     }
 }

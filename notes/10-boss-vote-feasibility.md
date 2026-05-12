@@ -10,7 +10,9 @@
 - **Trigger surface**: the chest room is [`TreasureRoom`](../decompiled/sts2/MegaCrit/sts2/Core/Rooms/TreasureRoom.cs) at the model layer + [`NTreasureRoom`](../decompiled/sts2/MegaCrit/sts2/Core/Nodes/Rooms/NTreasureRoom.cs) at the node layer. Best trigger is a Harmony **prefix on `NTreasureRoom.OnProceedButtonPressed`** (matches the screenshot's "vote appears while chest scene is still visible" UX) using our existing B.1 suspend-and-resume pattern: prefix returns `false`, kicks off the vote async, then dispatches a resume click after the winner is set.
 - **Boss sprite assets**: every `EncounterModel` exposes `MapNodeAssetPaths` ([EncounterModel.cs:154-168](../decompiled/sts2/MegaCrit/sts2/Core/Models/EncounterModel.cs#L154-L168)) — either a Spine skeleton resource at `res://animations/map/<id>/<id>_node_skel_data.tres`, or fallback to two PNGs (`.tres.png` + `.tres_outline.png`). These are the same icons the streamer already sees on the map, so using them for the vote popup gives free visual consistency. PNG path is simpler if we don't want to pull in MegaSpine bindings.
 - **Backdrop/overlay**: vanilla's [`NOverlayStack`](../decompiled/sts2/MegaCrit/sts2/Core/Nodes/Screens/Overlays/NOverlayStack.cs) has a `_backstop` Control + `ShowBackstop`/`HideBackstop` methods that already implement the darken-everything-below pattern. Using it directly is one option. Cleaner alternative: instantiate our own `CanvasLayer` at a higher layer index than the room, add a semi-transparent `ColorRect` child, add our popup Control on top. This pattern is also what we use for `VoteTallyLabel` per [notes/06](06-followups-and-deferred.md) and avoids interacting with vanilla's screen-stack lifecycle.
-- **Overall complexity estimate**: ~3-5 days of focused work for v1 (single-boss vote on standard runs). The vote-coordinator and chat-receipt infrastructure is reused verbatim from B.1 / B.2.1. The new code is mostly: one Harmony patch, one popup Control with 3 boss icons, one wiring call to `MapCmd.SetBossEncounter`. Risks are in the small details (discovery progression, second boss, multiplayer) more than in the core path.
+- **Overall complexity estimate**: ~3-5 days of focused work for v1 (single-boss vote on standard runs). The vote-coordinator and chat-receipt infrastructure is reused verbatim from B.1 / B.2.1. The new code is mostly: one Harmony patch, one popup Control with 3 boss icons, one wiring call to `MapCmd.SetBossEncounter`. Risks are in the small details (A10 DoubleBoss interaction on Act 3, multiplayer sync) more than in the core path.
+- **Ascension scope** (corrected 2026-05-12 after Surfinite pushed back): the chest room exists at every ascension — the `replaceTreasureWithElites` parameter is dead code in this build. The only ascension level that affects bosses is `DoubleBoss` (A10+), which adds a second boss to the final act only. See the "Ascension interactions" subsection.
+- **Target user**: unlocked-everything streamers per Surfinite 2026-05-12. We don't need to engineer around `BossDiscoveryOrder` progression — the user has already seen every boss.
 
 ## The boss-swap surface
 
@@ -163,30 +165,32 @@ Patch count: 1 new patch class with 1 Harmony target; 1 new UI class; small sett
 
 ## Caveats and gotchas
 
-### Discovery progression for unseen bosses (standard mode only)
-
-`ActModel.ApplyDiscoveryOrderModifications` ([line 294](../decompiled/sts2/MegaCrit/sts2/Core/Models/ActModel.cs#L294)) deliberately force-picks the next undiscovered boss in `BossDiscoveryOrder` if the player hasn't seen it. If chat always votes for the same boss, undiscovered bosses on the streamer's progression may stay undiscovered. Two ways to handle:
-
-- **Accept**: streamer's chat-vs-streamer runs aren't progression runs anyway, and Custom Mode locks epoch/achievement progression already per [notes/08](08-sealed-deck-custom-mode-investigation.md). For Custom Mode runs, this is a non-issue.
-- **Mitigate**: in our sampling, weight unseen bosses higher, or always include at least one unseen boss in the 3-pick.
-
-Either is fine. Document the trade-off; don't gate v1 on it.
-
 ### Achievement / "first defeated" tracking
 
 If the vote happens in Standard Mode and the streamer beats the chat-picked boss, the "first defeat" achievement (e.g., `DefeatOvergrowthEnemies`) should still fire per [`ActModel.DefeatedAllEnemiesAchievement`](../decompiled/sts2/MegaCrit/sts2/Core/Models/ActModel.cs#L123). Need to verify the chain doesn't depend on the boss having been originally rolled (vs reassigned via `SetBossEncounter`). Probably fine since the achievement key is per-act not per-encounter, but worth a smoke test.
+
+### Discovery progression for unseen bosses
+
+**Non-issue per Surfinite 2026-05-12.** `ActModel.ApplyDiscoveryOrderModifications` ([line 294](../decompiled/sts2/MegaCrit/sts2/Core/Models/ActModel.cs#L294)) force-picks unseen bosses, but the target audience is streamers who already have everything unlocked. The "chat always picks the same boss → undiscovered bosses stay undiscovered" concern doesn't apply to the actual user. Document the assumption ("designed for unlocked-everything saves") in the spec when it lands; don't engineer around progression.
 
 ### Multiplayer sync
 
 `TreasureChestOpenedMessage` exists in [`MegaCrit.Sts2.Core.Multiplayer.Messages.Game.TreasureChestOpenedMessage`](../decompiled/sts2/MegaCrit/sts2/Core/Multiplayer/Messages/Game/TreasureChestOpenedMessage.cs), so chest events are network-synced. `MapCmd.SetBossEncounter` mutates `runState.Act` on the local instance; it does NOT appear to sync to remote peers. For our singleplayer-only v1 (per `notes/06 v0.2+`: multiplayer is deferred), this doesn't matter. For multiplayer, we'd need a new sync message — flag for whenever multiplayer support comes around.
 
-### Second-boss handling on Act 3
+### Ascension interactions (corrected 2026-05-12)
 
-`Glory` (Act 3) has a `SecondBoss` per [`ActModel.HasSecondBoss`](../decompiled/sts2/MegaCrit/sts2/Core/Models/ActModel.cs#L164). If we vote on the primary boss only, the second is whatever vanilla picked from the remainder. For v1: vote on primary only, document the second-boss behavior as "vanilla's pick from remaining". v0.2 polish: separate vote, or 4-pick that selects two winners.
+Re-checked the AscensionLevel enum and live call sites after Surfinite pushed back on the original "chests become elites at high ascension" caveat:
 
-### What if there's no chest in the act?
+- **`AscensionLevel` enum** ([file](../decompiled/sts2/MegaCrit/sts2/Core/Entities/Ascension/AscensionLevel.cs)) has 11 entries: `None, SwarmingElites, WearyTraveler, Poverty, TightBelt, AscendersBane, Inflation, Scarcity, ToughEnemies, DeadlyEnemies, DoubleBoss`.
+- **`DoubleBoss` is the only ascension level that interacts with the boss system** ([`RunManager.cs:499-502`](../decompiled/sts2/MegaCrit/sts2/Core/Runs/RunManager.cs#L499-L502)): `if (i == State.Acts.Count - 1 && AscensionManager.HasLevel(AscensionLevel.DoubleBoss)) { … SetSecondBossEncounter(…) }`. Effect: at A10+ AND only on the FINAL act, a second boss is added (picked at run start from `AllBossEncounters` excluding the primary).
+- **`replaceTreasureWithElites` is dead code in this beta**. The only live call site at [`RunManager.cs:549`](../decompiled/sts2/MegaCrit/sts2/Core/Runs/RunManager.cs#L549) hardcodes `false`. The parameter exists in `ActModel.CreateMap` and `StandardActMap.CreateFor` but no path activates it. Either it's reserved for a future ascension level, vestigial from StS1 (where high ascension did replace chests with elites), or only used in test code. **Practical implication: the chest room always exists regardless of ascension level, so our trigger always fires.** The earlier "high-ascension chest replacement" caveat was based on this dead parameter and is withdrawn.
 
-`TreasureRoom` is always present per the map generator — even if the streamer takes a route that avoids it, vanilla still has it as a node. But what if `replaceTreasureWithElites` is true ([`ActModel.CreateMap:411`](../decompiled/sts2/MegaCrit/sts2/Core/Models/ActModel.cs#L411))? That's an Ascension-gated feature where treasure rooms become elites instead. In that case there's no chest, so no trigger, so no vote. We'd need a fallback trigger — possibly `MapCmd.SetBossEncounter` could be tied to the second elite in the act instead, or to act-start. Out of scope for v1 design but worth flagging: **on high ascension where chests become elites, the boss vote does not fire** unless we add a fallback path.
+### Second-boss handling under DoubleBoss (A10+)
+
+`Glory` (Act 3) has a `SecondBoss` per [`ActModel.HasSecondBoss`](../decompiled/sts2/MegaCrit/sts2/Core/Models/ActModel.cs#L164) — but ONLY when `AscensionManager.HasLevel(AscensionLevel.DoubleBoss)` is true (A10+). On runs below A10, no act ever has a second boss, and `HasSecondBoss == false`. So:
+
+- **Most runs (A0-A9)**: only one boss per act, single vote per chest, no second-boss complexity.
+- **A10+ runs on the final act**: two bosses fought in sequence. Surfinite resolved 2026-05-12: vote on primary boss only, let vanilla pick second from the remainder. Defer separate / paired-vote to v0.2 polish.
 
 ### Timing: when does the boss become "locked in"?
 

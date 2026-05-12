@@ -58,7 +58,29 @@ Currently `VoteCoordinator` takes one `IChatService`. To support Twitch + YouTub
 
 `VoteCoordinator` doesn't change. `ModEntry` wires `MultiChatService` containing a `TwitchIrcChatService` + a `YouTubeChatService`, hands the multi to `VoteCoordinator`. Single voting tally, dedup keys are platform-prefixed so same-name voters on both platforms count separately (intentional per design note below).
 
-## Design decisions to make before coding
+## Decisions log (resolved 2026-05-12)
+
+All ten design decisions below were resolved in conversation 2026-05-12 between Surfinite and Claude before promoting this feasibility writeup to spec. The reasoning is captured alongside each decision for the spec author (next session) and for future-Surfinite if any decision needs to be revisited.
+
+- **D1 — Cross-platform vote-counting**: **count twice**. Same human voting on both Twitch and YouTube counts as two votes. Cross-platform identity is fundamentally unfixable for anonymous chat (matching display names doesn't prove same human; differing display names doesn't disprove). **Future optional heuristic** (not v1): if same display name on both platforms, prefer the Twitch vote and drop the YouTube vote. Simpler than picking-latest, which would require timestamp alignment across two chat clocks with different latencies — and YouTube's 2–5s lag makes that unreliable anyway. Voter dedup keys are `(Platform, UserId)` tuples; pragmatic implementation: prefix YouTube IDs with `"yt:"` so `ChatMessage.VoterKey` stays a single string.
+
+- **D2 — Vote-window timing**: **ignore for v1**. Single shared 30s window. YouTube under-represents because of its 2–5s lag. Acceptable for v1; document as a known limit. Revisit if FrostPrime's YT viewers complain.
+
+- **D3 — Outgoing-receipt policy**: **read-only YouTube**. No receipts posted to YouTube. All chat receipts go to Twitch only. Posting to YouTube would require OAuth + Google app verification (multi-week process, incompatible with "mod end users install"). Streamer's YouTube viewers see the in-game tally label but no Twitch-style chat receipts.
+
+- **D4 — Video ID discovery**: **channel ID + auto-discovery**. Streamer configures `youtubeChannelId` once in settings JSON. At mod start (and on reconnect), the mod fetches `youtube.com/channel/{ID}/live` and follows the redirect to find the active video ID. No redirect = no live broadcast = log Warn and retry every ~60s (matches D7). Adds one extra scraped endpoint to maintain, but the manual-video-ID alternative's per-stream JSON edit was rejected as worse UX.
+
+- **D5 — Members-only chat**: **don't support in v1**. Anonymous scraping works for public live chat only. Members-only chat needs authenticated session cookies (brittle, security-sensitive, real onboarding hurdle). Document as a known limit. Streamers running members-only mode can disable that restriction during mod-using streams.
+
+- **D7 — YouTube failure mode**: **silent degradation + periodic retry**. If YT can't connect (no live broadcast / endpoint broken / network error), log at Warn level, keep retrying every ~60s in the background. Votes count Twitch only until YT recovers. Mod stays loaded, Twitch keeps working. Matches the temporary-disconnect semantics of `TwitchIrcChatService` and the spirit of v4 spec Decision 21.
+
+- **D8 — Streamer status feedback**: **Twitch chat receipt at startup + on state changes**. The existing `slay-the-streamer-2 v… connected` receipt is extended to also report YouTube state, e.g., `… Twitch connected; YouTube: no live broadcast found`. When YT later connects mid-session, a second receipt fires (`YouTube connected: tracking chat from <channel>`). Fits the Twitch-only-receipts model from D3.
+
+- **D9 — Voter dedup keying**: **prefix YT IDs with `"yt:"`**. The `ChatMessage.VoterKey` is `UserId ?? $"login:{Login}"`. For YouTube messages, set `UserId = $"yt:{channelId}"` so YouTube voters cannot collide with Twitch user IDs (which are bare numeric strings). No schema change to `ChatMessage`; just discipline on how we populate the field in `YouTubeChatService`. (Decision implicit but worth documenting because it's load-bearing for D1.)
+
+- **D10 — Receipt wording**: **Twitch chat receipts unchanged** (merged tally invisibly) BUT **in-game vote-tally label MUST show separate per-platform tallies** when YT is enabled. Visual format: separate lines for each platform (e.g., `Twitch: 0=1, 1=3, 2=0` / `YouTube: 0=0, 1=2, 2=1`). Visual-combining design is explicitly deferred to a later iteration. **Implication**: `VoteSession` needs to track votes by `(platform, optionIndex)`, not just `optionIndex`. `VoteTallyLabel` needs split rendering. This is the only decision that pushes complexity back into `Ti/Voting/` — every other YT integration is contained in `Ti/Chat/`.
+
+## (Original analysis below — for reference; the Decisions log above supersedes individual recommendations)
 
 These are not code-shaped; they're scoping choices Surfinite needs to make before the implementation phase.
 

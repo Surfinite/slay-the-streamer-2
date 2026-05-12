@@ -45,6 +45,7 @@ public sealed class VoteSession : IDisposable {
     public IReadOnlyList<VoteOption> Options { get; }
     public TimeSpan Duration { get; }
     public int VoteId { get; }
+    public int TallyVersion { get; private set; }
     public VoteSessionState State => _state;
     public int? WinnerIndex { get; private set; }
     public TimeSpan TimeRemaining => MaxZero(_openedAt + Duration - _clock.UtcNow);
@@ -179,6 +180,7 @@ public sealed class VoteSession : IDisposable {
             : 1;
         _lastVoteByPlatform[platform] = _clock.UtcNow;
 
+        TallyVersion++;
         TallyChanged?.Invoke(this, this);
     }
 

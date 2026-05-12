@@ -81,4 +81,26 @@ public class VoteSessionPerPlatformTallyTests : VoteSessionTestBase {
         Assert.Throws<ArgumentNullException>(() =>
             CreateSessionRaw(configuredPlatforms: null));
     }
+
+    [Fact]
+    public void TallyVersion_Starts_At_Zero() {
+        var session = CreateSession();
+        Assert.Equal(0, session.TallyVersion);
+    }
+
+    [Fact]
+    public void TallyVersion_Increments_On_Accepted_Vote() {
+        var session = CreateSession();
+        InjectTwitchVote(session, userId: "u1", optionIndex: 0);
+        Assert.Equal(1, session.TallyVersion);
+        InjectTwitchVote(session, userId: "u2", optionIndex: 1);
+        Assert.Equal(2, session.TallyVersion);
+    }
+
+    [Fact]
+    public void TallyVersion_Does_Not_Increment_On_Invalid_Vote() {
+        var session = CreateSession();
+        InjectTwitchVote(session, userId: "u1", optionIndex: 99);
+        Assert.Equal(0, session.TallyVersion);
+    }
 }

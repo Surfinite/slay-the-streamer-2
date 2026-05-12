@@ -9,7 +9,7 @@ in-game decisions. Inspired by [Tempus's StS1 Slay the Streamer](https://github.
 - **B.1 Neow vote** shipped 2026-05-10 (`plan-b-1-complete` tag) — chat votes on Neow's blessing end-to-end with real Twitch IRC.
 - **B.2.1 card reward vote** shipped 2026-05-11 (`plan-b-2-1-complete` tag) — chat votes on which of the typically-3 cards the streamer adds to deck; mandatory-look skip gate prevents skipping-without-engaging; per-act skip budget (default `cardSkipsPerAct: 1`) caps how often the streamer can override chat.
 
-Remaining slices: B.2.2 start-of-act boon-god special-relic vote (StS2 replaced StS1 boss relics with these), B.2.3 map path vote, B.2.4 in-game settings UI, B.3 act boss. **Not yet for end users** — installation requires manual JSON config and the modded save is its own profile (no unlock progression yet).
+Remaining slices: B.2.2 start-of-act Ancient-rarity relic vote (StS2 replaced StS1 boss relics with these — granted by Event encounters like Pael / Tezcatara), B.2.3 map path vote, B.2.4 in-game settings UI, B.3 act boss. **Not yet for end users** — installation requires manual JSON config and the modded save is its own profile (no unlock progression yet).
 
 ## Repo layout
 
@@ -59,7 +59,7 @@ underlying Twitch Integration base mod) covered:
 
 - Neow blessings (✅ shipped in B.1, 2026-05-10)
 - Card rewards (✅ shipped in B.2.1, 2026-05-11)
-- Start-of-act boon-god special-relic picks (StS2's replacement for StS1's boss relics)
+- Start-of-act Ancient-rarity relic picks via Pael / Tezcatara / etc. (StS2's replacement for StS1's boss relics)
 - Map path selection
 - Act boss (custom screen — likely needs its own sub-plan, B.3)
 

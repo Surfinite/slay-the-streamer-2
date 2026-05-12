@@ -1,15 +1,17 @@
 # slay-the-streamer-2
 
-A Slay the Spire 2 mod that lets Twitch chat vote on the streamer's
-in-game decisions. Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer)
-(Steam Workshop [1610759491](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)).
+A Slay the Spire 2 mod that lets chat (Twitch and optionally YouTube)
+vote on the streamer's in-game decisions. Inspired by [Tempus's StS1
+Slay the Streamer](https://github.com/Tempus/SlayTheStreamer) (Steam
+Workshop [1610759491](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)).
 
-**Status**: v0.1 in active development.
+**Status**: v0.1 in active development, with v0.2 multi-platform chat operationally validated.
 
 - **B.1 Neow vote** shipped 2026-05-10 (`plan-b-1-complete` tag) — chat votes on Neow's blessing end-to-end with real Twitch IRC.
 - **B.2.1 card reward vote** shipped 2026-05-11 (`plan-b-2-1-complete` tag) — chat votes on which of the typically-3 cards the streamer adds to deck; mandatory-look skip gate prevents skipping-without-engaging; per-act skip budget (default `cardSkipsPerAct: 1`) caps how often the streamer can override chat.
+- **v0.2 YouTube chat parallel integration** landed 2026-05-12 — optional `youtubeChannelId` setting wires a read-only YouTube live-chat reader alongside Twitch via a `MultiChatService` aggregator. Votes from both platforms merge into a single tally; in-game label renders per-platform rows when YT is configured. Chat receipts continue to fire on Twitch only (YouTube posting requires Google verification / OAuth, intentionally not pursued). Per-vote nonce (`!NN` suffix, optional opt-in) lets stream-delayed YT viewers vote precisely on a specific vote ID without colliding with back-to-back votes; bare `#N` still works, preserving the StS1 "Skip Gang" `#0 = skip` convention. End-to-end validated 2026-05-12 against a real live YouTube broadcast (chain: discovery → page-parse → poll → JSON-extract → vote-regex → tally → UI rendering → game-state apply).
 
-Remaining slices: B.2.2 start-of-act Ancient-rarity relic vote (StS2 replaced StS1 boss relics with these — granted by Event encounters like Pael / Tezcatara), B.2.3 map path vote, B.2.4 in-game settings UI, B.3 act boss. **Not yet for end users** — installation requires manual JSON config and the modded save is its own profile (no unlock progression yet).
+Remaining v0.1 slices: B.2.2 start-of-act Ancient-rarity relic vote (StS2 replaced StS1 boss relics with these — granted by Event encounters like Pael / Tezcatara), B.2.3 map path vote, B.2.4 in-game settings UI, B.3 act boss. **Not yet for end users** — installation requires manual JSON config and the modded save is its own profile (no unlock progression yet).
 
 ## Repo layout
 
@@ -20,11 +22,15 @@ slay-the-streamer-2/
   README.md                  this file
   LICENSE                    MIT
   src/                       the mod
-    Ti/                        extractable Twitch-integration core (no Godot, no sts2.dll refs)
-      Chat/                      IRC client + chat message + send queue
+    Ti/                        extractable multi-platform chat-integration core (no Godot, no sts2.dll refs)
+      Chat/                      IChatConsumer / IChatService surface
+                                 TwitchIrcChatService (IRC client + chat message + send queue)
+                                 MultiChatService (N-platform aggregator)
+                                 YouTubeChat/  read-only youtubei scraper (discovery + poller)
       Voting/                    VoteSession / VoteCoordinator / Voter / EnglishReceipts
+                                   per-platform tally side-dict; vote-nonce (!NN) parsing
       Internal/                  IClock / ITimerScheduler / IMainThreadDispatcher / TiLog + fakes
-      Ui/                        Godot UI (VoteTallyLabel)
+      Ui/                        Godot UI (VoteTallyLabel — split per-platform rendering)
       Godot/                     GodotMainThreadDispatcher + DispatcherAutoload
     Game/                      StS2-specific glue (Harmony patches, settings)
       Bootstrap/                 ModSettings (JSON config reader)
@@ -75,10 +81,16 @@ Out of scope entirely:
 - Twitch Extension overlays
 - Sending data back to Twitch beyond outgoing chat receipts
 
-Twitch direction is **read-only IRC + outgoing chat receipts**. The
+Twitch direction is **read-only IRC + outgoing chat receipts**.
+YouTube (optional, v0.2) is **read-only scraping** via the public
+`youtubei` internal endpoint (no quota, no OAuth) — receipts never
+fire on YouTube; YT viewers see the in-game tally label only. The
 streamer's screen is the shared display; viewers type vote commands
-like `#0`, `#1`, `#2` in chat. Vote tally is rendered both in chat
-(periodic + open + close receipts) and in-game (small overlay label).
+like `#0`, `#1`, `#2` in chat (or `#1!42` for vote-ID-precise voting
+when stream delay risks landing on the wrong vote). Vote tally is
+rendered both in chat (periodic + open + close receipts, Twitch
+only) and in-game (small overlay label; per-platform rows when YT
+is configured).
 
 ## Setting up a fresh workspace
 

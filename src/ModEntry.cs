@@ -11,6 +11,7 @@ using SlayTheStreamer2.Game.Bootstrap;
 using BootstrapModSettings = SlayTheStreamer2.Game.Bootstrap.ModSettings;
 using SlayTheStreamer2.Godot;
 using SlayTheStreamer2.Ti.Chat;
+using SlayTheStreamer2.Ti.Chat.YouTubeChat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
 
@@ -20,11 +21,14 @@ namespace SlayTheStreamer2;
 public static class ModEntry {
     internal static int GodotMainThreadId;
 
-    private static int _connectAnnounced;
     private static readonly CancellationTokenSource _modCts = new();
     internal static TwitchIrcChatService? Chat { get; private set; }
+    internal static YouTubeChatService? YouTube { get; private set; }
+    internal static YouTubeHttp? YouTubeHttp { get; private set; }
+    internal static MultiChatService? Multi { get; private set; }
     internal static VoteCoordinator? Coordinator { get; private set; }
     internal static SettingsResult? Settings { get; private set; }
+    internal static string? ModVersion { get; private set; }
 
     public static void Init() {
         try {
@@ -78,6 +82,7 @@ public static class ModEntry {
             // 6. Resolve settings file path Godot-side, load settings.
             var modVersion = Assembly.GetExecutingAssembly()
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+            ModVersion = modVersion;
             Log.Info($"[SlayTheStreamer2] mod version: {modVersion}");
 
             var settingsPath = Path.Combine(OS.GetUserDataDir(), "slay_the_streamer_2.json");
@@ -104,30 +109,53 @@ public static class ModEntry {
             var scheduler = new SlayTheStreamer2.Ti.Internal.SystemTimerScheduler();
 
             if (settings is not null) {
+                // Construct Twitch (unchanged from B.1).
                 Chat = new TwitchIrcChatService(
                     dispatcher: dispatcher,
                     clock: clock,
                     scheduler: scheduler,
                     sendCapacity: 20,
                     sendWindow: TimeSpan.FromSeconds(30));
+                _ = Chat.ConnectAsync(settings.Channel, settings.Credentials, _modCts.Token);
+
+                // Optionally construct YouTube (per D6: only when settings.YoutubeChannelId
+                // is non-null; ModSettings already trims/validates).
+                YouTubeChatService? youtube = null;
+                YouTubeHttp? youtubeHttp = null;
+                if (!string.IsNullOrEmpty(settings.YoutubeChannelId)) {
+                    youtubeHttp = new YouTubeHttp();
+                    var discovery = new YouTubeLiveBroadcastDiscovery(youtubeHttp);
+                    var scraper = new YouTubeLiveChatScraper(youtubeHttp);
+                    youtube = new YouTubeChatService(
+                        dispatcher: dispatcher,
+                        clock: clock,
+                        scheduler: scheduler,
+                        discovery: discovery,
+                        scraper: scraper);
+                    _ = youtube.ConnectAsync(settings.YoutubeChannelId);
+                }
+                YouTube = youtube;
+                YouTubeHttp = youtubeHttp;
+
+                // Build MultiChatService — always wrap, even Twitch-only.
+                var multi = youtube is null
+                    ? new MultiChatService((ChatPlatformNames.Twitch, (IChatConsumer)Chat))
+                    : new MultiChatService(
+                        (ChatPlatformNames.Twitch, (IChatConsumer)Chat),
+                        (ChatPlatformNames.YouTube, (IChatConsumer)youtube));
+                Multi = multi;
+
+                var configuredPlatforms = youtube is null
+                    ? new[] { ChatPlatformNames.Twitch }
+                    : new[] { ChatPlatformNames.Twitch, ChatPlatformNames.YouTube };
+
                 Coordinator = new VoteCoordinator(
-                    Chat,
-                    new[] { ChatPlatformNames.Twitch },
+                    multi,
+                    configuredPlatforms,
                     clock,
                     scheduler,
                     dispatcher);
                 Voter.Default = Coordinator;
-
-                Chat.ConnectionStateChanged += (_, e) => {
-                    if (e.NewState is ChatConnectionState.ConnectedReadWrite
-                        && Interlocked.CompareExchange(ref _connectAnnounced, 1, 0) == 0) {
-                        _ = Chat.SendMessageAsync(
-                            $"slay-the-streamer-2 v{modVersion} connected — votes will go to #{settings.Channel}",
-                            OutgoingMessagePriority.High);
-                    }
-                };
-
-                _ = Chat.ConnectAsync(settings.Channel, settings.Credentials, _modCts.Token);
             }
 
             // 8. Apply Harmony patches with diagnostic logging.

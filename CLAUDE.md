@@ -83,7 +83,10 @@ Maintenance task: `notes/youtube-fixture-refresh.md` documents the monthly captu
 | Settings file location at runtime | `%APPDATA%\SlayTheSpire2\slay_the_streamer_2.json` (NOT Godot's default `app_userdata/Slay the Spire 2/` — StS2 overrides) |
 | Logs at runtime | `%APPDATA%\SlayTheSpire2\logs\godot.log` |
 | YouTube scraper-fixture refresh process | `notes/youtube-fixture-refresh.md` |
-| Pre-spec landscape research | `notes/07-youtube-chat-feasibility.md` |
+| Pre-spec landscape research (YouTube chat) | `notes/07-youtube-chat-feasibility.md` |
+| Pre-spec landscape research (sealed-deck + Draft modifier in vanilla Custom Mode) | `notes/08-sealed-deck-custom-mode-investigation.md` |
+| Pre-spec landscape research (settings UI hook surface + tunable-knobs inventory) | `notes/09-settings-and-tunable-knobs.md` |
+| Pre-spec landscape research (B.3 act boss vote feasibility) | `notes/10-boss-vote-feasibility.md` |
 | Decompiled game source (regenerable, gitignored) | `decompiled/sts2/MegaCrit/sts2/...` |
 
 ---
@@ -98,3 +101,6 @@ Maintenance task: `notes/youtube-fixture-refresh.md` documents the monthly captu
 - **Twitch 20-msgs-per-30s account-level rate limit drops receipts under burst**. Multiple receipts in a close window (e.g. periodic-tally + close + cancellation) may silently fail to deliver. Known v0.2 polish item; consider rate-limiting receipt emission or batching.
 - **`VoteCoordinator` constructor now takes `IReadOnlyList<string> configuredPlatforms`** (post-v0.2). Existing tests that construct directly must pass `new[] { ChatPlatformNames.Twitch }` for single-platform. `VoteSessionTestBase.CreateCoordinator` handles this.
 - **`HttpResponseMessage.RequestMessage.RequestUri` doesn't always reflect the final post-redirect URL** in all .NET configurations. Don't rely on it; parse the response body instead. Surfaced indirectly in the original (now-replaced) yt-chat/16.1 discovery design.
+- **`Neow.GenerateInitialOptions` branches on `RunState.Modifiers.Count > 0`, NOT `GameMode == Custom`** ([`decompiled/sts2/MegaCrit/sts2/Core/Models/Events/Neow.cs:215`](decompiled/sts2/MegaCrit/sts2/Core/Models/Events/Neow.cs#L215)). Any modifier whose `GenerateNeowOption(EventModel)` returns non-null (`SealedDeck`, `Draft`, `Specialized`, `Insanity`, `AllStar`) replaces the standard pick-3 with a single-option modifier kickoff. Don't infer Neow behavior from the game mode — infer it from the modifier list. Affects any future Neow-adjacent patch (B.2.2 Ancients predicate-widening, sealed-deck "Neow before draft" polish, etc.). Surfaced in notes/08.
+- **`CardRarityOddsType.RegularEncounter` rarity odds NEVER roll `CardRarity.Basic`**. `CardFactory.RollForRarity` ([`decompiled/sts2/MegaCrit/sts2/Core/Factories/CardFactory.cs:199`](decompiled/sts2/MegaCrit/sts2/Core/Factories/CardFactory.cs#L199)) only weights Common/Uncommon/Rare. Character-identity Basics like `Bodyguard`/`Unleash` (Necrobinder) and `Zap`/`Dualcast` (Defect) are silently absent from any pool generated with these odds — including `SealedDeck` and `Draft` modifier pools. Affects any feature that samples "a player's character cards" via `CardCreationOptions(..., RegularEncounter)`. Surfaced in notes/08.
+- **`replaceTreasureWithElites` parameter in `ActModel.CreateMap` / `StandardActMap.CreateFor` is dead code in this build.** The only live caller (`RunManager.cs:549`) hardcodes `false`. No ascension level activates it; the `AscensionLevel` enum tops out at `DoubleBoss` and has no "chests as elites" entry. Don't infer ascension behavior from this parameter's existence. The only ascension that interacts with bosses is `DoubleBoss` (final act only). Surfaced in notes/10 after a research correction round.

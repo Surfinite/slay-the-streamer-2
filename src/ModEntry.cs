@@ -174,7 +174,7 @@ public static class ModEntry {
             }
 
             // 8. Apply Harmony patches with diagnostic logging.
-            //    NeowBlessingVotePatch attaches here via PatchAll.
+            //    AncientVotePatch attaches here via PatchAll.
             var harmony = new Harmony("slay_the_streamer_2");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             var patchedMethods = harmony.GetPatchedMethods().ToList();

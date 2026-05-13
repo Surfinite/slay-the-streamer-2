@@ -19,7 +19,7 @@ using SlayTheStreamer2.Ti.Voting;
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
 [HarmonyPatch(typeof(NEventRoom), nameof(NEventRoom.OptionButtonClicked))]
-internal static class NeowBlessingVotePatch {
+internal static class AncientVotePatch {
     private static int _voteInProgress;
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;

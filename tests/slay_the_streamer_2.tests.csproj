@@ -20,7 +20,7 @@
       project. Exclude them so the rest of the folder (e.g. SkipBudgetTracker
       from plan-b-2-1 task 5) can still be source-referenced.
     -->
-    <Compile Remove="..\src\Game\DecisionVotes\NeowBlessingVotePatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\AncientVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\SpikePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardSkipGatePatch.cs" />

@@ -34,3 +34,10 @@ Thumbs.db
 # they're MegaCrit / HarmonyLib binaries, not ours to redistribute.
 src/sts2.dll
 src/0Harmony.dll
+
+# External-review workflow inputs and raw reviewer outputs.
+# Kept local-only: CONTEXT docs are throwaway inputs and raw _REVIEWS folders
+# can contain reviewer commentary we don't want on a public repo.
+# The synthesized META-REVIEW-*.md files ARE committed — that's the load-bearing artifact.
+**/*-CONTEXT.md
+**/*_REVIEWS/

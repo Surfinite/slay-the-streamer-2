@@ -31,7 +31,7 @@ internal static class AncientVotePatch {
     static bool Prepare(MethodBase? original) {
         if (original is null) {
             if (_eventField.Value is null) {
-                TiLog.Error("[SlayTheStreamer2][neow-vote] NEventRoom._event field not found; patch will not function");
+                TiLog.Error("[SlayTheStreamer2][ancient-vote] NEventRoom._event field not found; patch will not function");
                 return false;
             }
 
@@ -39,7 +39,7 @@ internal static class AncientVotePatch {
             try {
                 var rm = MegaCrit.Sts2.Core.Runs.RunManager.Instance;
                 if (rm == null) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded:RunManager.Instance not reachable");
+                    TiLog.Warn("[SlayTheStreamer2][ancient-vote] run-ID guard degraded:RunManager.Instance not reachable");
                     RunIdGuardEnabled = false;
                 } else {
                     // Verify the type shape: RunManager exposes DebugOnlyGetState; deeper Rng.StringSeed
@@ -47,12 +47,12 @@ internal static class AncientVotePatch {
                     var rmType = rm.GetType();
                     var stateMethod = rmType.GetMethod("DebugOnlyGetState");
                     if (stateMethod == null) {
-                        TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded:DebugOnlyGetState() not found");
+                        TiLog.Warn("[SlayTheStreamer2][ancient-vote] run-ID guard degraded:DebugOnlyGetState() not found");
                         RunIdGuardEnabled = false;
                     }
                 }
             } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] run-ID guard degraded:Prepare soft check threw: {ex.Message}");
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] run-ID guard degraded:Prepare soft check threw: {ex.Message}");
                 RunIdGuardEnabled = false;
             }
 
@@ -63,10 +63,10 @@ internal static class AncientVotePatch {
         if (parameters.Length != 2 ||
             parameters[0].ParameterType != typeof(EventOption) ||
             parameters[1].ParameterType != typeof(int)) {
-            TiLog.Error($"[SlayTheStreamer2][neow-vote] target signature mismatch: {original.DeclaringType?.FullName}.{original.Name}({string.Join(", ", parameters.Select(p => p.ParameterType.Name))})");
+            TiLog.Error($"[SlayTheStreamer2][ancient-vote] target signature mismatch: {original.DeclaringType?.FullName}.{original.Name}({string.Join(", ", parameters.Select(p => p.ParameterType.Name))})");
             return false;
         }
-        TiLog.Info($"[SlayTheStreamer2][neow-vote] target resolved: {original.DeclaringType?.FullName}.{original.Name}");
+        TiLog.Info($"[SlayTheStreamer2][ancient-vote] target resolved: {original.DeclaringType?.FullName}.{original.Name}");
         return true;
     }
 
@@ -77,9 +77,9 @@ internal static class AncientVotePatch {
 
         if (TryGetEventOwnerPlayerCount(__instance) is int playerCount && playerCount > 1) {
             if (Interlocked.CompareExchange(ref _multiplayerWarnFired, 1, 0) == 0) {
-                TiLog.Warn("[SlayTheStreamer2][neow-vote] multiplayer detected (Players.Count > 1); bailing to vanilla (further bail-outs at Debug)");
+                TiLog.Warn("[SlayTheStreamer2][ancient-vote] multiplayer detected (Players.Count > 1); bailing to vanilla (further bail-outs at Debug)");
             } else {
-                TiLog.Debug("[SlayTheStreamer2][neow-vote] multiplayer bail-out");
+                TiLog.Debug("[SlayTheStreamer2][ancient-vote] multiplayer bail-out");
             }
             return true;
         }
@@ -92,7 +92,7 @@ internal static class AncientVotePatch {
         // Receipt-send sites independently check ConnectedReadWrite per D3.
         if (coordinator.Chat.State is not (ChatConnectionState.ConnectedReadWrite
                                         or ChatConnectionState.ConnectedReadOnly)) {
-            TiLog.Debug($"[SlayTheStreamer2][neow-vote] chat not readable (state={coordinator.Chat.State}); bailing to vanilla");
+            TiLog.Debug($"[SlayTheStreamer2][ancient-vote] chat not readable (state={coordinator.Chat.State}); bailing to vanilla");
             return true;
         }
 
@@ -102,15 +102,15 @@ internal static class AncientVotePatch {
                 var state = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
                 runIdAtStart = state?.Rng?.StringSeed;
                 if (runIdAtStart == null) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] run-ID guard degraded for this vote:null state or null seed at start");
+                    TiLog.Warn("[SlayTheStreamer2][ancient-vote] run-ID guard degraded for this vote:null state or null seed at start");
                 }
             } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] run-ID guard degraded for this vote:{ex.Message}");
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] run-ID guard degraded for this vote:{ex.Message}");
             }
         }
 
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
-            TiLog.Debug("[SlayTheStreamer2][neow-vote] repeat click during open vote; suppressed");
+            TiLog.Debug("[SlayTheStreamer2][ancient-vote] repeat click during open vote; suppressed");
             return false;
         }
 
@@ -127,7 +127,7 @@ internal static class AncientVotePatch {
         // CardRewardVotePatch's same-named check; Surfinite's request 2026-05-12 after
         // Discord feedback flagged it as a real edge case.
         if (labels.Count <= 1) {
-            TiLog.Info($"[SlayTheStreamer2][neow-vote] single-option blessing; skipping vote (option: {labels[0]})");
+            TiLog.Info($"[SlayTheStreamer2][ancient-vote] single-option blessing; skipping vote (option: {labels[0]})");
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
@@ -136,7 +136,7 @@ internal static class AncientVotePatch {
         try {
             session = coordinator.Start("Neow's Bonus", labels, TimeSpan.FromSeconds(30));
         } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][neow-vote] Voter.Default.Start threw; falling back to vanilla", ex);
+            TiLog.Error("[SlayTheStreamer2][ancient-vote] Voter.Default.Start threw; falling back to vanilla", ex);
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
@@ -144,10 +144,10 @@ internal static class AncientVotePatch {
         try {
             __instance.Layout?.DisableEventOptions();
         } catch (Exception ex) {
-            TiLog.Warn($"[SlayTheStreamer2][neow-vote] DisableEventOptions threw (continuing): {ex.Message}");
+            TiLog.Warn($"[SlayTheStreamer2][ancient-vote] DisableEventOptions threw (continuing): {ex.Message}");
         }
 
-        TiLog.Info($"[SlayTheStreamer2][neow-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{index}");
+        TiLog.Info($"[SlayTheStreamer2][ancient-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{index}");
         _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, index, runIdAtStart);
         return false;
     }
@@ -162,23 +162,23 @@ internal static class AncientVotePatch {
             try {
                 winnerIndex = await session.AwaitWinnerAsync();
             } catch (Exception ex) {
-                TiLog.Error("[SlayTheStreamer2][neow-vote] AwaitWinnerAsync threw; falling back to player click", ex);
+                TiLog.Error("[SlayTheStreamer2][ancient-vote] AwaitWinnerAsync threw; falling back to player click", ex);
                 winnerIndex = playerClickIndex;
             }
 
             if (winnerIndex < 0 || winnerIndex >= snapshot.Count) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] winnerIndex {winnerIndex} out of snapshot range; using player click");
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] winnerIndex {winnerIndex} out of snapshot range; using player click");
                 winnerIndex = playerClickIndex;
             }
 
-            TiLog.Info($"[SlayTheStreamer2][neow-vote] resume: applying winner #{winnerIndex} on main thread");
+            TiLog.Info($"[SlayTheStreamer2][ancient-vote] resume: applying winner #{winnerIndex} on main thread");
             coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, snapshot, winnerIndex, playerClickIndex, runIdAtStart));
         } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][neow-vote] HandleVoteAsync threw; attempting fallback resume with player click", ex);
+            TiLog.Error("[SlayTheStreamer2][ancient-vote] HandleVoteAsync threw; attempting fallback resume with player click", ex);
             try {
                 coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, snapshot, playerClickIndex, playerClickIndex, runIdAtStart));
             } catch (Exception postEx) {
-                TiLog.Error("[SlayTheStreamer2][neow-vote] fallback resume Post itself threw; resetting flags", postEx);
+                TiLog.Error("[SlayTheStreamer2][ancient-vote] fallback resume Post itself threw; resetting flags", postEx);
                 Interlocked.Exchange(ref _resumeInProgress, 0);
                 Interlocked.Exchange(ref _voteInProgress, 0);
             }
@@ -190,11 +190,11 @@ internal static class AncientVotePatch {
         Interlocked.Exchange(ref _resumeInProgress, 1);
         try {
             if (!GodotObject.IsInstanceValid(room)) {
-                TiLog.Warn("[SlayTheStreamer2][neow-vote] resume: room no longer valid; dropping resume");
+                TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume: room no longer valid; dropping resume");
                 return;
             }
             if (!IsNeowEvent(room)) {
-                TiLog.Warn("[SlayTheStreamer2][neow-vote] resume: active event is no longer Neow; dropping resume");
+                TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume: active event is no longer Neow; dropping resume");
                 return;
             }
             // Run-state liveness checks. Catches:
@@ -207,53 +207,53 @@ internal static class AncientVotePatch {
             try {
                 var rm = MegaCrit.Sts2.Core.Runs.RunManager.Instance;
                 if (rm is null) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: RunManager.Instance is null");
+                    TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume aborted: RunManager.Instance is null");
                     return;
                 }
                 if (rm.IsAbandoned) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run was abandoned during vote");
+                    TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume aborted: run was abandoned during vote");
                     return;
                 }
                 var currentState = rm.DebugOnlyGetState();
                 if (currentState is null) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run state is gone");
+                    TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume aborted: run state is gone");
                     return;
                 }
                 if (currentState.IsGameOver) {
-                    TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run is over (player dead)");
+                    TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume aborted: run is over (player dead)");
                     return;
                 }
                 if (runIdAtStart != null) {
                     string? currentRunId = currentState.Rng?.StringSeed;
                     if (currentRunId != runIdAtStart) {
-                        TiLog.Warn("[SlayTheStreamer2][neow-vote] resume aborted: run changed during vote");
+                        TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume aborted: run changed during vote");
                         return;
                     }
                 }
             } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] resume aborted: liveness check threw ({ex.Message})");
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] resume aborted: liveness check threw ({ex.Message})");
                 return;
             }
             var currentOptions = GetCurrentOptions(room)?.ToList();
             if (currentOptions is null || currentOptions.Count == 0) {
-                TiLog.Warn("[SlayTheStreamer2][neow-vote] resume: no current options; dropping");
+                TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume: no current options; dropping");
                 return;
             }
 
             int applyIndex = preferredIndex;
             if (applyIndex < 0 || applyIndex >= currentOptions.Count) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] resume: preferred index {applyIndex} out of range; falling back to player click");
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] resume: preferred index {applyIndex} out of range; falling back to player click");
                 applyIndex = playerClickIndex;
             }
             if (applyIndex < 0 || applyIndex >= currentOptions.Count) {
-                TiLog.Warn($"[SlayTheStreamer2][neow-vote] resume: neither preferred nor player index valid (options now {currentOptions.Count}); dropping");
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] resume: neither preferred nor player index valid (options now {currentOptions.Count}); dropping");
                 return;
             }
 
             var winnerOption = currentOptions[applyIndex];
             room.OptionButtonClicked(winnerOption, applyIndex);
         } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][neow-vote] resume threw", ex);
+            TiLog.Error("[SlayTheStreamer2][ancient-vote] resume threw", ex);
         } finally {
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);

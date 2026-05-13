@@ -24,6 +24,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\SpikePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardSkipGatePatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\BossVotePatch.cs" />
   </ItemGroup>
 
   <ItemGroup>

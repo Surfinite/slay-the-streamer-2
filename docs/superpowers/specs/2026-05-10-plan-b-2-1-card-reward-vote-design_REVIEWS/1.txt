@@ -1,0 +1,677 @@
+## 1. One-line verdict
+
+Solid direction and mostly shippable, but the spec currently under-specifies several correctness-critical edge cases in the skip gate and has a few internal contradictions around settings/chat availability, counter semantics, and run/act detection that should be fixed before implementation.
+
+---
+
+## 2. What's good
+
+- **Reusing the B.1 suspend-and-resume pattern is the right call.** The spec correctly treats this as load-bearing and avoids reopening the deadlock problem. `CardRewardVotePatch` being a copy-paste-modify of `NeowBlessingVotePatch.cs` is acceptable for this slice.
+
+- **Patch target for card vote looks right.** `NCardRewardSelectionScreen.SelectCard(NCardHolder)` is a good interception point, especially since AutoSlay confirms it as the effective card-click path.
+
+- **Skip is correctly not a chat option.** The chat-vs-streamer asymmetry is well framed. Making skip votable would break the mod’s entertainment/fairness balance.
+
+- **Using vanilla `NRewardsScreen.DisallowSkipping()` is good.** This is a lower-risk surface than patching `OnProceedButtonPressed`, assuming `_skipDisallowed` remains sticky across the rewards-screen lifecycle.
+
+- **Dual budget is reasonable for v0.1.** `cardSkipsPerAct` plus optional `cardSkipsPerRun` gives streamers useful control without much UI complexity. Default `1/act, ∞/run` is sensible.
+
+- **Fail-soft philosophy is preserved.** The spec consistently prefers degraded vanilla behaviour over crashes, which matches the project’s constraints.
+
+- **Operator validation is concrete.** The acceptance gate is specific enough to catch real integration failures, especially rapid clicks, abandon mid-vote, reroll, and counter reset.
+
+---
+
+## 3. Concerns & risks
+
+### Severity 1 — Skip gate may not re-disallow Proceed after a skip on the same rewards screen
+
+In `CardRewardSkipGatePatch`, the gate is evaluated in `NRewardsScreen._Ready` and skips are counted in `RewardSkippedFrom` postfix.
+
+That works for the next rewards screen, but it may be insufficient for the current rewards screen if:
+
+- a rewards screen contains multiple card rewards;
+- Proceed skips one card reward, budget becomes exhausted, and another unclaimed card reward remains;
+- vanilla re-evaluates Proceed after `RewardSkippedFrom`;
+- or the screen remains active after the skipped reward is removed.
+
+The spec says `RewardSkippedFrom` refreshes the label, but it does **not** say it re-runs the gate or calls `DisallowSkipping()` if the skip exhausted the budget.
+
+Action needed: after counting a card skip, immediately check whether unclaimed card rewards remain and whether the budget is now exhausted. If yes, call `__instance.DisallowSkipping()` in the `RewardSkippedFrom` postfix too.
+
+This should be explicit in the `RewardSkippedFrom` section and in acceptance testing.
+
+---
+
+### Severity 1 — Settings/chat-disabled behaviour is contradictory and may create bad UX
+
+Failure mode #8 says:
+
+> Settings file completely missing → mod loads silently with no chat capability. Skip gate still attaches but with default settings ... since chat isn't connected, no vote starts → streamer can claim or skip cards normally; gate-disable behaviour is irrelevant without a vote to gate.
+
+This is not obviously true.
+
+If the skip gate attaches with defaults, then after one skip per act it may disable Proceed even though chat voting is unavailable. With `cardSkipsPerAct: 0`, it can force card claiming immediately. That is not “irrelevant”; it changes vanilla behaviour when chat is absent.
+
+The spec needs a firm policy:
+
+Option A, recommended: **skip gate only enforces when the card vote is operational**.
+
+That means `_Ready` should bail unless:
+
+- settings loaded successfully enough to enable Twitch;
+- `Voter.Default` exists;
+- chat is connected/read-write, or at least chat service is configured.
+
+This makes the gate truly serve its purpose: preventing streamer bypass of chat agency.
+
+Option B: **skip gate enforces even without chat**.
+
+Then the spec must say this intentionally makes “claim cards manually” mandatory when chat is unavailable. That is a much harsher UX and conflicts with “degrade to vanilla.”
+
+Right now the text mixes both models.
+
+---
+
+### Severity 1 — Run counter display/semantics conflict
+
+The state section increments both counters on every card skip:
+
+```csharp
+Interlocked.Increment(ref _actSkipsUsed);
+Interlocked.Increment(ref _runSkipsUsed);
+```
+
+But Acceptance Step 2 expects the receipt:
+
+```text
+Streamer skipped a card reward (1/1 act, 0/∞ run)
+```
+
+If `_runSkipsUsed` increments, that should be either:
+
+```text
+1/∞ run
+```
+
+or, if unlimited run limits intentionally hide usage:
+
+```text
+∞ run
+```
+
+`0/∞ run` after a skip is misleading.
+
+Choose one semantic:
+
+- **Track and display usage even for unlimited caps:** `1/∞ run`.
+- **Do not display used count for unlimited caps:** `∞ run` or `unlimited run`.
+- **Only increment finite counters:** then `0/∞` is mechanically true but conceptually weird.
+
+Recommended: display unlimited caps as `∞` without a numerator in both label and receipt, e.g.
+
+```text
+Streamer skipped a card reward (1/1 act, ∞ run)
+Card skips: 0/1 act, ∞ run
+```
+
+Also clarify whether receipts show **used** counts or **remaining** counts. The label uses remaining; the receipt example uses used. That’s okay, but it must be intentional and documented.
+
+---
+
+### Severity 1 — `RewardSkippedFrom` postfix can overcount unless card-skip detection is precise
+
+The spec says `RewardSkippedFrom(Control)` postfix detects card-reward skips by inspecting the button.
+
+Risks:
+
+- The `Control button` may no longer have enough reward metadata by postfix time.
+- Vanilla may call `RewardSkippedFrom` for multiple reward types in a batch when Proceed is clicked.
+- One Proceed click may skip multiple unclaimed rewards.
+- The same card reward might trigger both `RewardSkippedFrom` and another cleanup path.
+- The button might be a wrapper Control rather than the actual `NRewardButton`.
+
+The spec should require verification of vanilla call semantics:
+
+- Does `RewardSkippedFrom` fire once per skipped reward or once per Proceed click?
+- Is the `button` argument always the reward button with accessible `Reward` metadata?
+- Is the reward still present in `_rewardButtons` during postfix?
+- Are skipped rewards removed before or after the callback?
+
+Without this, the budget may be off by one or fail to count some skips.
+
+Add an implementation note: if postfix cannot reliably identify the reward from `button`, snapshot the set of unclaimed card reward buttons before skip, or patch a more precise method.
+
+---
+
+### Severity 2 — `CardRewardVotePatch` holder/index mapping is under-specified
+
+The spec says:
+
+> `playerClickIndex` derivation: find the clicked `cardHolder` in the screen's card-holder list (also reflected, verified in `Prepare`).
+
+But the `Prepare` section only explicitly mentions `_options : IReadOnlyList<CardCreationResult>` and `SelectCard(NCardHolder)`. It does not name or validate the “card-holder list” field/property.
+
+This is important because the vote needs a reliable mapping between:
+
+- `_options` entries;
+- visible `NCardHolder` controls;
+- chat option indices;
+- clicked holder;
+- winning holder at resume time.
+
+The spec should require `Prepare` to validate the actual holder collection too, not just `_options`.
+
+Also specify resume semantics:
+
+- Prefer **snapshotting both option labels and holder references at vote start**.
+- At resume, verify the selected holder is still valid **and still present in the current holder collection at the expected index**.
+- Do not call `SelectCard` with an old holder reference that merely remains a valid Godot object but is no longer part of the current screen.
+
+This matters for reroll and for any vanilla UI refresh that replaces holders without freeing the screen.
+
+---
+
+### Severity 2 — “Reroll mid-vote” may not actually be possible under current prefix behaviour
+
+The spec says:
+
+> Streamer clicks card (vote starts) → streamer clicks reroll → vanilla discards old cards...
+
+But if the card-selection screen remains interactive during the vote and the prefix only intercepts `SelectCard`, then yes, reroll may be clickable. However, if reroll is visually/structurally blocked by vanilla once a selection attempt starts, this may not happen.
+
+More importantly: if reroll is possible, the existing `_voteInProgress` flag may cause the subsequent click on a new card to no-op until the original 30-second vote completes and resume aborts. That is acceptable but should be documented more honestly:
+
+> After reroll during a vote, the streamer may need to wait for the original vote to close before a new card click starts a new vote.
+
+Current Acceptance Step 5 says:
+
+> vote silently absorbed, streamer clicks new card → new vote
+
+That implies immediate new vote, which is likely false while `_voteInProgress == 1`.
+
+Action: update the acceptance step to account for the 30-second wait, or implement explicit cancellation/reset on reroll, which is probably out of scope.
+
+---
+
+### Severity 2 — Run-ID guard should probably be added to `NeowBlessingVotePatch` too, or explicitly deferred
+
+The context says B.1 flagged a “resume-after-abandon race window” and B.2.1 implements the guard. The spec adds it to `CardRewardVotePatch`, but `NeowBlessingVotePatch` is listed as unchanged.
+
+That leaves the known B.1 race unfixed for Neow.
+
+Options:
+
+- Add the run-ID guard to `NeowBlessingVotePatch` in B.2.1 as a small hardening change.
+- Or explicitly state that B.2.1 only adds the guard to the new card patch and leaves Neow for a later cleanup.
+
+Recommended: add it to Neow now. It is small, directly related to the same failure mode, and prevents the project from carrying two subtly different suspend/resume templates into B.2.2.
+
+---
+
+### Severity 2 — `Prepare` strategy for run/act detection is too strict for some cases and too vague for others
+
+The spec says:
+
+> `Prepare` MUST verify the chosen access pattern and skip patch registration if the field/method shape doesn't match expectations.
+
+For skip-gate act detection, this is reasonable: if you cannot detect act/run, the budget can’t be enforced correctly.
+
+For vote run-ID guard, failing the entire vote patch because `RunState.Id` moved may be too harsh. The card vote can still work with `IsInstanceValid` and bounds checks, as B.1 did.
+
+Recommended distinction:
+
+- **Card vote patch:** if run ID cannot be captured, log once and run without the run-ID guard. Do not disable the whole card vote solely for missing run ID.
+- **Skip gate patch:** if run/act detection cannot be made reliable, skip the gate registration, because the budget semantics depend on it.
+
+Also avoid over-reliance on `DebugOnlyGetState()` if there is a non-debug production API. The spec should say “use `DebugOnlyGetState()` only if this is the established production-access path in B.1/StS2 modding; otherwise prefer the normal run-state accessor.”
+
+---
+
+### Severity 2 — `EnglishReceipts` addition may be the wrong layer
+
+The spec says either:
+
+- add `SkipReceipt(...)` to `EnglishReceipts`; or
+- inline the format string in `CardRewardSkipGatePatch`.
+
+Because `EnglishReceipts` lives in `src/Ti/`, adding a card-reward-specific phrase there weakens the TI/Game seam. It does not technically reference `sts2.dll`, but it imports StS-specific domain language into the supposedly reusable Twitch-integration core.
+
+Recommended: do **not** add card-specific skip receipts to `Ti/Voting/EnglishReceipts`.
+
+Instead:
+
+- inline this receipt in `Game/DecisionVotes/CardRewardSkipGatePatch`, or
+- create a Game-side `GameReceipts`/`StsReceipts` helper under `src/Game/`.
+
+Preserve `EnglishReceipts` for generic vote-open/vote-close messages unless it is already explicitly intended to contain game-domain copy.
+
+---
+
+### Severity 2 — Static skip state needs a reset/test seam
+
+`CardRewardSkipGatePatch` owns static state:
+
+```csharp
+_actSkipsUsed
+_runSkipsUsed
+_lastSeenActIndex
+_lastSeenRunId
+_activeLabel
+```
+
+This is pragmatic for a Harmony patch, but it complicates tests and operator iteration.
+
+The spec says to add `CardRewardSkipGateTests.cs` for skip-counter logic in isolation. That is good, but the spec should mandate a small pure logic type, for example:
+
+```csharp
+internal sealed class CardSkipBudgetState
+{
+    public void ObserveRunAndAct(...);
+    public bool CanSkip(...);
+    public void RecordCardSkip();
+    public CardSkipBudgetSnapshot GetSnapshot(...);
+}
+```
+
+This is **not** the forbidden suspend/resume helper abstraction. It is just pure state logic and makes the budget testable without Harmony/Godot/sts2.
+
+At minimum, add an internal test-only reset method guarded by convention:
+
+```csharp
+internal static void ResetForTests()
+```
+
+But pure logic extraction is cleaner.
+
+---
+
+### Severity 2 — Label lifecycle with `_activeLabel` can point at freed Godot objects
+
+Because `_activeLabel` is static, it can retain a reference to a label parented under a freed `NRewardsScreen`.
+
+Before using `_activeLabel`, the patch should check:
+
+- `GodotObject.IsInstanceValid(_activeLabel)`;
+- label is still inside tree;
+- label’s parent is the current `NRewardsScreen`.
+
+If invalid, clear it and attach a new one.
+
+The spec says cleanup is automatic because the label is parented under the rewards screen. That is true for the Godot node, but not for the static C# reference.
+
+Add this to `AttachOrUpdateLabel` requirements.
+
+---
+
+### Severity 3 — “DisableEventOptions analogue omitted” may permit confusing UI state
+
+The spec says no equivalent exists and `_voteInProgress` suffices.
+
+Functionally, yes. UX-wise, the streamer can click other card holders during the vote and nothing happens. That is acceptable for v0.1, but the spec should require either:
+
+- a log/debug trace when repeated clicks are swallowed; or
+- the tally label text makes clear that voting is in progress.
+
+This is minor, but rapid clicks are in the acceptance gate, so make expected behaviour explicit:
+
+> Subsequent card clicks during an active vote are swallowed until the vote closes; they do not update the streamer’s original fallback choice.
+
+Also clarify whether fallback remains the **first clicked card** or the **latest clicked card**. Current design implies first clicked. State that directly.
+
+---
+
+### Severity 3 — `ModSettings` parsing text references a nonexistent B.1 `voteDuration` key
+
+In `ModSettings extensions`:
+
+> Missing key → use default (matches B.1's missing-key behaviour for `voteDuration`).
+
+But the context says B.1 hardcodes vote duration and no settings key exists.
+
+This should be corrected to:
+
+> Missing key → use default, matching the existing optional-key behaviour for future-compatible settings.
+
+Or just remove the parenthetical.
+
+---
+
+## 4. Suggested changes
+
+### A. Clarify when the skip gate is active
+
+Add a subsection under `CardRewardSkipGatePatch`:
+
+> The skip gate enforces only when card voting is available/configured.
+
+Recommended rule:
+
+```text
+Skip gate should enforce only if:
+- settings loaded successfully,
+- Voter.Default is non-null,
+- the card reward vote patch prepared successfully,
+- chat service is configured, and
+- either chat is currently connected or the project explicitly wants offline enforcement.
+```
+
+If current chat disconnection during a run should not disable the gate, then define that separately:
+
+- “configured but temporarily disconnected” can still enforce;
+- “no settings/no chat service” should degrade to vanilla.
+
+This distinction matters.
+
+---
+
+### B. Re-run the gate after `RewardSkippedFrom`
+
+In `RewardSkippedFrom` postfix, after incrementing counters:
+
+```text
+If HasUnclaimedCardReward(__instance) and budget is now exhausted,
+call __instance.DisallowSkipping().
+```
+
+Also refresh the label after this.
+
+Add an acceptance check:
+
+> On a rewards screen with multiple card rewards, using the final allowed skip disables Proceed for remaining card rewards on the same screen.
+
+If multiple card rewards are impossible in current vanilla, still add the logic; it is cheap and makes the patch robust.
+
+---
+
+### C. Fix receipt/label counter semantics
+
+Define two separate renderers:
+
+- Label: remaining budget.
+- Receipt: used budget, or a concise “used one skip” message.
+
+Recommended formats:
+
+Label:
+
+```text
+Card skips: 0/1 act, ∞ run
+Card skips: 1/2 act, 3/5 run
+```
+
+Receipt:
+
+```text
+Streamer skipped a card reward (used 1/1 act, ∞ run)
+Streamer skipped a card reward (used 2/3 act, 4/5 run)
+```
+
+Avoid `0/∞ run` after a skip.
+
+Update Acceptance Step 2 accordingly.
+
+---
+
+### D. Make holder mapping explicit in `CardRewardVotePatch`
+
+In the spec’s `Prepare validation`, add:
+
+- verify holder collection field/property;
+- verify it is indexable or enumerable;
+- verify holder count matches option count, or define fallback if not;
+- verify clicked holder can be mapped to an index.
+
+In resume:
+
+```text
+Resolve current holder collection again.
+Abort unless winning index is in range.
+Abort unless the target holder is valid and still belongs to this screen.
+Resume by calling SelectCard(currentHolderAtWinningIndex), not necessarily the old snapshot reference.
+```
+
+This is safer than reusing a potentially stale `NCardHolder`.
+
+---
+
+### E. Add run-ID guard to Neow or explicitly defer
+
+Preferred B.2.1 addition:
+
+```text
+Task N.M: Add run-ID guard to NeowBlessingVotePatch.
+```
+
+This keeps the two vote patches aligned and prevents B.2.2 from copying an older template.
+
+If not doing it, add a Non-goal:
+
+```text
+Adding the run-ID guard to NeowBlessingVotePatch is deferred; B.2.1 only guards the new card reward patch.
+```
+
+But I think deferring is the worse choice.
+
+---
+
+### F. Replace `EnglishReceipts` skip addition with a Game-side receipt helper
+
+Change:
+
+> Option (a) add a `SkipReceipt` static helper to `EnglishReceipts`
+
+to:
+
+> Add a Game-side helper, e.g. `Game/DecisionVotes/CardRewardReceipts.cs`, or inline the string in `CardRewardSkipGatePatch`.
+
+This keeps TI cleaner.
+
+---
+
+### G. Add a pure `CardSkipBudgetState` type for tests
+
+Add under `src/Game/DecisionVotes/` or a small internal namespace:
+
+```csharp
+internal sealed class CardSkipBudgetState
+{
+    public void Observe(Guid runId, int actIndex);
+    public bool IsSkipAllowed(int actLimit, int runLimit);
+    public void RecordSkip();
+    public CardSkipBudgetSnapshot Snapshot(int actLimit, int runLimit);
+}
+```
+
+Then `CardRewardSkipGatePatch` becomes thin Harmony glue, and the proposed `CardRewardSkipGateTests.cs` can be meaningful without mocking Godot.
+
+---
+
+### H. Add static label validity checks
+
+In `AttachOrUpdateLabel`, require:
+
+```text
+If _activeLabel is null, invalid, not inside tree, or not parented to the current rewards screen, discard it and create a new one.
+```
+
+This prevents stale static references after scene transitions.
+
+---
+
+## 5. Alternatives
+
+### Alternative 1 — Enforce skip gate only after card reward screen has been opened
+
+This would distinguish:
+
+- “streamer looked at card choices and skipped”;
+- “streamer clicked Proceed without looking.”
+
+The current spec intentionally treats both as skips. I think that is acceptable for v0.1 and avoids more patches.
+
+Do **not** switch to this unless streamer feedback says “I accidentally skipped without seeing the cards” is common.
+
+---
+
+### Alternative 2 — Put skip counter into `VoteTallyLabel`
+
+Instead of a separate `CardSkipCounterLabel`, the existing top-right tally label could include:
+
+```text
+Card skips: 0/1 act, ∞ run
+```
+
+Pros:
+
+- avoids anchoring near `_proceedButton`;
+- reuses proven Root parenting/z-order behaviour;
+- less StS2 UI coupling.
+
+Cons:
+
+- less spatially connected to Proceed;
+- `VoteTallyLabel` lives in `Ti/Ui`, and adding card-skip state there would violate the TI/Game seam unless carefully avoided.
+
+Given the seam concern, the proposed separate Game-side label is better. But if proceed-button anchoring proves flaky, a Game-side root-level label may be simpler than modifying `VoteTallyLabel`.
+
+---
+
+### Alternative 3 — Single skip budget instead of dual budget
+
+A single `cardSkipsPerAct` would be simpler. However, the dual model is not much harder if implemented through a pure budget state class, and it gives useful streamer control:
+
+- casual mode: `1/act, ∞/run`;
+- strict mode: `0/act`;
+- campaign cap: `1/act, 2/run`;
+- permissive mode: `-1/-1`.
+
+Keep dual budget.
+
+---
+
+### Alternative 4 — Minimal utility extraction now
+
+The spec rejects helper/base extraction for suspend-and-resume, and I agree. But there is a narrower alternative:
+
+Extract tiny static utilities only:
+
+- run ID capture/compare;
+- `IsGodotInstanceValid`;
+- option label sanitization;
+- infinity rendering.
+
+This would not be a full base class. Still, I would defer most of this until B.2.2 unless duplication becomes actively error-prone.
+
+Exception: infinity rendering and budget state should be extracted now because the label, receipt, and tests all need consistent semantics.
+
+---
+
+## 6. Additions
+
+Add these to the spec:
+
+1. **Explicit chat/gate activation policy.**
+   - Does skip enforcement require chat configured?
+   - Does it require currently connected chat?
+   - What happens if chat disconnects mid-run?
+
+2. **Multi-card-reward behaviour.**
+   - Even if rare/impossible, specify how budget decrements and gate reapplication work if a rewards screen contains more than one card reward.
+
+3. **Card-holder collection validation in `Prepare`.**
+   - `_options` alone is not enough.
+
+4. **Pure budget-state test target.**
+   - Otherwise `CardRewardSkipGateTests` will either be brittle or too coupled to patch statics.
+
+5. **Label stale-reference handling.**
+   - Static `_activeLabel` must be invalidated when its Godot node dies.
+
+6. **Neow run-ID guard decision.**
+   - Implement now or explicitly defer.
+
+7. **Exact fallback-click semantics.**
+   - First clicked card remains fallback, or latest swallowed click updates fallback?
+   - Recommended: first click remains fallback.
+
+8. **Receipt failure policy.**
+   - If skip receipt send fails, budget still decrements. Log Warn, not Error, especially given known reconnect behaviour.
+
+9. **Operator validation for no-settings/no-chat case.**
+   - Since failure mode #8 is ambiguous, add a manual check:
+     - missing settings file;
+     - card reward appears;
+     - Proceed behaviour is vanilla unless intentionally enforcing offline.
+
+10. **Operator validation for multiple skips in one act.**
+    - With `cardSkipsPerAct: 2`, skip twice, third card reward blocked.
+    - With `cardSkipsPerRun: 1`, act 2 should reset act counter but still block run-level skips.
+
+---
+
+## 7. Removals
+
+- Remove or rewrite this line from `ModSettings extensions`:
+
+  > matches B.1's missing-key behaviour for `voteDuration`
+
+  There is no B.1 `voteDuration` settings key.
+
+- Remove “Option (a) preferred” for adding skip receipt to `EnglishReceipts`. Prefer Game-side receipt formatting to preserve TI/Game separation.
+
+- Remove or soften this claim from Failure mode #8:
+
+  > gate-disable behaviour is irrelevant without a vote to gate
+
+  It is not obviously true. Replace with an explicit policy.
+
+- Remove “Open questions: None blocking.” There are blocking ambiguities around skip gate activation and counter semantics. The section should say “No product questions blocking; implementation clarifications below” only after those are resolved.
+
+---
+
+## 8. Minor / nits
+
+- `CardRewardSkipGatePatch.Prepare` with two postfix targets may be awkward depending on Harmony class layout. The spec should show whether this is:
+  - one class with nested patch classes; or
+  - two separate `[HarmonyPatch]` classes sharing a common helper/state class.
+
+- In `Failure modes #4`:
+
+  > Counter not decremented → next gate evaluation may be slightly stricter than intended.
+
+  The counter is incremented, not decremented. Rewrite as:
+
+  > Counter may not be incremented, so future gates may be too permissive.
+
+  Or, if the exception happens after increment, state can become stricter/permissive depending on throw point. Be precise.
+
+- “CardSkipCounterLabel cleaned up automatically” should be qualified because the Godot node is cleaned up, but the static C# reference is not automatically nulled.
+
+- “Latest-wins on multi-vote” in Acceptance Step 1 is inherited from `VoteSession`, but for card reward it would be good to validate one user changes from `#0` to `#2`.
+
+- Consider rendering `∞` carefully in chat. Twitch should handle Unicode fine, but if not, fallback to `inf` or `unlimited`. Not blocking.
+
+- The spec says `Vote options = current cards on screen, dynamic count (1 to N)`. Add a guard for zero options: fail open and call vanilla original with streamer click, or return true from prefix.
+
+- In `CardRewardVotePatch`, if chat-readiness gate fails, the prefix should return `true` to let vanilla proceed. State this explicitly.
+
+---
+
+## 9. Assumptions you're making
+
+- I assume `NRewardsScreen._Ready` runs once per rewards screen and not again after each reward is collected/skipped.
+
+- I assume a rewards screen can theoretically contain multiple card rewards, even if uncommon. If vanilla guarantees at most one card reward, the same-screen re-gate issue is lower severity but still cheap to fix.
+
+- I assume `RewardSkippedFrom(Control)` is called after vanilla has decided to skip a particular reward, but I do not know whether the reward metadata is still accessible from the `Control` during postfix.
+
+- I assume `EnglishReceipts` is intended to remain part of the game-agnostic `Ti` layer. If it already contains StS-specific copy, my seam concern is weaker.
+
+- I assume `ModEntryState.Settings` does not currently exist and is shorthand in the spec. The implementation needs a concrete, testable way for patches to access parsed settings.
+
+- I assume `DebugOnlyGetState()` is safe in production because the spec uses it. If there is a non-debug run-state accessor, that should be preferred.
+
+- I assume Godot C# object references can remain non-null after their underlying native instance is freed, so `IsInstanceValid` checks are necessary for `_activeLabel` and card holders.
+
+- I assume no direct codebase access; all comments about field names, call order, and UI hierarchy must be validated against the decompiled/game source during meta-review.

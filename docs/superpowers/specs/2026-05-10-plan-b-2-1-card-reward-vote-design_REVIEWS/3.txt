@@ -1,0 +1,268 @@
+# Review: Plan B.2.1 — Card Reward Vote (Design)
+
+---
+
+## 1. One-line verdict
+
+A well-structured spec that correctly reuses B.1's proven patterns and makes sound architectural trade-offs, but has two non-trivial gaps (skip-receipt seam violation, `_Ready` patchability uncertainty) and one design question (dual-budget AND semantics) that need resolution before implementation.
+
+---
+
+## 2. What's good
+
+- **Chat-vs-streamer asymmetry as a first-class design constraint.** This framing — explicitly articulated and consistently applied — is the spec's strongest contribution. "Skip is never a chat-vote option" follows directly from it and pre-empts a class of degenerate play patterns. The settings-tunable budget gives the streamer agency within bounds. This thinking generalises cleanly to B.2.2 (boss relic skip) and B.2.4 (settings UI). **Preserve as-is.**
+
+- **Piggybacking on `DisallowSkipping()` rather than patching `OnProceedButtonPressed`.** Decision 3 is the right call. Vanilla already has the machinery for disabling Skip-mode Proceed; calling a public method is categorically safer than intercepting a button-press handler. Smaller patch surface, less coupling to button internals. **Preserve.**
+
+- **Rule-of-Three discipline for deferred abstraction (Decision 13).** Copy-pasting ~200 LOC of patch boilerplate is the correct call at n=2. Premature abstraction has killed more mods than duplication ever has. The spec author explicitly calls out that B.2.2 (n=3) is the right time to extract — this is rigorous and honest. **Preserve.**
+
+- **Run-ID guard (Decision 6).** ~5 lines per patch to close the resume-after-abandon race identified in B.1's notes/06. Low cost, high value, directly addresses a production-observed gap. **Preserve.**
+
+- **Consistent fail-soft degradation (Section "Failure modes & degradation", table rows 1-8).** Every new failure mode is mapped to a specific degradation behaviour. No crash paths. The separation of vote patch and skip gate as independently-failing Harmony registrations means one can degrade without taking the other down. This is good defensive architecture. **Preserve.**
+
+- **No custom debug Harmony patches (Decision 14).** Recognising that vanilla DevConsole already covers `win`, `travel`, `act <n>`, and `relic add <id>` avoids shipping debug code that must be stripped later. Efficient. **Preserve.**
+
+- **`Prepare` verification for all reflected fields/methods.** Both patch classes are specified to validate field shape at registration time and return `false` (skip patch) if the shape doesn't match. This prevents runtime reflection failures from crashing the mod mid-game. **Preserve.**
+
+---
+
+## 3. Concerns & risks (ranked by severity)
+
+### 🔴 High severity
+
+**C1 — Skip receipt in `EnglishReceipts` violates the TI/Game seam.**
+
+The spec states (Section "Architecture", file tree) that B.2.1 "Does NOT modify any `src/Ti/*` files." But the receipt format section says option (a) — adding `SkipReceipt` to `EnglishReceipts` in `src/Ti/Voting/` — is "preferred for consistency." These are contradictory. `EnglishReceipts` lives in `src/Ti/Voting/`; adding to it modifies the TI core.
+
+The seam is load-bearing for future TI extraction. Adding a skip-specific receipt formatter to the game-agnostic core is arguably wrong anyway — skip receipts are a Game-layer concept (they reference card skips, act/run counters, terms that don't exist in TI's vocabulary). The core shouldn't know about skips.
+
+**Recommendation**: Inline the skip receipt format string in `CardRewardSkipGatePatch.SendSkipReceipt`. The format is stable (`Streamer skipped a card reward (X/Y act, A/B run)`) and doesn't need the abstraction. If consistency with vote receipts matters, the send path is `Voter.Default.Coordinator.Chat.SendMessageAsync(formattedString)` — the formatter just produces a string. Keep it in the Game layer.
+
+**C2 — Can Harmony patch Godot's `_Ready` notification?**
+
+The spec proposes a `[HarmonyPostfix]` on `NRewardsScreen._Ready`. Godot's `_Ready` is not a standard C# virtual method — it's a notification invoked by the engine's native-to-managed interop. Harmony may not be able to patch it, or may patch it unreliably depending on how Godot's Mono binding dispatches the call.
+
+If `_Ready` is unpatchable, the entire skip-gate initialization path breaks: act/run-change detection, `DisallowSkipping()` call, and label attachment all live in this postfix.
+
+**Recommendation**: The spec author must verify patchability of `_Ready` before implementation. If it fails, fall back alternatives include:
+- A `_EnterTree` postfix (if Godot dispatches that differently)
+- A prefix on `NRewardsScreen`'s constructor-equivalent (e.g., `_Notification` with `NOTIFICATION_READY`)
+- A lazy-init pattern: check counters and attach label on first access to the rewards screen's proceed button visibility
+
+This is the single highest technical risk in the spec. Flag it now rather than discovering it during implementation.
+
+### 🟡 Medium severity
+
+**C3 — Dual-budget AND semantics may create confusing edge cases.**
+
+Decision 8 specifies: "Skip allowed iff `actRemaining > 0 AND runRemaining > 0`." Both caps are enforced simultaneously. Consider a streamer who sets `cardSkipsPerAct: 2, cardSkipsPerRun: 3`. They use 2 skips in act 1, then 1 skip in act 2. At act 3, `_actSkipsUsed` resets to 0 (act changed) but `_runSkipsUsed` is 3, which equals the run cap. The skip is blocked even though the player has 2 act-level skips available. The per-run cap has "leaked" into the next act.
+
+This is not a bug — it's the AND specification working as designed — but it creates a UX where the run cap overrides the act cap without the streamer necessarily expecting it. The streamer sees `Card skips: 2/2 act, 3/3 run` and may not understand why they can't skip (both numbers say "limit reached," but the act limit just reset and they expected fresh skips).
+
+The counter-label mitigates this somewhat by showing both numbers. But the mental model of "I get N skips per act" is undermined when the run cap also gates.
+
+**Recommendation**: At minimum, document this interaction explicitly in the spec (it's currently implicit). Consider whether the dual budget should use OR logic instead (`actRemaining > 0 OR runRemaining > 0`) — meaning skip is allowed as long as *either* budget has remaining capacity. This is arguably more intuitive: "you can skip as long as you haven't exceeded your act cap AND haven't exceeded your run cap" — which is AND for the negative case but OR for the positive. Actually, re-examining: the current AND logic says both must allow. An OR logic would say "allow if either has remaining." That's too permissive (act cap exhausted but run cap has space = skip allowed? No, that defeats the act cap). 
+
+The real tension is: should per-run cap reset per-act counting? Or should they be independent? Currently they're independent AND'd. The simplest correct fix is: **per-act cap resets each act; per-run cap is never reset during the run; both must have remaining capacity.** This IS the current spec. Keep it, but document the "run cap bleeds into later acts" behavior explicitly and consider it accepted rather than accidental.
+
+**C4 — `ModEntryState.Settings` static accessor doesn't exist.**
+
+The skip gate postfix references `ModEntryState.Settings` to read `CardSkipsPerAct` and `CardSkipsPerRun`. B.1's `ModEntry` doesn't expose settings via any static accessor — `ModSettings` is read during `ModEntry` initialization and the result is consumed locally. The spec doesn't specify where this accessor is created or how settings flow from `ModEntry` to the patch classes.
+
+**Recommendation**: Add to the implementation plan: either (a) a `ModEntryState` static class with a `Settings` property set during `ModEntry` init, or (b) have `CardRewardSkipGatePatch` read settings directly via `ModSettings.Load()` (re-parsing the JSON file). Option (a) is cleaner but requires a new file or modification to `ModEntry.cs`. Option (b) is self-contained but re-parses JSON on every rewards screen. The spec author should decide and document.
+
+### 🟢 Low severity
+
+**C5 — `Interlocked.Increment` on main-thread-only code paths.**
+
+`RewardSkippedFrom` postfix runs on the Godot main thread (it's a Harmony postfix on a Godot method invoked during UI interaction). `Interlocked.Increment` is unnecessary — there's no concurrent access to `_actSkipsUsed` / `_runSkipsUsed`. This isn't a bug (atomic ops on uncontended ints are cheap), but it's misleading: it suggests thread-safety that isn't needed and may confuse future readers about the threading model.
+
+**Recommendation**: Use plain `++` or `+= 1`. If the spec author wants to keep `Interlocked` for consistency with the vote patch's cross-thread flags, that's defensible but should have a comment explaining it's for consistency, not correctness.
+
+**C6 — `RunManager.Instance.DebugOnlyGetState()` may return null at resume time.**
+
+The run-ID guard captures `runState?.Id` at vote start and compares at resume. But if `DebugOnlyGetState()` returns null at resume time (run fully torn down), the comparison `runIdAtStart != currentRunState?.Id` evaluates to `true` when `currentRunState` is null — which correctly aborts resume. However, the spec says "skip resume if mismatch" but doesn't explicitly handle the null-current-state case. The code would work correctly (null ≠ captured ID), but the spec should acknowledge this edge case explicitly for completeness.
+
+**Recommendation**: Add a note: "If `DebugOnlyGetState()` returns null at resume time (run fully destroyed), the null-safe comparison naturally aborts resume. No special handling needed."
+
+**C7 — `_Ready` postfix fires once; rewards screen object lifecycle uncertain.**
+
+The spec relies on `_Ready` firing for act/run-change detection. If `NRewardsScreen` nodes are pooled/reused by the game (unlikely but possible in Godot), `_Ready` would not re-fire and act-change detection would miss transitions. The spec implicitly assumes screens are freed and recreated between combats. This is almost certainly true (Godot's typical scene pattern), but the author should verify.
+
+**Recommendation**: Verify in the decompiled source or during implementation that `NRewardsScreen` is instantiated fresh each time. If not, switch to `_EnterTree` or add explicit detection in a method that fires more reliably.
+
+---
+
+## 4. Suggested changes
+
+### S1 — Inline skip receipt format; don't touch `EnglishReceipts` (addresses C1)
+
+Replace the spec's ambiguous "option (a) preferred" with a firm decision to inline the format string in `CardRewardSkipGatePatch`. The format is:
+
+```csharp
+private static string FormatSkipReceipt(int actUsed, int actLimit, int runUsed, int runLimit)
+{
+    string actPart = actLimit < 0 ? $"{actUsed}/∞" : $"{actUsed}/{actLimit}";
+    string runPart = runLimit < 0 ? $"{runUsed}/∞" : $"{runUsed}/{runLimit}";
+    return $"Streamer skipped a card reward ({actPart} act, {runPart} run)";
+}
+```
+
+Keep it in `CardRewardSkipGatePatch.cs`. This preserves the TI/Game seam perfectly.
+
+### S2 — Specify `ModEntryState` creation (addresses C4)
+
+Add to the "Architecture" section: a new `ModEntryState.cs` in `src/Game/Bootstrap/`:
+
+```csharp
+internal static class ModEntryState
+{
+    internal static SettingsResult Settings { get; set; } = SettingsResult.Missing;
+}
+```
+
+Set during `ModEntry` init after `ModSettings.Load()`. This is ~8 LOC and gives all Game-layer patches a single, consistent settings access point. `CardRewardSkipGatePatch` reads `ModEntryState.Settings` rather than re-parsing JSON.
+
+### S3 — Clarify `_Ready` patchability risk in the spec (addresses C2)
+
+Add a note to Decision 3 and the `_Ready` Postfix section:
+
+> **Implementation note**: Godot's `_Ready` is a native-to-managed notification, not a standard C# virtual method. Harmony may not reliably patch it. Before writing the postfix body, verify that `Harmony.PatchAll()` successfully instruments `NRewardsScreen._Ready`. If it fails, fall back to patching a different entry point (e.g., a public method called during rewards-screen setup, or a lazy-init check on first `_Process`). This is the highest technical risk in B.2.1 — resolve it before investing in the postfix body.
+
+### S4 — Document dual-budget AND semantics explicitly (addresses C3)
+
+Add to Decision 8:
+
+> **AND semantics**: Both caps must have remaining capacity for skip to be allowed. If either is exhausted, skip is blocked. This means a per-run cap can prevent skipping even in a fresh act where the per-act cap has reset. The counter label shows both values so the streamer can see which cap is gating. This interaction is accepted — the per-run cap represents an absolute ceiling independent of act boundaries.
+
+### S5 — Add a `Prepare` method specification for `CardRewardSkipGatePatch`
+
+The spec references "verified in a `Prepare` method" (in `HasUnclaimedCardReward` / `IsCardRewardButton` descriptions) but never explicitly lists `Prepare` alongside the two postfix patches. Add it:
+
+> **`Prepare` (static bool)**: Validates that `NRewardsScreen` exposes `_rewardButtons` field, that `NRewardButton` has a `Reward` property or field of type assignable to `CardReward`, and that `DisallowSkipping()` exists. If any check fails, returns `false` (skip gate silently degrades). Also verifies the run-ID and act-index access patterns against `RunState`.
+
+This completes the defensive `Prepare` pattern (matching the vote patch's equivalent) and makes the skip gate independently degradable.
+
+---
+
+## 5. Alternatives
+
+### A1 — OR logic for dual budget instead of AND
+
+Currently: skip iff `actRemaining > 0 AND runRemaining > 0`. Alternative: skip iff `actRemaining > 0 OR runRemaining > 0`.
+
+The OR variant means: "you can always skip at least once per act (if per-act cap > 0), regardless of run cap." The run cap becomes a secondary constraint that only matters when the per-act cap is also exhausted. This is arguably more intuitive for "I want N skips per act" users, but it weakens the run cap's role as an absolute ceiling.
+
+I think the AND semantics with good documentation (S4 above) is the better approach. OR is too permissive and makes the run cap nearly meaningless. Flagging this alternative mainly so the meta-review can confirm the AND decision explicitly.
+
+### A2 — Single-mode skip budget (per-act OR per-run, not both)
+
+Remove one dimension. `cardSkipsPerAct` only, or `cardSkipsPerRun` only. Simpler settings, simpler code, simpler mental model. The spec explicitly chose dual-mode (Decision 8: "both enforced"). The dual mode gives streamers more nuanced control (e.g., "1 per act but no more than 3 per run"), which is genuinely useful for longer runs (act 4, endless mode, etc.). The cost is ~15 extra LOC and a slightly more complex label. Worth keeping both.
+
+### A3 — Extend `VoteTallyLabel` instead of creating `CardSkipCounterLabel`
+
+The `VoteTallyLabel` already exists as a `RichTextLabel` under `SceneTree.Root`. Adding a skip-counter line to its `_Process` polling would avoid a new Godot node and the anchor-adjacent-to-`_proceedButton` fragility. Downsides: (a) the tally label is top-right, far from the proceed button; spatial co-location with the action is valuable UX; (b) the tally label is in `Ti/Ui/` and shouldn't know about skips (seam violation). The separate label approach is better. Keep it.
+
+### A4 — Detect act/run change at moment of change, not at next rewards screen
+
+The spec accepts "lazy by one rewards screen" detection. An alternative is to patch the act-transition or run-start methods to eagerly reset counters. This would be more precise but adds patch surface for marginal UX gain (streamer never sees stale counter values for more than one rewards screen). The lazy approach is simpler and good enough. Keep it.
+
+---
+
+## 6. Additions
+
+### ADD1 — Add `ModEntryState.cs` to the architecture diagram
+
+The architecture section's file tree doesn't include `ModEntryState.cs`. If S2 is accepted, add it:
+
+```
+src/Game/Bootstrap/ModEntryState.cs        🆕 B.2.1 — static settings holder for Game-layer patches
+```
+
+### ADD2 — Add a "Godot `_Ready` patchability" risk to the open questions
+
+Currently the open questions are soft (multiplayer label, reroll receipt). The `_Ready` patchability question (C2) is harder and should be promoted:
+
+> **3. Can Harmony patch Godot's `_Ready` notification?** This is the skip gate's initialization entry point. If unpatchable, we need a fallback. Verify before writing the postfix body.
+
+### ADD3 — Specify what happens when `DebugOnlyGetState()` returns null at resume time
+
+Add to the run-ID guard description in `CardRewardVotePatch`:
+
+> If `DebugOnlyGetState()` returns null at resume time (run fully destroyed), the null-safe comparison (`runIdAtStart != currentRunState?.Id`) evaluates to `true`, which correctly aborts resume. No special null handling needed.
+
+### ADD4 — Add a "v0.2 consideration" note for reroll-mid-vote receipt
+
+The spec asks (Open Question 2) whether reroll-mid-vote should send a receipt. The answer is "lean no for v0.1." Add a `notes/` cross-reference or v0.2 deferred item so this isn't forgotten:
+
+> Deferred to v0.2: if streamers report confusion about "missing" votes after rerolling, add a `(vote cancelled — streamer rerolled)` receipt. Low priority.
+
+### ADD5 — `CardRewardSkipGateTests` should test AND/OR edge case
+
+The spec mentions ~10 tests for skip-counter logic. Add explicit test cases for the dual-budget AND boundary:
+
+- Act cap exhausted, run cap has remaining → skip blocked
+- Run cap exhausted, act cap has remaining → skip blocked  
+- Both have remaining → skip allowed
+- Both exhausted → skip blocked
+- Act change resets act counter but not run counter
+- Run change resets both
+
+These are the most subtle behaviours and deserve explicit coverage.
+
+---
+
+## 7. Removals
+
+None. The spec is appropriately scoped. Everything in it serves a clear purpose. The only candidate for removal would be the dual-budget AND model in favour of a simpler single-mode budget, but I've argued against that above (A2) — the dual model has genuine utility at low cost.
+
+---
+
+## 8. Minor / nits
+
+- **LOC estimate for `CardRewardSkipGatePatch` may be low.** ~180 LOC for two postfixes, counter state (4 fields), act/run detection logic, `HasUnclaimedCardReward`, `IsCardRewardButton`, `AttachOrUpdateLabel`, `SendSkipReceipt`, `Prepare`, and all try/catch wrappers. My estimate: closer to ~230-250 LOC. Not a spec problem, but the implementer shouldn't feel constrained by the 180 target if the logic naturally expands.
+
+- **`VoteTallyLabel.AttachTo(session)` in `HandleVoteAsync`**. B.1's Neow patch posts `VoteTallyLabel.AttachTo(session)` to the main thread at vote start. The spec says "B.1's top-right multi-line label is reused as-is" (Non-goals). But the spec doesn't explicitly state that `CardRewardVotePatch.HandleVoteAsync` also posts `AttachTo`. It should — otherwise the tally label won't appear during card votes. This is an oversight (the copy-paste from Neow would include it, but the spec should call it out).
+
+- **`_multiplayerWarnFired` flag in `CardRewardVotePatch`** — the spec shows it in the patch shape but doesn't describe its purpose. It's carried over from Neow (suppresses repeated multiplayer-bail warnings). Fine to keep, but worth a one-line note.
+
+- **`CardSkipCounterLabel` uses `Label` not `RichTextLabel`.** The spec says "no formatting needed; can upgrade later." Good call. If the `∞` character needs special handling in Godot's default font, flag it during implementation.
+
+- **Receipt format `#0 Strike, #1 Defend, #2 Bash`** — if card names are long, this line could exceed Twitch chat's practical width (~400 chars). The spec acknowledges the BBCode issue but not the length issue. With 3 cards at ~20 chars each, this is ~120 chars for the options list — fine. With 5+ cards from special sources, it could get long. Acceptable for v0.1; note in deferred if it surfaces.
+
+- **"Proceed" vs "Skip" button naming.** Vanilla `NRewardsScreen` presumably uses a "Skip" button in Skip mode and a "Proceed" button in Claim mode. The spec uses both terms somewhat interchangeably. Consistent naming in the implementation would help readability.
+
+- **Spec cross-references use local `../../../` paths** to decompiled source. These won't resolve for reviewers without the decompiled directory. Not a spec issue (reviewers are told they won't have codebase access), but worth noting for future specs — absolute paths or class-name-only references are more portable.
+
+---
+
+## 9. Assumptions I'm making
+
+1. **Godot's `_Ready` can be Harmony-patched.** I flagged this as the highest risk (C2) because I'm uncertain. The spec author has decompiled source access and can verify the method's IL structure. If it's a standard virtual dispatch, Harmony can patch it. If it's engine-internal, it can't. This must be resolved before implementation.
+
+2. **`NRewardsScreen` is instantiated fresh per rewards screen, not pooled.** The act/run-change detection in `_Ready` depends on this. If the game pools/reuses the node, `_Ready` won't re-fire and act transitions will be missed. This is likely true for Godot's scene instantiation pattern, but should be verified.
+
+3. **`RunState` has a stable run identifier field.** The spec guesses `Id` (possibly a `Guid`). The `Prepare` method must verify the actual field name and type. If `RunState` doesn't have a stable ID (unlikely for a roguelike with save/load), the run-ID guard degrades gracefully (null-safe comparison, always allows resume). Acceptable failure mode.
+
+4. **The act-index access pattern is deterministic.** The spec suggests `Acts.Count - 1`, a `CurrentAct` property, or derived from `CurrentRoom`. The `Prepare` method must pin down which one. If none are reliable, the skip gate degrades (fails `Prepare`, returns false, gate not registered). Acceptable.
+
+5. **`NRewardsScreen.RewardSkippedFrom(Control)` exists and is called for every reward skip.** Verified from decompiled source per the spec's cross-reference. If vanilla changes this method signature, `Prepare` catches it and the skip gate degrades.
+
+6. **`NCardRewardSelectionScreen` exposes `_options` as `IReadOnlyList<CardCreationResult>`.** Spec references decompiled source. If the field type or name changes, `Prepare` catches it.
+
+7. **Vanilla `DisallowSkipping()` is idempotent.** Calling it multiple times (e.g., if `_Ready` postfix fires again somehow) shouldn't cause side effects. Verified from decompiled source — it sets a bool flag, so multiple calls are harmless.
+
+8. **`VoteTallyLabel.AttachTo` is called in `HandleVoteAsync`.** I'm assuming this because B.1's Neow patch does it, and the spec says the pattern is "reused verbatim." But the spec doesn't explicitly mention the tally label attachment in the `CardRewardVotePatch` section. If the copy-paste omits it, the tally label won't appear during card votes.
+
+9. **The spec author has access to the decompiled `sts2.dll`** and can verify all field/method names, signatures, and patchability before writing code. My uncertainty about specific field names is a reviewer-side limitation, not a spec defect.
+
+---
+
+## Summary for meta-review
+
+The two highest-priority items for the spec author to resolve before implementation:
+
+1. **Verify `_Ready` patchability.** If it fails, the skip gate needs a different initialization hook. Everything else in the skip gate can be built, but the entry point is load-bearing.
+2. **Resolve the skip-receipt seam question.** Either inline the format in `CardRewardSkipGatePatch` (my recommendation) or explicitly accept a minor Ti modification and update the "no Ti changes" claim.
+
+Everything else is clarification, documentation, or minor refinement. The core design — suspend-and-resume reuse, skip gate via `DisallowSkipping()`, run-ID guard, dual budget — is sound and implementation-ready once these two items are settled.

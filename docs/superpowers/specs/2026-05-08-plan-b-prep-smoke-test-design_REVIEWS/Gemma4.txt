@@ -1,0 +1,46 @@
+**One-line verdict**: This is a high-signal, high-value smoke test design that correctly identifies the project's most dangerous "unknowns," but its primary test case (Smoke B) fails to validate the most critical risk (the blocking pattern).
+
+**What's good**:
+* **Risk-Driven Design**: The decision to target the Autoload mechanism and the Harmony/Await deadlock risk specifically is excellent. These are the two most likely points of total failure for Plan B.
+* **Strict Separation of Concerns**: Using `FakeChatService` to isolate the dispatcher and Harmony mechanics from network/parsing logic is the correct way to perform a smoke test. It ensures failures are architectural, not environmental.
+* **Disposable Workflow**: The clear distinction between "Permanent" and "Disposable" files prevents the smoke test from becoming permanent technical debt.
+* **Build/Install Completeness**: Including the `0Harmony.dll` refresh and a new `install.ps1` shows a professional, end-to-end consideration of the developer loop.
+
+**Concerns & risks**:
+1. **[CRITICAL] Smoke B False Security (Severity: High)**: The spec acknowledges that Plan B requires Harmony prefixes to *block* (to intercept/substitute player input), but Smoke B is designed as a fire-and-forget (`_ = SmokeRunner.RunSmokeB(...)`). A fire-and-forget prefix validates that the engine can continue while a task runs in the background, but it **does not** validate if `awaiting` that task within the prefix will deadlock the main thread. As written, Smoke B may pass even if the "real" Plan B pattern would cause a hard hang.
+2. **[MAJOR] Interface Contract Violation (Severity: Medium)**: The `IMainThreadDispatcher` interface requires `DrainAsync()`, but the implementation in the spec is incomplete. While the spec acknowledges this in Section 7, leaving it unimplemented risks `NotImplementedException` if any part of the system (or future Plan B code) attempts to use it.
+3. **[MINOR] Autoload Diagnostic Ambiguity (Severity: Low)**: The fallback logic in `ModEntry.Init` is good, but the success/failure of the `RegisterSingleton` vs. `AddChild` fallback is only visible in logs. If the primary method fails, the dev might not immediately realize they are running on the fallback path.
+
+**Suggested changes**:
+* **Implement "Smoke C" (The Blocking Test)**: To truly validate the risk, add a `SmokeC` that uses a synchronous-wait pattern. In `SmokeMainMenuPatch`, instead of `_ = ...`, use:
+  ```csharp
+  static void Prefix() {
+      if (Interlocked.Exchange(ref _fired, 1) == 1) return;
+      // This simulates the Plan B pattern: blocking the main thread until the vote is done
+      SmokeRunner.RunSmokeB(ModEntry.SmokeChat).GetAwaiter().GetResult();
+  }
+  ```
+  If this causes a hang, the deadlock risk is confirmed, and the architecture must change before Plan B starts.
+* **Complete `DrainAsync()`**: Even if it is a no-op, implement it in `GodotMainThreadDispatcher` to satisfy the contract.
+  ```csharp
+  public Task DrainAsync() => Task.CompletedTask; 
+  ```
+  (Note: As the spec suggests, since `CallDeferred` is frame-based, a true "drain" is non-trivial, so `CompletedTask` is the safest baseline).
+* **Enhance `ModEntry` Logging**: Explicitly log the result of the registration attempt: `Log.Info("[slay_the_streamer_2] Autoload: Primary registration SUCCESSFUL" or "fallback to Root.AddChild used")`.
+
+**Alternatives**:
+* **Alternative to Blocking Prefixes**: If Smoke C fails (deadlocks), the alternative is to use a `Post` or `Postfix` that doesn't block, but instead "hijacks" the game state (e.g., by pausing the game or using a Godot-level input interceptor). However, the current Harmony prefix approach is the most direct, so the smoke test should prioritize proving/disproving it first.
+
+**Additions**:
+* **Smoke C Implementation**: (As described in Suggested Changes).
+* **Verification Step in `Init`**: A quick check after `Init` to ensure `Voter.Default` is not null and `DispatcherAutoload` is actually in the SceneTree.
+
+**Removals**:
+* None. The scope is well-contained.
+
+**Minor / nits**:
+* In `ModEntry.Init`, the `catch` block for `RegisterSingleton` might be triggered by things other than registration failure (e.g., Godot engine state). Ensure the error message specifically identifies the failure as an "Autoload Registration Error."
+
+**Assumptions you're making**:
+* **Assumption**: I am assuming the "realistic Plan B pattern" mentioned in the context *definitely* requires blocking the main thread (e.g., using `.GetAwaiter().GetResult()`) to prevent the player from clicking through the UI while a vote is active.
+* **Assumption**: I am assuming `CallDeferred` is the most reliable way to bridge the thread gap in Godot 4.5.1 Mono, which the spec correctly treats as the primary hypothesis.

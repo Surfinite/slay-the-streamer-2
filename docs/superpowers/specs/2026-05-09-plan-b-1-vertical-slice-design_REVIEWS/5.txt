@@ -1,0 +1,197 @@
+# Review: Plan B.1 Vertical Slice Specification
+
+## 1. One-line verdict
+
+A solid foundation that correctly encodes the critical suspend-and-resume pattern proven by the smoke, but carries several sharp edges and test-coverage gaps that should be addressed before B.1 ships.
+
+---
+
+## 2. What's good
+
+- **Suspend-and-resume pattern correctly mandated.** The spec correctly treats the Smoke C deadlock as a non-negotiable architectural constraint. The two-flag re-entry guard (`_voteInProgress` + `_resumeInProgress`) is the right solution to the single-flag race condition bug caught in self-review.
+- **Clear scope boundary.** B.1 deliberately restricts to Neow + minimal UI + JSON credentials, deferring the other four votes and settings UI to B.2. This is the right decomposition.
+- **Failure-mode table is comprehensive.** The spec correctly identifies all degradation paths (missing file, malformed JSON, bad oauth, mid-vote disconnect) and specifies silent fallback to vanilla behavior.
+- **Test strategy covers deterministic pieces.** ModSettingsTests and the proposed IIrcTransport seam for TwitchIrcChatServiceTests are appropriate for unit-testable logic.
+- **Architectural seam enforcement.** The spec correctly restricts `Ti/*` from referencing `Game/*` or `sts2.dll`, preserving the TI extraction goal.
+- **Decompile-evidenced patch target.** The spec correctly identifies `NEventRoom.OptionButtonClicked` as the intercept point and documents why `EventOption.Chosen` (fire-and-forget) was rejected.
+
+---
+
+## 3. Concerns & risks
+
+### High severity
+
+1. **VoteTallyLabel may double-free on closure.** The spec attaches the Label as a child of `NEventRoom` and also subscribes to `Closed`/`Cancelled` to call `QueueFree()`. When the parent `NEventRoom` is freed by the game (when the player leaves the event), Godot automatically frees children. Our explicit `QueueFree()` on the Closed handler becomes a double-free. This will crash or corrupt state.
+
+2. **Patch target instability risk.** The spec assumes `NEventRoom.OptionButtonClicked(EventOption option, int index)` is stable across game versions. This is a `void` method that directly mutates game state. If MegaCrit renames it, adds overloads, or refactors to a different entry point in a patch, the mod breaks silently (Harmony prints a warning on patch failure, but the vote just doesn't happen). The spec's `Prepare` check catches class-level null but not method-missing.
+
+3. **`_Process` polling vs event subscription.** The spec uses `_Process` to poll `VoteSession` each frame. This is inefficient and creates a timing coupling. The spec should subscribe to `TallyChanged` events instead, only updating the label when counts change, not every frame.
+
+### Medium severity
+
+4. **Player-click race during resume not fully mitigated.** Between the resume's `_voteInProgress = 0` and `option.Chosen()` completing its async work, a fast streamer click triggers a fresh vote that races against in-progress effects. The spec acknowledges this but defers to B.2. This could cause duplicate blessings or state corruption.
+
+5. **Anonymous mode not operator-validated.** The spec says "B.1 doesn't exercise this path" but the implementation must not break it. Without live validation, a bug in anonymous mode could silently break read-only use cases.
+
+6. **No multiplayer bail-out validation.** The spec says the patch will bail out if `Players.Count > 1` but doesn't include this in the acceptance gate. A multiplayer player could trigger the patch and cause undefined behavior.
+
+### Low severity
+
+7. **Label positioning hardcoded to top-right.** If Neow's UI layout changes or other events have different space, the label could obscure important UI elements. No fallback or bounds checking.
+
+8. **No reconnection status visibility.** If IRC disconnects mid-vote, the player sees nothing. The spec defeds ChatStatusControl to B.2, but users won't know why votes aren't working.
+
+---
+
+## 4. Suggested changes
+
+### Must-fix (before B.1 ships)
+
+**Fix 1: VoteTallyLabel lifecycle**
+
+```csharp
+// Don't queue free on Closed/Cancelled — the parent NEventRoom will free us.
+// Instead, just clear the label text and unsubscribe from events.
+
+session.Closed += (_, _) => {
+    Text = "";  // or hide via Visible = false
+    _session = null;  // stops _Process updates
+};
+// Remove QueueFree() entirely — parent cleanup handles it.
+```
+
+Or, if we need explicit cleanup, track whether the parent was already freed via a `_parentFreed` flag on the parent's `tree_exiting` signal.
+
+**Fix 2: Subscribe to TallyChanged instead of polling**
+
+```csharp
+session.TallyChanged += (_, _) => {
+    // Rebuild text immediately, not on next _Process
+    RebuildText();
+};
+
+session.Closed += (_, _) => {
+    Text = "";
+    _session = null;
+};
+
+// _Process only handles time-remaining updates (since that's time-based)
+public override void _Process(double delta) {
+    if (_session is null) return;
+    UpdateTimeDisplay((int)_session.TimeRemaining.TotalSeconds);
+}
+```
+
+**Fix 3: Add multiplayer bail-out to acceptance gate**
+
+Add to Step 2 operator-validation: "Start a local co-op run (or mock via SaveFile edit), reach Neow, click blessing — verify mod logs 'bailing out: multiplayer detected' and player's click applies normally."
+
+**Fix 4: Add method existence check in Prepare**
+
+```csharp
+static bool Prepare(MethodBase? original) {
+    if (original is null) return true;
+    // Verify the exact signature we expect
+    var parameters = original.GetParameters();
+    if (parameters.Length != 2 ||
+        parameters[0].ParameterType.Name != "EventOption" ||
+        parameters[1].ParameterType.Name != "Int32") {
+        TiLog.Error($"[neow-vote] method signature mismatch: {original}");
+        return false;
+    }
+    TiLog.Info($"[neow-vote] target resolved: {original.DeclaringType?.FullName}.{original.Name}");
+    return true;
+}
+```
+
+### Should-fix
+
+**Fix 5: Add anonymous mode operator-validation**
+
+Add to Step 1 IRC operator-validation: "Connect with null credentials (or mock Credentials.Null), verify state becomes ConnectedReadOnly, CanSend is false, messages from another client still trigger MessageReceived."
+
+**Fix 6: VoteTallyLabel positioning safety**
+
+Add a bounds check or use Godot's layout system instead of hardcoded anchors:
+
+```csharp
+// Use a Container or VBoxContainer for automatic layout
+var container = new VBoxContainer();
+container.SetAnchorsPreset(Control.LayoutPreset.TopRight);
+// Add margin to avoid UI overlap
+container.AddThemeConstantOverride("margin_left", 20);
+container.AddThemeConstantOverride("margin_top", 20);
+parent.AddChild(container);
+container.AddChild(label);
+```
+
+---
+
+## 5. Alternatives
+
+1. **Patch at `EventSynchronizer.ChooseLocalOption` instead of `NEventRoom.OptionButtonClicked`.** This would decouple the patch from UI-layer changes and potentially be cleaner for multiplayer. However, it's a deeper dive into StS2 internals and the current choice is decompilesupported. Keep current choice but document the alternative for B.2.
+
+2. **Use `RichTextLabel` instead of `Label`.** The spec acknowledges blessing labels may contain BBCode. `RichTextLabel` handles `[color]` tags natively. Use `RichTextLabel` with `bbcode_enabled = true`.
+
+3. **Store VoteTallyLabel on the SceneTree root, not as a child of NEventRoom.** This avoids parent-free issues entirely and makes positioning independent of room layout. The spec's current approach of attaching to the room is simpler but riskier.
+
+---
+
+## 6. Additions
+
+1. **Add `Players.Count > 1` check to the patch immediately, not as a deferred item.** This is a one-line bail-out that prevents undefined behavior in co-op. Already in the spec but not validated.
+
+2. **Add logging around every state transition in the patch.** The spec has `TiLog.Info` for vote open/close/resume but not for the bail-out paths (non-Neow event, locked option, no Voter.Default, etc.). Add Debug-level logs for all prefix return paths.
+
+3. **Add a timeout to the resume Post.** If `dispatcher.Post` never runs (shouldn't happen, but defensive), the vote hangs forever. Add a `session.AwaitWinnerAsync(ct)` with a timeout that falls back to player click if the resume takes >5 seconds.
+
+4. **Add a "vote in progress" indicator to the player's clicked button.** When the player clicks, visually disable or highlight the button they clicked so they know their click was captured (even though the vote will override it). This reduces confusion during the 30s wait.
+
+---
+
+## 7. Removals
+
+1. **Remove the QueueFree() from VoteTallyLabel.** As noted in Fix 1, this causes double-free. The parent cleanup handles it.
+
+2. **Remove "Polished VoteOverlayControl" from B.2 scope temporarily.** If B.1 has lifecycle bugs in the minimal label, B.2's polished overlay will inherit them. Fix the lifecycle first, then add polish.
+
+---
+
+## 8. Minor / nits
+
+- **Spec says "Returns false on null original — Harmony handles the class-level Prepare check by passing original=null; we MUST return true on null per Plan A's gotcha note."** This is confusing. The comment should clarify: Harmony calls `Prepare` with `original=null` to check if the class exists; returning `true` from a null check tells Harmony "apply this patch class even if the target method doesn't exist yet" (which is wrong for a required patch). Should return `false` on null to skip the patch.
+
+- **The sequence diagram shows `option.Chosen()` running asynchronously but doesn't show when it completes relative to `_voteInProgress = 0`.** This timing is the source of the player-click race. Add a note in the diagram or spec text.
+
+- **The spec mentions "B.2's settings UI adds re-auth without restart" but B.2 is already planning 4 more patches + settings UI.** This is scope creep risk. Flag as a B.2 decision, not a B.1 commitment.
+
+- **`ModSettings.GetSettingsPath()` returns "expected platform-specific path (one test per OS would be nice but not blocking)".** The test should actually exist — it's a one-liner that verifies `Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)` is in the path.
+
+- **The JSON sample shows "surfinite" as channel but the spec accepts multiple formats.** Add a test for `https://twitch.tv/surfinite` being normalized to `surfinite`.
+
+---
+
+## 9. Assumptions you're making
+
+1. **I assume `NEventRoom` is the actual parent node that gets freed when the player leaves the event room.** If the game uses a different node hierarchy (e.g., a separate CanvasLayer for events), the VoteTallyLabel might not be freed automatically. The spec should verify this via decompile or runtime inspection.
+
+2. **I assume `EventOption.Title.GetRawText()` returns plain text without BBCode.** If it returns already-formatted strings with `[color]` or other tags, `Label` will display the raw tags. Using `RichTextLabel` mitigates this but needs verification.
+
+3. **I assume `VoteSession.Tallies` is thread-safe for read access from `_Process`.** The spec says events fire on the dispatcher thread, but `_Process` runs on the main thread. If `Tallies` is a regular `Dictionary` without synchronization, concurrent read (main thread) / write (dispatcher thread) is a race. The spec should verify `VoteSession` uses proper synchronization or that the dispatcher always delivers on the same thread that runs `_Process`.
+
+4. **I assume the Godot version in use has stable `CallDeferred` behavior.** The spec uses `dispatcher.Post` which wraps `CallDeferred`. If Godot 4.5.1 changes this behavior (e.g., adds frame delay guarantees), the timing assumptions hold.
+
+5. **I assume the smoke's deadlock was specifically caused by blocking on `AwaitWinnerAsync` from a Harmony prefix, not by something else in the chain.** If the deadlock had a different root cause, the suspend-and-resume pattern might be overkill.
+
+---
+
+## Summary
+
+The spec correctly captures the architectural constraints from the smoke and establishes a clean scope for B.1. The primary risks are:
+
+1. **VoteTallyLabel lifecycle bug** (double-free) — must fix before ship
+2. **Polling in _Process** should be event-driven — should fix before ship  
+3. **Missing multiplayer validation** — should add to acceptance gate
+4. **Player-click race during resume** — acknowledged sharp edge, deferrable to B.2 but needs monitoring
+
+The IRC client design is sound, the patch pattern is correct, and the failure modes are well-handled. With the lifecycle fixes above, B.1 is shippable.

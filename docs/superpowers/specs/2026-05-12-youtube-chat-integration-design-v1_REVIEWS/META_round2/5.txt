@@ -1,0 +1,38 @@
+Genuinely impressed by what landed in v3 — this is a substantively better spec, and from my angle it's implementation-ready.
+
+**Where my P1/P2 concerns went:**
+
+- **P1 #1 (gate routing)** → Must-do #1 with `GetChildState(name)` accessor and the explicit B.2.1 amendment update. Exactly what was needed.
+- **P1 #2 (aggregate fall-through)** → Must-do #3 with the explicit `Disposed > AuthenticationFailed > JoinFailed > Disconnected` ranking + Warn log on mixed-terminal. Clean.
+- **P2 #1 (typo escalation)** → C2/Decision 7 with the 30-cycle counter, one-shot per burst, reset on reconnect. Exactly addresses the UX gap without re-introducing the 404-shape heuristic the spec rightly rejected.
+- **P2 #2 (429 backoff)** → Must-do #7 with `Retry-After` honoring + 60→120→240→480→600s cap + reset on 2xx. The carve-out is appropriately narrow.
+- **P2 #3 (Noita pattern)** → C3/Decision 11. The vote-nonce approach is the right shape and the "supersedes notes/06 alternating-numbers because Skip Gang" framing is the correct rationale. The Noita-pattern regression analysis section is the kind of artefact that justifies its own existence.
+- **P2 #4 (IChatConsumer split)** → Must-do #2. The `event ... IChatConsumer.ConnectionStateChanged { add { } remove { } }` no-op implementation on MultiChatService is a small smell (see below) but the overall split is correct.
+- **P3s** all applied: aggregate event dropped, debounce raised to 120s, LastError returns null.
+
+**Two things I missed in v1 that other reviewers caught — worth acknowledging:**
+
+1. **EU consent redirect (Must-do #5)** is genuinely critical and I missed it entirely. Pre-setting `CONSENT=YES+cb` is the right fix. The HTTP client lifecycle section is now well-specified.
+2. **TalliesByPlatform gating on configuration vs observation (Must-do #4)** — the mid-vote UI snap from single-line to split-line is real and I missed it. The `IsMultiPlatformConfigured` flag at construction time is the right shape.
+
+**Small new things I noticed in v3 specifically:**
+
+- **The escalation receipt routing mechanism is left ambiguous** (`§"30-failure escalation receipt"`): "exposes an event `EscalationRequested` (or just calls `ModEntry.SendEscalationReceipt()` via a static facade)." Pin the event-based version; static facade couples YouTubeChatService to ModEntry's surface and undermines TI extractability. Trivial decision, just nail it.
+
+- **MultiChatService constructor's lambda subscriptions are never unsubscribed.** `child.ConnectionStateChanged += (s, e) => OnChildConnectionStateChanged(name, s, e);` captures `name` but there's no matching `-=` in Dispose. If a child is ever shared across multiple aggregators (won't happen in v1, but the TI-extraction story suggests futures where it might), the closure keeps the multi alive past Dispose. Spec-level cleanliness; either unsubscribe in Dispose or document the ownership assumption.
+
+- **`_consecutive429Count` reset condition is slightly ambiguous.** "Reset on next 2xx" — but a 2xx `get_live_chat` response with no continuation also goes to Reconnecting (broadcast-ended). Should that reset the 429 counter? Probably yes (the rate-limit pressure is over) but the spec's English is loose. Pin "reset on any 2xx response, not just on ConnectedReadOnly transition."
+
+- **`IsMultiPlatformConfigured` derivation contradiction.** Spec text says VoteCoordinator "derives" it from the MultiChatService; ModEntry code passes it explicitly as a constructor param. Pick one — explicit-param is cleaner (the coordinator doesn't need to know about MultiChatService's internals).
+
+- **TI extraction modularity section slightly oversells "strippability."** Deleting `Ti/Chat/YouTubeChat/` leaves `ChatPlatformNames.YouTube` orphaned, `VoteSession.PlatformOf` checking a never-encountered prefix, and `VoteTallyLabel.PlatformDisplayOrder` with a dead entry. All harmless at runtime; none clean. A future porter doing the extraction will want a quick cleanup pass. Either move `ChatPlatformNames.YouTube` into the YouTubeChat folder (as the section already mentions as an option — just commit) or add a one-line "post-strip cleanup" item to the section.
+
+- **`Vote [42]:` syntax in receipts** — minor UX concern. Most chat viewers won't know what the bracketed number means; the streamer needs to explain or it just looks like a glitch. Spec mentions verbal encouragement for `!NN` syntax but not for `[NN]` itself. Consider one-time receipt at vote-mode start that explains: `Tip: append "!42" to vote in vote 42 specifically (helps stream-delayed viewers).`
+
+- **Initial-poll backlog suppression drops some genuinely-new messages.** Spec acknowledges this. Worth flagging in Failure modes table — magnitude is ~1–3% of votes depending on page-load-to-first-poll gap. Operator validation could measure.
+
+None of those are blockers. The C5 drop (no startup discoverability receipt) plus the `[42]:` ambiguity together mean YT viewers still have a slightly worse onboarding than Twitch viewers, but that's acceptable v1 territory and the streamer compensates verbally.
+
+**Recommendation**: go to `writing-plans`. The remaining items are implementation-time decisions or operator-validation measurements, not design-time blockers. The spec has earned its way to plan generation.
+
+One housekeeping note: v3's status line says "implementation-ready pending the round-2 meta-review the user mentioned will happen with corrected v3 docs." If that round-2 review is still happening, the items above are worth feeding into it; if not, they're plan-time concerns.

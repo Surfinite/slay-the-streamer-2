@@ -1,0 +1,80 @@
+Thanks — I’ve read the context document and spec. Below is concise, specific, and actionable feedback that maps to sections in the spec and shows where the spec author should look in code (or ask the implementer) to validate.
+
+One-line verdict
+The spec is thorough and coherent but contains avoidable duplication, unresolved run-id details, and several omissions that should be tightened before merging to main.
+
+What’s good (keep as-is)
+- Vote-on-click model, multi-message linear receipts, and two-flag re-entry guard (B.1 pattern) are solid — reuse exactly.
+- Selector logic (card list extraction from NCardRewardSelectionScreen._options and run/act indexing) is well described and follows the code map.
+- Fail-open semantics and “degrade to vanilla” philosophy are consistent with B.1 and low-risk for a solo mod.
+- Explicitly not patching NRewardsScreen.OnProceedButtonPressed and leaning on DisallowSkipping() reduces patch surface — keep.
+- Separate per-act and per-run skip budgets are sensible and aligned with intended UX.
+
+Concerns & risks (ranked by severity)
+1) Run-ID naming/type is underspecified (blocker for resume correctness).
+   - Spec says “verify in Prepare” but doesn’t specify the field name, type, or where to read it at runtime. If wrong, run-id guard silently fails and the guard becomes ineffective.
+   - Action: identify exact RuntimeState property or field that gives a stable unique run ID (likely `RunManager.Instance.DebugOnlyGetState()?.Id` or similar). Verify shape in `CardRewardVotePatch.Prepare` and store in a static `_runIdType` field; advertise type/accessor in spec.
+
+2) RewardSkippedFrom(Control) matching is fragile.
+   - Reflection on `_rewardButtons` must include exact field name and element type; if it changed in the game version targeted, the entire skip gate fails open.
+   - Action: add a `Prepare` that stores `FieldInfo _rewardButtons` and a method `static IEnumerable<Control> GetRewardButtons(NRewardsScreen)`. If shapes mismatch, log and skip gate open (fail-open). Add unit tests using a fake screen mock to verify the reflection result.
+
+3) Act change detection timing is not deterministic.
+   - Spec notes act-index discovery may be “lazy (one frame off)”. That means skip budget reset may lag one rewards screen. If streamer changes act and immediately attempts a skip, the budget may appear stale.
+   - Action: define explicit rule (e.g., on _Ready, resolve current act index once and cache). Document whether index is `Acts.Count - 1` or a dedicated property. Add tests asserting reset behavior matches chosen rule.
+
+4) No explicit nullability discipline for static state.
+   - Static `_activeLabel` and `_lastSeenRunId` should be null when no screen active. If reused across runs without reset, stale values can mis-gate.
+   - Action: add `Requires` assertion or explicit null checks in every consumer (e.g., `UpdateText` should early-return if label is null). Add tests that simulate run change → label recreated.
+
+5) Receipt format relies on EnglishReceipts contract.
+   - `EnglishReceipts` may not accept a 4-parameter skip receipt signature. If receipt format mismatches, the mod either throws or silently omits receipts.
+   - Action: add a `SkipReceipt(int actUsed, int actLimit, int runUsed, int runLimit)` helper to `EnglishReceipts` (or a local format string in the patch). Verify via reflection that receipts render legible strings.
+
+Suggested changes (specific and actionable)
+- Rename/alias the run ID field in VotePatch.ResumeOnMainThread to a precise static type (e.g., `Guid` or `int` per inspect). Write Prepare validation to require that exact shape; if absent, skip patch registration.
+- Add explicit rule: If run ID changes between vote start and resume, abort resume and log Info (already described; enforce in code by comparing the resolved run ID at resume against `_runIdType` saved value).
+- In `CardRewardSkipGatePatch`, add a Prepare step that caches:
+  - `FieldInfo _rewardButtons`
+  - `MethodInfo get_Buttons` or similar to enumerate buttons
+  If Prepare fails, set a static skip-gate-disabled flag to skip the gate entirely.
+- Add deterministic act-index resolution policy and document it (choose one: Acts.Count - 1 or CurrentActIndex). Add tests that mock the run state to verify act reset works in both policies.
+- Add `CardSkipCounterLabel.SetPosition(...)` called from the gate postfix; if the proceed button node isn’t found, fallback to parent anchored position with a debug log.
+- Add a constructor or factory for `ModSettings` that validates `cardSkipsPerAct` and `cardSkipsPerRun` ranges and emits warnings to TiLog. Ensure JSON serializer tolerates missing keys gracefully.
+- Add localization stub note: add an EnglishReceipts overload for skip receipts (e.g., `string.Format(Localizer["SkipReceiptFmt"], actUsed, actLimit, runUsed, runLimit)`).
+
+Alternatives to consider
+- Early simplification: extract a tiny non-generic `IRewardSkipGate` interface and a single patch class that handles both Neow and Card rewards only when n=2. Keep abstraction minimal and move extraction to B.2.2 where n=3 justifies it.
+- Instead of per-frame label parenting, consider a single persistent HUD element that updates text only when a rewards screen is active (reduces per-screen allocations). Risk: needs careful cleanup to avoid memory leaks.
+
+Additions (must-have)
+- Unit tests for CardRewardSkipGateTests covering:
+  - Act/Run budget enforcement
+  - Reset on act/run change
+  - Reflection failures (missing field → gate disabled)
+  - Skip receipt formatting
+- Integration tests that simulate: vote open → skip → second vote within same act/rerun budget.
+- Nullability and lifetime tests for static state across fake run/act transitions.
+
+Removals
+- Remove any explicit base-class or shared helper proposals until n=3 (B.2.2/2.3). Keep copy-paste-modify pattern for now.
+- Remove speculative settings entries (e.g., vote duration) — out of scope for B.2.1.
+
+Minor / nits
+- Use consistent casing for static fields: `_voteInProgress` / `_resumeInProgress` / `_multiplayerWarnFired` → follow existing B.1 naming (they already use these names; keep).
+- Add XML doc comments to new internal static state explaining concurrency model (Interlocked, volatile reads).
+- Ensure TiLog.Error includes mod prefix “[SlayTheStreamer2]” for easy grep; consider adding TiLog.LogLevel.Info for run-ID mismatch (not just Error).
+
+Assumptions I’m making (to be validated by implementer)
+- Run identifier type and accessor exist and are stable across runtime. If not, the run-ID guard must be a no-op (fail-open) until clarified.
+- `NRewardsScreen._rewardButtons` field name and layout are stable in the targeted game version; if not, the reflection Prepare must fail closed (skip gate off).
+- `RunManager.Instance.DebugOnlyGetState()` is available at patch time and returns a stable object with an Id. If it throws in builds, the skip-gate Prepare should catch and disable.
+- Multiplayer co-op will always bail out (Players.Count > 1) and no extra work needed.
+
+Next steps for implementer
+- Confirm the exact field paths (Run ID; _rewardButtons; _options) in the target assembly and update Prepare checks.
+- Apply the suggested Prepare validations and add missing null guards.
+- Add skip receipt helper to EnglishReceipts and wire the text format.
+- Run the 5-step operator validation (Step 0–5) and fix any failing step before tagging v0.1-pre.
+
+If you want, I can produce the concrete reflection snippets for `Prepare` and the exact receipt format string with the TiLog prefix, given the confirmed field names from the decompiled source.

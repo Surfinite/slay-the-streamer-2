@@ -1,0 +1,659 @@
+## 1. One-line verdict
+
+Strong vertical-slice spec with the right overall architecture, but it needs a few must-fix changes around Twitch rate limits, Neow resume/fallback safety, stale room/option lifecycle, and UI/session cleanup before implementation.
+
+---
+
+## 2. What’s good
+
+- **The vertical slice is well chosen.** Neow is the right first vote: bounded option count, early in a run, no skip, no stacking, and it exercises the full chain from Twitch IRC → vote coordinator → Godot dispatcher → Harmony re-entry → game-state mutation.
+
+- **The suspend-and-resume constraint is correctly treated as non-negotiable.** The spec clearly internalizes the smoke-test result and avoids the blocking-prefix-await trap.
+
+- **Rejecting `EventOption.Chosen()` as the patch target is correct.** Because the game calls it through `TaskHelper.RunSafely(...)`, extending its `Task` would not suspend the game. `NEventRoom.OptionButtonClicked(...)` is the better vertical-slice seam.
+
+- **The two-flag re-entry guard is materially better than the single-flag design.** `_voteInProgress` for suppression plus `_resumeInProgress` for the intentional re-entry is the right shape.
+
+- **The TI/Game seam is preserved.** Keeping `TwitchIrcChatService` in `Ti/Chat`, `VoteTallyLabel` in `Ti/Ui`, and StS2-specific reflection/Harmony in `Game/*` is clean and important for later extraction.
+
+- **Failure-mode thinking is unusually thorough.** Missing config, malformed config, bad OAuth, network disconnect, mid-vote disconnect, and streamer escape are all at least acknowledged.
+
+- **Operator validation is appropriate for this stage.** Real Twitch + real StS2 + real Harmony validation is necessary here; unit tests alone cannot prove this slice.
+
+---
+
+## 3. Concerns & risks, ranked by severity
+
+### 1. Must fix: Twitch rate limit in the spec appears wrong / stale
+
+The spec repeatedly says the queue enforces Twitch’s `90/30s` send limit. Current Twitch developer docs indicate normal accounts are limited to:
+
+- **20 messages per 30 seconds** if the bot is not the broadcaster/mod/VIP.
+- **100 messages per 30 seconds** if broadcaster/mod/VIP.
+- **1 message per second per channel** for non-broadcaster/mod/VIP accounts.
+
+If Plan A’s `OutgoingMessageQueue` is hard-coded to `90/30s`, an ordinary bot account can get messages silently dropped or muted for an hour. That is not a theoretical edge case; early testers will often use an unprivileged bot account.
+
+Action: update the B.1 spec to either:
+
+1. use a conservative default of **20/30s plus 1/sec/channel**, or  
+2. explicitly require the bot account to be broadcaster/mod/VIP and document that requirement in the JSON setup instructions, or  
+3. make the rate limit configurable in `ChatSettings` with a conservative default.
+
+For v0.1, I recommend conservative default. The vote receipt volume is low enough that 20/30s is fine.
+
+Also update the spec’s security/setup language to say the token needs Twitch chat scopes, specifically `chat:read` and `chat:write`.
+
+---
+
+### 2. Must fix: `HandleVoteAsync` outer catch currently loses the player’s click
+
+The failure-mode table says if `Voter.Default.Start` throws, the player’s click is lost and they must re-click. That is avoidable and should not be accepted in B.1.
+
+Because the prefix already returned `false`, vanilla behavior is suspended. If the async handler fails before a vote is established, the safe fallback should be:
+
+- log the error,
+- post a resume action,
+- set `_resumeInProgress = 1`,
+- call `room.OptionButtonClicked(options[playerClickIndex], playerClickIndex)`,
+- clear both flags.
+
+In other words, “fail soft to vanilla” should apply here too. Losing the click creates an unnecessary weird UX and complicates operator testing.
+
+Suggested spec change:
+
+- In the outer `catch` of `HandleVoteAsync`, do not merely reset `_voteInProgress`.
+- Instead, attempt to resume with `playerClickIndex` if the room/options are still valid.
+- Only reset without resume if the room has been freed/invalidated.
+
+---
+
+### 3. Must fix: the patch should snapshot options on the main thread, not keep a potentially live `CurrentOptions` list
+
+The sample does:
+
+```csharp
+var allOptions = GetCurrentOptions(__instance);
+```
+
+and later passes that list into `HandleVoteAsync`.
+
+If `CurrentOptions` is a mutable list owned by the event model, you should immediately freeze it:
+
+```csharp
+var allOptions = GetCurrentOptions(__instance)?.ToList();
+```
+
+Then use that immutable snapshot for labels and bounds.
+
+Even better: snapshot a small record on the main thread:
+
+```csharp
+private sealed record OptionSnapshot(
+    int Index,
+    EventOption Option,
+    string Label
+);
+```
+
+This avoids repeatedly touching StS2 model objects from the background continuation. The actual resume call still happens on the main thread.
+
+---
+
+### 4. Must fix: resume should validate that the room/event/options are still current
+
+The spec acknowledges streamer escape as a sharp edge, but the current resume action blindly calls:
+
+```csharp
+room.OptionButtonClicked(options[winnerIndex], winnerIndex);
+```
+
+That can invoke a stale `NEventRoom`, stale `EventOption`, or wrong event state.
+
+For B.1, you do not need full elegant cancellation, but you should add a cheap resume-time guard:
+
+- Is the Godot `room` instance still valid?
+- Is the current event still `Neow`?
+- Is `CurrentOptions.Count` still compatible?
+- Is the winning index still in range?
+- Ideally, use the **current** option at `winnerIndex`, not the stale `EventOption` object, if the event is still the same.
+
+Suggested resume shape:
+
+```csharp
+ModEntry.Dispatcher.Post(() => {
+    Interlocked.Exchange(ref _resumeInProgress, 1);
+    try {
+        if (!IsRoomStillValid(room) || !IsNeowEvent(room)) {
+            TiLog.Warn("[neow-vote] room/event no longer valid; dropping resume");
+            return;
+        }
+
+        var currentOptions = GetCurrentOptions(room)?.ToList();
+        if (currentOptions is null || winnerIndex < 0 || winnerIndex >= currentOptions.Count) {
+            TiLog.Warn("[neow-vote] options changed; falling back/dropping resume");
+            return;
+        }
+
+        room.OptionButtonClicked(currentOptions[winnerIndex], winnerIndex);
+    } finally {
+        Interlocked.Exchange(ref _resumeInProgress, 0);
+        Interlocked.Exchange(ref _voteInProgress, 0);
+    }
+});
+```
+
+This turns the known escape sharp edge from “may throw inside StS2” into “logs and safely drops.”
+
+---
+
+### 5. Must fix: the two-flag guard is global, not per-room/per-run
+
+For B.1’s single Neow vote this is probably okay, but the spec should explicitly say this is acceptable only because:
+
+- v0.1 is single-player,
+- only one Neow event vote exists in B.1,
+- `VoteCoordinator` also allows only one open session.
+
+For B.2, a global static `_voteInProgress` will not scale cleanly across different vote patches unless you centralize it. If each patch gets its own static flag, two different vote surfaces could open overlapping sessions and fight `VoteCoordinator.Start`.
+
+Suggested B.1 addition:
+
+- Add a note: “B.1 uses a patch-local static guard because only Neow is implemented. B.2 should introduce a shared `DecisionVoteGate` or rely on `VoteCoordinator` plus per-surface state to avoid duplicated guard logic.”
+
+---
+
+### 6. Must fix: `Chat.IsConnected` is probably not the right gate
+
+The prefix currently gates on:
+
+```csharp
+if (!Voter.Default.Chat.IsConnected) return true;
+```
+
+But the spec also requires anonymous read-only mode where:
+
+- `IsConnected == true`,
+- `CanSend == false`,
+- state is `ConnectedReadOnly`.
+
+For B.1, the streamer-facing demo requires receipts and the “connected” message. Opening a vote when the bot cannot send chat prompts is a bad demo experience.
+
+Suggested B.1 gate:
+
+```csharp
+if (Voter.Default.Chat.State is not ChatConnectionState.ConnectedReadWrite) {
+    return true;
+}
+```
+
+or:
+
+```csharp
+if (!Voter.Default.Chat.IsConnected || !Voter.Default.Chat.CanSend) {
+    return true;
+}
+```
+
+If you want read-only voting later, make that an explicit policy decision, not an accidental consequence of `IsConnected`.
+
+---
+
+### 7. Must fix: Twitch JOIN failure handling is underspecified
+
+The spec says “channel doesn’t exist / mod is banned → `JoinFailed` terminal.” Twitch docs say a nonexistent channel may quietly drop the `JOIN` rather than send a clean failure notice.
+
+So `TwitchIrcChatService` needs a join/auth timeout:
+
+- after sending `JOIN #channel`,
+- wait for one of `ROOMSTATE`, `USERSTATE`, numeric `353`, or other accepted join confirmation,
+- if nothing arrives within e.g. 10–15s, transition to `JoinFailed` or retry depending on classification.
+
+Without this, nonexistent-channel or dropped-JOIN cases can hang in `Connecting` forever.
+
+Add unit tests:
+
+- `JoinConfirmationTimeoutTransitionsToJoinFailed`
+- `SuspendedChannelNoticeTransitionsToJoinFailed`
+- `BannedNoticeTransitionsToJoinFailed`
+- maybe `NonexistentChannelQuietJoinDropTimesOut`
+
+---
+
+### 8. Should fix: `VoteTallyLabel` lifecycle can leak or call into freed Godot objects
+
+Current `AttachTo` subscribes:
+
+```csharp
+session.Closed += (_, _) => label.QueueFree();
+session.Cancelled += (_, _) => label.QueueFree();
+```
+
+Problems:
+
+- If the parent room is freed before the session closes, the label may already be freed.
+- The event handler closure keeps a reference to the label.
+- On session close, calling `QueueFree()` on a freed/disposed Godot object may error.
+- There is no unsubscribe path.
+
+Suggested implementation:
+
+- Store handlers as fields.
+- Unsubscribe in `_ExitTree`.
+- Guard with `GodotObject.IsInstanceValid(this)` and `!IsQueuedForDeletion()` if available.
+- Use `CallDeferred(Node.MethodName.QueueFree)` or dispatcher-posted free if there is any chance session events can fire off-main-thread.
+
+Even if Plan A guarantees session events fire on the dispatcher thread, defensive UI cleanup is worth it.
+
+---
+
+### 9. Should fix: `ModEntry.Dispatcher` should not be a public mutable field
+
+For B.1, a static access point is fine. A public mutable field is looser than necessary.
+
+Prefer:
+
+```csharp
+public static IMainThreadDispatcher Dispatcher { get; private set; } = null!;
+```
+
+or, if the patch needs the concrete Godot dispatcher:
+
+```csharp
+public static GodotMainThreadDispatcher Dispatcher { get; private set; } = null!;
+```
+
+Even better:
+
+```csharp
+internal static ModServices Services { get; private set; } = null!;
+```
+
+with:
+
+```csharp
+internal sealed record ModServices(
+    IMainThreadDispatcher Dispatcher,
+    VoteCoordinator? Voter,
+    TwitchIrcChatService? Chat
+);
+```
+
+But for B.1, a get-only static property is enough.
+
+---
+
+### 10. Should fix: `TwitchIrcChatService` state machine test depth should include more nasty lifecycle cases
+
+The proposed tests are good, but I would add:
+
+- CAP ACK path.
+- CAP NAK fallback path.
+- JOIN timeout path.
+- `Disconnect` while connecting does not reconnect.
+- `Disconnect` while reconnect delay is pending cancels the retry.
+- `Dispose` during reconnect delay cancels the timer/task.
+- Send attempted while disconnected fails predictably.
+- Send queue stops/drains on disconnect/dispose.
+- Reconnect creates fresh read/write loops and does not leave the old writer alive.
+- PING is handled even before full join confirmation.
+- `NOTICE` auth failure is recognized by `msg-id` when tags are enabled, not only by localized text.
+
+Operator-validating real TLS is acceptable for B.1; I would not build a full mock IRC server yet. But the fake transport tests need to cover cancellation/reconnect lifecycle thoroughly.
+
+---
+
+### 11. Should fix: use current Twitch documentation language around IRC
+
+Current Twitch docs frame EventSub/API as preferred for full chat functionality, with IRC still available but limited. That does not mean B.1 should switch to EventSub — IRC is still the right choice for this mod — but the spec should not imply IRC is the only or permanently preferred integration.
+
+Add a note:
+
+- “B.1 intentionally uses Twitch IRC because it is simple, socket-based, and sufficient for chat voting. EventSub/API is out of scope for v0.1.”
+
+This protects against future reviewer churn.
+
+---
+
+## 4. Suggested changes
+
+### A. Update Twitch rate-limit assumptions
+
+Change every reference to `90/30s` to one of:
+
+- conservative `20 messages / 30s` plus `1/sec/channel`, or
+- configurable policy defaulting to conservative.
+
+Also update the Plan A queue assumption if it is actually hard-coded.
+
+Add setup docs saying the OAuth user access token must have:
+
+- `chat:read`
+- `chat:write`
+
+---
+
+### B. Strengthen Neow fallback behavior
+
+Update `HandleVoteAsync`:
+
+- `AwaitWinnerAsync` failure falls back to `playerClickIndex` — already good.
+- outer unexpected exception should also attempt fallback resume with `playerClickIndex`.
+- only drop if the room/event is no longer valid.
+
+This aligns with the stated “fail soft to vanilla” goal.
+
+---
+
+### C. Add resume-time validity checks
+
+Before re-entering `OptionButtonClicked`:
+
+- verify room Godot instance validity,
+- verify still Neow,
+- re-read current options,
+- bounds-check winner index,
+- use current option object by index.
+
+This is cheap and materially reduces crash risk.
+
+---
+
+### D. Freeze option/label snapshots in the prefix
+
+In `Prefix`, change:
+
+```csharp
+var allOptions = GetCurrentOptions(__instance);
+```
+
+to:
+
+```csharp
+var allOptions = GetCurrentOptions(__instance)?.ToList();
+```
+
+Then pass an immutable snapshot to `HandleVoteAsync`.
+
+---
+
+### E. Make the chat readiness gate stricter
+
+For B.1, require read-write connection:
+
+```csharp
+if (Voter.Default.Chat.State is not ChatConnectionState.ConnectedReadWrite) {
+    return true;
+}
+```
+
+or `IsConnected && CanSend`.
+
+---
+
+### F. Add join-confirmation timeout to `TwitchIrcChatService`
+
+The service should not sit in `Connecting` forever if Twitch silently drops the JOIN. Add a timeout and tests.
+
+---
+
+### G. Harden `VoteTallyLabel` cleanup
+
+Add:
+
+- `_ExitTree` unsubscribe,
+- duplicate-label avoidance,
+- `IsQueuedForDeletion` guard,
+- optional deferred free.
+
+---
+
+### H. Make `ModEntry.Dispatcher` a private-set property
+
+Use:
+
+```csharp
+internal static IMainThreadDispatcher Dispatcher { get; private set; } = null!;
+```
+
+unless external assemblies genuinely need it. They should not.
+
+---
+
+### I. Add B.2 warning about guard reuse
+
+Document that B.1’s static two-flag guard is a local pattern, not necessarily copy-pasteable to all future patches without a shared vote gate.
+
+---
+
+## 5. Alternatives
+
+### Alternative 1: Patch `EventSynchronizer.ChooseLocalOption`
+
+This might be a cleaner semantic layer than `NEventRoom.OptionButtonClicked`, especially for future multiplayer-aware work. However, for B.1 I would not switch unless decompile shows it is easy and stable.
+
+Reasons to stay with `OptionButtonClicked` for B.1:
+
+- It has both `EventOption` and `index`.
+- It is directly tied to the UI decision the streamer made.
+- It is already decompile-verified.
+- Multiplayer is explicitly out of scope.
+- It avoids disturbing lower-level synchronization semantics.
+
+Recommendation: keep `OptionButtonClicked` for B.1, but add a B.2/B.3 follow-up to reassess `EventSynchronizer` before implementing broader event-style votes.
+
+---
+
+### Alternative 2: Start the vote synchronously in the prefix
+
+Instead of calling `Voter.Default.Start(...)` inside `HandleVoteAsync`, the prefix could synchronously create the session before returning `false`. Then if `Start` throws, the prefix can return `true` and vanilla behavior proceeds.
+
+Shape:
+
+```csharp
+VoteSession session;
+try {
+    session = Voter.Default.Start(...);
+} catch {
+    ResetFlag();
+    return true;
+}
+
+_ = HandleVoteAsync(room, options, playerClickIndex, session);
+return false;
+```
+
+This is attractive because it narrows the “returned false but failed to open vote” window.
+
+Downside: more code in the prefix and more main-thread work before returning.
+
+I think this is worth considering. Starting a `VoteSession` should be cheap and non-blocking. It may be the cleanest way to preserve fail-open semantics.
+
+---
+
+### Alternative 3: Introduce `DecisionVoteGate` now
+
+Instead of local `_voteInProgress` / `_resumeInProgress` flags, create a small `Game/DecisionVotes/DecisionVoteGate.cs` now and reuse it in B.2.
+
+Pros:
+
+- avoids duplicated, slightly different flag logic across patches,
+- centralizes logging and fallback behavior,
+- helps with “only one vote at a time” policy.
+
+Cons:
+
+- adds abstraction before the second patch exists,
+- could overfit B.1.
+
+Recommendation: not required for B.1, but document as B.2 cleanup before adding four more patches.
+
+---
+
+### Alternative 4: Use a local fake IRC server
+
+A local fake IRC server would validate stream/framing/handshake closer to production than an injected fake transport.
+
+I do **not** recommend this for B.1 unless the service proves flaky. The internal transport seam plus real Twitch operator validation is enough for this vertical slice.
+
+---
+
+## 6. Additions
+
+Add these to the spec.
+
+### A. Twitch setup requirements
+
+Under `ModSettings` / JSON shape:
+
+- token must be a Twitch user access token,
+- token must have `chat:read` and `chat:write`,
+- username must match the token owner,
+- recommend making the bot account a moderator/VIP/broadcaster or use conservative rate limit.
+
+---
+
+### B. Join timeout behavior
+
+Under `TwitchIrcChatService`:
+
+- define what counts as successful join,
+- define timeout duration,
+- define terminal vs retry behavior.
+
+---
+
+### C. Resume validation helper
+
+Add explicit helper stubs:
+
+```csharp
+private static bool TryGetCurrentNeowOptions(
+    NEventRoom room,
+    [NotNullWhen(true)] out IReadOnlyList<EventOption>? options
+);
+```
+
+and:
+
+```csharp
+private static bool IsRoomValid(NEventRoom room);
+```
+
+The spec currently defers this too much. It should state the safety checks.
+
+---
+
+### D. UI lifecycle details
+
+Add to `VoteTallyLabel`:
+
+- unsubscribe from session events in `_ExitTree`,
+- no duplicate labels,
+- safe queue-free guard.
+
+---
+
+### E. More unit tests
+
+Add tests for:
+
+- CAP NAK fallback,
+- join timeout,
+- disconnect while reconnecting,
+- dispose while reconnecting,
+- `SendMessageAsync` when disconnected/read-only,
+- queue cancellation on dispose,
+- no stale reconnect after terminal auth failure.
+
+---
+
+### F. Operator validation: repeat-click and escape
+
+The operator validation already mentions repeat-clicks. Make it an explicit checkbox.
+
+Add a non-blocking validation for escape:
+
+- start Neow vote,
+- escape/back out if the game allows,
+- verify no crash,
+- verify log warns and vote/session cleans up or resume safely drops.
+
+If escape is truly deferred, the acceptance criterion can be “does not crash,” not “perfect UX.”
+
+---
+
+## 7. Removals
+
+### A. Remove or soften “Channel doesn’t exist → JoinFailed” unless timeout is implemented
+
+Because Twitch may silently drop nonexistent-channel JOINs, this should become:
+
+> Channel banned/suspended notices transition to `JoinFailed`; nonexistent or silently dropped JOIN transitions to `JoinFailed` after join-confirmation timeout.
+
+---
+
+### B. Remove acceptance dependency on “close receipt notes disconnect gap” if Plan A does not already implement it
+
+The failure-mode table says the close receipt notes the disconnect gap. If Plan A already does this, fine. If not, don’t accidentally add new receipt-policy work to B.1. For B.1, it is enough that:
+
+- vote completes,
+- reconnect happens,
+- no crash,
+- votes after reconnect tally.
+
+The disconnect-gap receipt is nice, but not necessary for the vertical slice unless already built.
+
+---
+
+### C. Remove “production full state machine” phrasing if you want to protect scope
+
+The spec says B.1 ships the “production” Twitch IRC service with full state machine. That may be right, but it is also the biggest scope risk. If you want to keep B.1 small, call it:
+
+> production-intended v0.1 IRC implementation
+
+and define the exact required matrix. Avoid leaving “full” as an expandable mandate.
+
+---
+
+## 8. Minor / nits
+
+- `Prepare(MethodBase? original)` comment says “Returns false on null original” but code returns `true` on null. The body is correct; fix the wording.
+
+- `option.Title.GetRawText()` may produce long strings. Add `AutowrapMode` / clipping / minimum size to `VoteTallyLabel`.
+
+- `VoteTallyLabel.AttachTo(room, session)` should probably call `SetProcess(true)` explicitly if needed.
+
+- If using `RichTextLabel`, disable BBCode unless you intentionally support it. Raw localization strings with brackets could render weirdly.
+
+- The “connected” chat receipt should probably be sent once per process or once per successful fresh connect, not on every reconnect flap. The current state-change condition may spam if the network flaps. Consider a `_sentConnectedReceipt` bool or change reconnection receipts to log-only.
+
+- Consider logging the normalized channel but never the username/token together in auth failure paths.
+
+- If `ChatCredentials` stores bare token, make sure `TiLog` also scrubs bare tokens if they can appear in exceptions. Scrubbing only `oauth:[a-z0-9]+` may miss a bare token from JSON parse/logging. Better never log token values at all.
+
+- The multiplayer bail-out should be one-time throttled or debug-level after the first warning, otherwise repeated clicks in co-op could spam Warn logs.
+
+- `Voter.Default` should be cleared on disposal/shutdown if there is any mod reload path.
+
+- The spec estimates `TwitchIrcChatService` at ~600 LOC. That may be optimistic for TLS + reconnect + queue + terminal states + tests. Not a problem, but don’t force it into one giant file if helper classes make it clearer.
+
+---
+
+## 9. Assumptions I’m making
+
+- I have not read the actual codebase, only the provided spec/context.
+
+- I assume `VoteCoordinator.Start(...)` can throw synchronously if a session is already open, because the context says it throws when one is already open.
+
+- I assume `VoteSession` events are intended to fire on the Godot dispatcher thread, per Plan A’s guarantees.
+
+- I assume Godot C# object validity checks like `GodotObject.IsInstanceValid(...)` or equivalent are available in your Godot version.
+
+- I assume `NEventRoom.OptionButtonClicked(...)` can be safely re-entered from a `CallDeferred`/dispatcher action on the main thread, based on Smoke B and the spec’s decompile evidence.
+
+- I assume the current `OutgoingMessageQueue` may actually be configured around the spec’s stated `90/30s` limit. If it is already configurable or conservative, the rate-limit concern becomes a documentation fix rather than an implementation fix.
+
+- I assume B.1 does not need to support multiple simultaneous runs/rooms/multiplayer, so a static patch-local guard is acceptable for this slice.
+
+- I assume Twitch IRC remains acceptable for v0.1 despite Twitch docs preferring EventSub/API for fuller chatbot functionality. For this mod’s single-channel, low-volume voting use case, IRC is still a reasonable implementation choice.

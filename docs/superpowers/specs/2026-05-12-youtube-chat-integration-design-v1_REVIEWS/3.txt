@@ -1,0 +1,407 @@
+# Meta-Review: YouTube Chat Parallel Integration (Design v1)
+
+## 1. One-Line Verdict
+
+A well-reasoned, architecturally clean spec that makes the right big calls (aggregator pattern, `"yt:"` prefix, parallel side-dict, scraper isolation, degrade-never-crash) but has one genuine interface-design smell (`ConnectAsync` throw) and one under-weighted UX risk (YouTube viewers' systematically degraded vote experience from combined lag + Noita-pattern + no receipts) that deserve pre-implementation attention.
+
+---
+
+## 2. What's Good
+
+### Architectural decisions (strong endorsements)
+
+- **`MultiChatService` aggregator pattern (the whole approach).** Wrapping `IChatService` behind another `IChatService` is the right play. `VoteCoordinator` sees nothing; existing Harmony patches see nothing; the entire B.1/B.2.1 surface is undisturbed. This is exactly the kind of seam-oriented design that makes the eventual TI extraction feasible. **Preserve this as-is.**
+
+- **D9 — `"yt:"` prefix on `UserId`.** This is genuinely elegant. Zero schema change, zero collision risk, forward-compatible with future platforms (`"discord:"`, `"kick:"`), and the `PlatformOf` helper is a two-line static method. The alternatives (`Platform` enum field, separate `Platform` property on `ChatMessage`) would all require touching the shared record type. **This is the spec's best single decision.**
+
+- **D7 — "All transient failures → `Reconnecting`, never `JoinFailed`."** For a hobbyist mod this is the right posture. The spec's own justification is correct: distinguishing permanent 404s from transient ones via HTTP response shape is fragile, YouTube's error pages aren't contractually stable, and the cost of getting it wrong (a real streamer's valid channel ID getting blackholed into `JoinFailed` because YouTube served a slightly unusual 404 page) is worse than the cost of the safe failure mode (one Warn log per 60s for a typo'd channel ID). **Do not change this.** Per-section 8 of the context doc, this is flagged as non-negotiable, and I'm affirming it.
+
+- **Parallel per-platform tally side-dict (not a replacement).** Keeping `_tallies` as merged-total for close-receipts and adding `_talliesByPlatform` as a parallel structure for the UI is the right tradeoff. It preserves every B.1 receipt invariant while enabling D10's split rendering. The invariant (per-platform sum == merged total) is trivially testable.
+
+- **Scraper isolation in `Ti/Chat/YouTubeChat/`.** All fragility in one namespace, behind interfaces (`IYouTubeHttp`, `IYouTubeLiveBroadcastDiscovery`, `IYouTubeLiveChatScraper`), with fixture-based tests. When YouTube breaks, nothing outside this namespace needs to know. **This is exactly how you contain external-dependency risk.**
+
+- **Single-child `MultiChatService` for Twitch-only deployments.** One code path, zero overhead, functionally identical to the bare `TwitchIrcChatService`. The spec's "always wire `MultiChatService`" rule is the right call — no `if (youtubeChannelId != null)` branching at the `ModEntry` level for which chat service to construct.
+
+- **Failure-mode table (21 enumerated modes).** Comprehensive, specific, and each has a documented degradation path. This level of defensive enumeration is what separates "works on my machine" from production-ready.
+
+- **The 7-step acceptance gate.** Step 0 (regression), Step 1 (worst-of-both-worlds), Steps 2–5 (happy paths + edge cases), Step 7 (flap suppression). This is a real validation plan, not a checkbox list.
+
+### Smaller things worth noting
+
+- The `timeoutMs` floor/ceiling (1s/10s) is good defensive design against malformed YouTube responses.
+- `_videoId` cleared on reconnect so the next attempt starts from discovery — prevents stale-video-ID poisoning.
+- `CanSend = false` hardcoded on the YT service — honest, simple, unbypassable.
+- The `INNERTUBE_API_KEY` regex living behind a named private method — good for discoverability when it breaks.
+- Missing-renderer-fields → skip message, don't tear down the loop — correct defensive posture.
+
+---
+
+## 3. Concerns & Risks (ranked by severity)
+
+### 🔴 HIGH: `MultiChatService.ConnectAsync` throws `NotSupportedException`
+
+**Section**: Architecture → `MultiChatService` shape
+
+This is the one decision I think the spec gets wrong — or at least the one where the costs are under-weighted.
+
+The problem: `MultiChatService : IChatService` advertises a `ConnectAsync(string channel, ChatCredentials? creds, CancellationToken ct)` method that, if called, throws. Any code that accepts an `IChatService` and treats `ConnectAsync` as callable (which is reasonable — it's on the interface) will break at runtime if handed a `MultiChatService`.
+
+The spec's defense is: "`ModEntry` connects each child directly before constructing the multi, and nothing else calls `ConnectAsync` on the multi." This is true *today* but is a time-bomb for:
+
+1. **Future refactoring.** Someone extracting TI into a base mod, writing a generic `IChatService` wiring helper, sees `ConnectAsync` on the interface and calls it — boom.
+2. **Testing.** A test helper that takes `IChatService` and calls `ConnectAsync` as part of setup will break on the multi.
+3. **Interface contract integrity.** Liskov substitution exists for a reason. An `IChatService` whose `ConnectAsync` throws is not an `IChatService` in the behavioral sense.
+
+**My recommendation**: Don't throw. Instead, make `MultiChatService.ConnectAsync` a no-op that returns `Task.CompletedTask`. The method's documentation can say "child services must be connected before construction; this method is a no-op." This is slightly less honest (you *can* call it, it just does nothing) but it's LSP-compliant and future-safe.
+
+Better alternative if you're willing to touch the interface: split `IChatService` into `IChatConsumer` (MessageReceived, State, IsConnected, CanSend, SendMessageAsync, Disconnect, Dispose) and `IChatService : IChatConsumer` (adds ConnectAsync). Then `MultiChatService : IChatConsumer`. This is the "clean" answer. But I acknowledge it touches the interface, which the spec explicitly avoids. The no-op compromise is the pragmatic middle ground.
+
+Related: the spec says `SendMessageAsync` with zero `CanSend` children returns `Task.FromException<InvalidOperationException>`. Same LSP concern, same fix: return a completed task (or log a warning and return completed task). The caller in `VoteSession.SendReceipt` already catches, so the behavioral difference is nil.
+
+### 🟡 MEDIUM-HIGH: YouTube viewers' systematically degraded vote experience
+
+**Section**: Decisions D2 + D3 + Open Question 5 + notes/06 Noita pattern
+
+The spec acknowledges three separate mechanisms that degrade YouTube viewer experience:
+
+1. **D2** — 2–5s end-to-end YouTube lag means YT viewers have a shorter effective vote window.
+2. **D3** — No receipts on YouTube means YT viewers never see confirmation that their vote was counted or what the result was.
+3. **Noita pattern** (notes/06, flagged in context doc §6) — back-to-back vote numbering collisions mean a viewer typing `#1` for vote N might actually be voting on vote N+1. This is already worse for stream-delayed viewers; YouTube's extra 2–5s lag compounds it.
+
+Individually, each is "acceptable for v1." Together, they create a situation where a YouTube viewer can:
+- Type `#1` during vote N (but it arrives during vote N+1 due to lag)
+- Vote for the wrong option in vote N+1
+- Never see a receipt confirming or correcting this
+- Never know their vote was miscounted
+
+This isn't a hypothetical — it's the expected experience for any YouTube viewer more than ~2s behind the stream.
+
+**My recommendation**: The spec doesn't need to *solve* all of these (per-platform windows are rightfully deferred), but it should include at least ONE mitigation so YouTube isn't a fundamentally broken experience. The cheapest one:
+
+- **Vote-echo on the in-game label for YouTube votes.** When a YouTube vote is received, append a brief suffix to the YouTube tally line for ~3s: `YouTube: 0=1, 1=3, 2=0 ← just voted #1`. This gives the streamer/overlay a visual confirmation that YT votes are arriving, which the streamer can verbally acknowledge. Cost: ~15 LOC in `VoteTallyLabel._Process`.
+
+- **Or: a "last vote" indicator.** Add `LastVoteTimestamp` per platform to `VoteSession`; `VoteTallyLabel` shows a subtle "(active)" marker next to a platform line if votes arrived in the last 5s. Cost: ~10 LOC.
+
+These don't address the Noita pattern or the lag, but they give YouTube viewers *some* feedback loop (via the streamer seeing the label and acknowledging) without requiring receipts on YouTube.
+
+### 🟡 MEDIUM: No special handling for HTTP 429 (rate-limit)
+
+**Section**: YouTubeChatService → Reconnect cadence
+
+The spec's rationale for fixed 60s cadence is: "failure-mode distribution skews toward 'stream isn't live yet', which has no faster-recovery property." This is correct for the "no broadcast" case. But it's wrong for the rate-limit case.
+
+If YouTube rate-limits us (HTTP 429), hammering the same endpoint every 60s is:
+1. Potentially extending the rate-limit window (many rate-limiters use sliding windows; consistent polling resets the window)
+2. Unnecessary server load
+
+**My recommendation**: Carve out a narrow exception for HTTP 429. On 429, switch to a longer backoff (e.g., 5 minutes, or exponential starting at 2 minutes). This is ~10 LOC in the reconnect-armer and doesn't complicate the state machine. The spec already suggests this as a "future polish (v0.2+)" item, but for a feature whose whole risk profile is "don't annoy YouTube," it's cheap enough to do now.
+
+### 🟡 MEDIUM: Receipt burst risk from D8 state-change receipts
+
+**Section**: Decisions D8 + ModEntry wiring
+
+The spec adds up to 3 new receipt types per session (startup extended, YT connected mid-session, YT disconnected mid-session) on top of B.1's existing receipt stream (vote-open, periodic-tally, vote-close, vote-cancelled, skip-used). Under Twitch's 20-msgs-per-30s rate limit, there's a real risk of silent receipt drops during busy periods.
+
+The spec acknowledges this (context doc §6, "Known issues") but doesn't quantify the risk. Let me quantify it:
+
+- Worst case in a dense period: vote closes (1 receipt) + new vote opens immediately (1 receipt) + YT reconnects during the transition (1 receipt) + periodic tally fires (1 receipt) + skip-used fires (1 receipt). That's 5 receipts in ~5s, which is within the rate limit. Add a YT disconnect/reconnect flap (2 more receipts, suppressed by debounce) and we're at 7 — still within limit.
+
+So the risk is lower than I initially thought, but the spec should still **verify receipt delivery** in Step 7 of the acceptance gate, not just verify flap suppression. Add: "Confirm all expected receipts appear in Twitch chat; none dropped."
+
+### 🟢 LOW-MEDIUM: Scraper fragility — "1–2 LOC fix" claim may be optimistic
+
+**Section**: YouTubeLiveChatScraper + Risk concentration
+
+The spec claims that a YouTube redesign requires "1–2 LOC fix + fixture refresh." Based on how `pytchat` and `chat-downloader` have historically broken:
+
+- **Regex for `INNERTUBE_API_KEY`**: YouTube has changed the variable name once (from `INNERTUBE_API_KEY` to `innertubeApiKey` in some page versions) and the surrounding JSON structure. Fix: typically 1–2 LOC (regex update).
+- **JSON path for continuation/messages**: YouTube has restructured the `liveChatRenderer` nesting at least twice in the last 3 years. Fix: typically 5–15 LOC (JSON traversal update).
+- **Endpoint URL**: The `youtubei/v1/live_chat/get_live_chat` path has been stable for years, but the `live_chat` page URL (`youtube.com/live_chat?v=`) has changed. Fix: 1 LOC.
+- **New auth requirements**: YouTube has not yet added auth requirements to the `get_live_chat` endpoint, but if they do, the approach is dead. (Spec acknowledges this worst case.)
+
+The "1–2 LOC" claim is true for the most common breakage (API key regex), but understates the less-common-but-real JSON restructuring case. I'd revise the spec to say "1–15 LOC fix depending on breakage type" — still small, still isolated, but more honest.
+
+### 🟢 LOW: The 30s debounce constant is arbitrary
+
+**Section**: ModEntry wiring → Flap suppression
+
+The spec picks 30s and acknowledges it's arbitrary. Tying it to the reconnect cadence would be more principled: `2 × ReconnectBase = 120s`. This ensures that during normal operation, a YT state change receipt fires at most once per two reconnect cycles, which is conservative but safe.
+
+Alternatively: don't debounce by time, debounce by state-transition. Only fire a receipt when the YT child transitions TO a state it hasn't been in for the last N transitions. This is "debounce by meaningful change" rather than "debounce by clock."
+
+---
+
+## 4. Suggested Changes
+
+### Change 1: `MultiChatService.ConnectAsync` → no-op, not throw
+
+**File**: `src/Chat/MultiChatService.cs`
+**Priority**: Should-fix before implementation
+
+```csharp
+// Current (spec):
+public Task ConnectAsync(...) =>
+    throw new NotSupportedException("...");
+
+// Suggested:
+public Task ConnectAsync(string channel, ChatCredentials? creds = null,
+        CancellationToken ct = default) {
+    // MultiChatService children must be connected before construction.
+    // This method is a no-op for interface compliance.
+    TiLog.Debug("[MultiChatService] ConnectAsync called — no-op; children pre-connected");
+    return Task.CompletedTask;
+}
+```
+
+Same treatment for `SendMessageAsync` with zero `CanSend` children — return completed task, log a warning.
+
+### Change 2: Add YouTube vote-echo to tally label
+
+**File**: `src/Ui/VoteTallyLabel.cs`
+**Priority**: Should-add; addresses biggest UX gap cheaply
+
+When a vote arrives from a platform, track the last-vote timestamp per platform in `VoteSession` (or in the label itself). Append a transient marker to that platform's line for ~3s:
+
+```
+Twitch: 0=1, 1=3, 2=0
+YouTube: 0=0, 1=2, 2=1 ◀ just now
+```
+
+The marker fades after 3s. This gives the streamer a visual heartbeat that YouTube is participating, which they can verbally relay to YouTube chat.
+
+### Change 3: HTTP 429 → longer backoff
+
+**File**: `src/Chat/YouTubeChat/YouTubeChatService.cs`
+**Priority**: Should-add; cheap insurance
+
+In the reconnect arming logic, check if `LastError` is an `HttpRequestException` with a 429 status code. If so, use a 5-minute backoff instead of 60s. The spec's `IYouTubeHttp` abstraction already encapsulates HTTP details; the status code is accessible through it.
+
+### Change 4: Acceptance gate Step 7 — add receipt-delivery verification
+
+**Section**: Acceptance gate → Step 7
+**Priority**: Should-add
+
+Add to Step 7: "Confirm all expected receipts (startup extended, mid-session connect/disconnect) appear in Twitch chat during normal operation; verify no receipts dropped under Twitch rate-limit."
+
+### Change 5: Tie debounce to reconnect cadence or use state-transition debounce
+
+**Section**: ModEntry wiring → Flap suppression
+**Priority**: Nice-to-have; 30s is probably fine in practice
+
+Either:
+- Use `2 × ReconnectBase = 120s` as the debounce window, or
+- Debounce by meaningful state transition: only fire receipt when YT transitions to a state it hasn't been in for the last 2 transitions (i.e., ignore `Reconnecting → Connecting → Reconnecting` jitter)
+
+---
+
+## 5. Alternatives Worth Considering
+
+### Alternative A: `IChatConsumer` / `IChatService` split
+
+Rather than the no-op compromise (Change 1), split the interface:
+
+```csharp
+public interface IChatConsumer {
+    ChatConnectionState State { get; }
+    bool IsConnected { get; }
+    bool CanSend { get; }
+    DateTimeOffset? LastMessageReceivedAt { get; }
+    Exception? LastError { get; }
+    event EventHandler<ChatMessage>? MessageReceived;
+    event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;
+    void Disconnect();
+    Task SendMessageAsync(...);
+    void Dispose();
+}
+
+public interface IChatService : IChatConsumer {
+    Task ConnectAsync(string channel, ChatCredentials? creds = null, CancellationToken ct = default);
+}
+```
+
+Then `MultiChatService : IChatConsumer` and `TwitchIrcChatService : IChatService`. `VoteCoordinator` takes `IChatConsumer`.
+
+**Pros**: Clean, honest, no throw, no no-op.
+**Cons**: Touches the interface (which the spec explicitly avoids). `VoteCoordinator` constructor signature changes (but behaviorally identical). More files changed.
+
+**Verdict**: The right long-term answer, but the spec's "no interface changes" constraint is reasonable. The no-op compromise (Change 1) is the pragmatic v1 answer; the split is the v0.2+ cleanup.
+
+### Alternative B: YouTube vote-window grace period
+
+Instead of adaptive per-platform windows (D2 explicitly rejects these), add a fixed 3s grace period AFTER the vote window closes where late-arriving YouTube votes are still counted but with a Debug log. This doesn't require per-platform timers — just a post-close buffer that checks `VoterKey.StartsWith("yt:")`.
+
+**Pros**: Addresses the YouTube-lag problem without full per-platform windows.
+**Cons**: Complicates close semantics ("the vote is closed, except for YouTube for 3 more seconds"). The in-game label would need to show "closed (finalizing YouTube votes...)" for those 3s.
+
+**Verdict**: Interesting but probably more complexity than justified for v1. Worth noting for v0.2.
+
+### Alternative C: Scraper health-check watchdog
+
+Add a lightweight health-check: if the scraper returns 0 parseable messages for N consecutive polls (e.g., 10 polls over ~20-100s), log a Warn "YouTube scraper may be broken — 0 messages in last N polls" without changing state. This provides earlier diagnostic signal for scraper-shape breakage without false-positive state transitions.
+
+**Pros**: Faster diagnosis when YouTube redesigns mid-session. No state-machine changes.
+**Cons**: Small additional complexity. May false-positive on genuinely dead chats.
+
+**Verdict**: Nice-to-have; easy to add post-v1.
+
+---
+
+## 6. Additions (things missing)
+
+### 6.1 YouTube vote-command discoverability
+
+**Missing**: How do YouTube viewers learn the vote commands?
+
+Twitch viewers get receipts that echo the command format (`Chat chose Bash (#0)`). YouTube viewers get nothing per D3. The in-game label shows tallies but doesn't advertise the command format.
+
+**Suggestion**: Add a single startup receipt (Twitch-only) that mentions YouTube: `YouTube chat: type #0, #1, or #2 to vote. Votes appear on the in-game overlay.` This fires once at startup when YT is configured, priority Low.
+
+### 6.2 Scraper version fingerprint
+
+**Missing**: A way to know which version of the scraper code is running.
+
+When the scraper breaks and a user reports it, the maintainer needs to know if the user has the latest scraper fix.
+
+**Suggestion**: Add a `private const string ScraperVersion = "2026-05-12-v1"` in `YouTubeLiveChatScraper` and log it at Info level when the scraper first successfully parses a page. One line in the logs; zero runtime cost.
+
+### 6.3 `ChatMessage` text truncation for YouTube
+
+YouTube chat messages can be longer than Twitch's. The spec doesn't address whether `ChatMessage.Text` gets truncated. If a YouTube message is 500 characters and contains `#1` buried in the middle, it should still parse. But if it's 5000 characters, storing it in the `ChatMessage` record and passing it through the vote regex is wasteful.
+
+**Suggestion**: Truncate `Text` to 500 characters in the YT child before constructing `ChatMessage`. Document the limit. The vote regex only needs the first ~50 characters anyway.
+
+### 6.4 Explicit `_talliesByPlatform` cleanup on vote close
+
+**Missing**: The spec says `_talliesByPlatform` is populated during voting and `TalliesByPlatform` accessor returns null when only one platform observed. It's not explicit about cleanup when the vote closes/restarts.
+
+**Suggestion**: Add a line in the vote-reset logic: `_talliesByPlatform.Clear(); _observedPlatforms.Clear();` alongside the existing `_tallies.Clear()`. This is probably already implied by "parallel structure" but worth making explicit.
+
+---
+
+## 7. Removals (things that shouldn't be in scope)
+
+Nothing. The spec's scope boundaries ($8 in the context doc) are well-chosen. Every non-goal is correctly identified. I considered suggesting:
+- Removing the `YouTubeChatModels.cs` file (inline the records into the scraper), but the separation is clean and costs nothing.
+- Removing the `ChildConnectionStateChanged` event on `MultiChatService` in favor of `ModEntry` subscribing directly to the YT child, but the spec's approach keeps `ModEntry` coupled only to `MultiChatService`, which is cleaner.
+
+**No removals recommended.**
+
+---
+
+## 8. Minor / Nits
+
+### 8.1 `LastError` on `MultiChatService` — `FirstOrDefault` is lossy
+
+```csharp
+public Exception? LastError => _children.Select(c => c.LastError).FirstOrDefault(x => x is not null);
+```
+
+This returns the first child's error. If Twitch has `LastError = null` and YouTube has `LastError = HttpRequestException`, this returns the YouTube error (correct). But if both have errors, it only returns the first child's error and silently drops the other. For diagnostic purposes, consider logging both or returning an `AggregateException`.
+
+**Severity**: Nit. `LastError` is barely used today; v0.2 polish.
+
+### 8.2 `AggregateState()` — priority table uses "all children" for priorities 5–8
+
+The spec says: "matched by all children for priorities 5–8 (worst-of)." But priority 7 is `Disconnected` and 8 is `Disposed`. If one child is `Disposed` and the other is `Disconnected`, the aggregate is `Disconnected` (not all children in `Disposed`). That means the aggregate state can regress from `Disposed` to `Disconnected` if children dispose at different times — is this intentional? Probably want: "highest priority where at least one child matches, descending, until priority 5+ where ALL children must match."
+
+**Severity**: Nit. Edges of the lifecycle; unlikely to matter in practice.
+
+### 8.3 `VoteTallyLabel` split rendering — platform order
+
+```csharp
+.OrderBy(p => p, StringComparer.Ordinal);   // deterministic: "twitch" before "youtube"
+```
+
+`StringComparer.Ordinal` gives `"twitch" < "youtube"` but it's coincidental (t < y). A future `"kick"` platform would sort before `"twitch"` (k < t). Consider explicit ordering by registration order instead:
+
+```csharp
+var platformOrder = new[] { "twitch", "youtube" };
+var platforms = perPlatform.Keys.Select(k => k.Platform).Distinct()
+    .OrderBy(p => Array.IndexOf(platformOrder, p) is var i && i >= 0 ? i : int.MaxValue);
+```
+
+**Severity**: Nit. Only matters if a third platform is added.
+
+### 8.4 Spec says `_talliesByPlatform` uses `Dictionary<(string, int), int>` — tuple key allocation
+
+Every vote creates a tuple key `(platform, optionIndex)` for dictionary lookup. This allocates. For a mod that processes ~10-100 votes per 30s window, this is negligible. But worth noting in the performance section.
+
+**Severity**: Nit. Not worth optimizing.
+
+### 8.5 "ReceivedAt" uses `_clock.UtcNow`, not YouTube's timestamp
+
+YouTube messages have a `timestampUsec` field. The spec uses `_clock.UtcNow` (local clock) for `ReceivedAt`. This is correct for vote-window purposes (we care about when *we* received it), but the field name `ReceivedAt` is accurate. No change needed; just noting for awareness.
+
+---
+
+## 9. Answers to the Key Questions (from Context §10)
+
+### Q1: D7 — "all transient → Reconnecting" right call?
+
+**Yes.** Affirmed above in §2. Do not change. The spec's own defense is correct.
+
+### Q2: Parallel side-dict on `VoteSession` vs separate collaborator class?
+
+**Side-dict is correct for v1.** The spec's argument (co-located with latest-wins logic, single source of truth for voter changes) is sound. A separate `PerPlatformVoteTally` class would need its own voter-tracking and would have to mirror the latest-wins logic — that's worse than 30 LOC of side-dict. Extract later if it grows.
+
+### Q3: Single fixed 60s cadence vs carve-out for HTTP 429?
+
+**Carve out for 429.** See Change 3 above. The spec's rationale for fixed cadence is correct for the common case (no broadcast), but wrong for rate-limits. A narrow 429 exception is cheap.
+
+### Q4: `MultiChatService.ConnectAsync` throws — smell?
+
+**Yes, it's a smell.** See Concern #1 and Change 1 above. Use no-op, not throw.
+
+### Q5: Aggregate state best-of-children + separate `ChildConnectionStateChanged` event?
+
+**The two-channel event API is fine for v1.** The alternative (aggregate event carrying per-child detail) would require a new event args type and break existing subscribers that expect the current shape. The spec's approach is backward-compatible.
+
+### Q6: 30s debounce — right number?
+
+**Acceptable but arbitrary.** See Change 5. I'd go with 120s (2× reconnect cadence) or state-transition debounce. But 30s is probably fine in practice — the worst case is "two receipts 30s apart during flap," which is not a disaster.
+
+### Q7: Ship before or after B.2.2?
+
+**Architecturally independent; ship order doesn't matter.** B.2.2 is a Harmony patch in `Game/DecisionVotes/`; this is a chat-layer addition in `Ti/Chat/`. They don't touch the same files. Operator-validation overlap is manageable — the only shared surface is "does B.2.2's vote work with the MultiChatService aggregator," which is tested by Step 0 (regression) of this spec's acceptance gate.
+
+That said, **practical sequencing**: if FrostPrime wants this for a specific tournament/event, ship this first. If not, B.2.2 is probably smaller and faster to ship. No architectural preference.
+
+### Q8: Scraper isolation strategy sufficient?
+
+**Yes, with caveat.** See concern #4. The isolation is correct; the "1–2 LOC" claim is slightly optimistic for JSON restructuring cases. The mitigation strategy (fixture refresh → parser update → re-run tests) is sound regardless of fix size.
+
+### Q9: Worst-of-both-worlds mode acceptable?
+
+**Yes, for v1.** Adding a fallback receipt mechanism (file write, log line for OBS) is scope creep for a mode the spec explicitly doesn't optimize for. The in-game label is sufficient feedback for the streamer. If this mode becomes common (unlikely — most streamers will have working Twitch), revisit in v0.2.
+
+### Q10: Fold Noita-pattern fix into this spec?
+
+**No, keep deferred.** The Noita pattern is a pre-existing issue (tracked in notes/06) that this spec exacerbates but doesn't cause. Fixing it properly (vote-session IDs in chat commands? per-vote hashtags?) is a design problem in its own right that deserves its own spec. This spec's Change 2 (vote-echo on label) is a cheap partial mitigation without solving the root cause.
+
+---
+
+## 10. Assumptions I'm Making
+
+1. **`TiLog` sink behavior**: I assume `TiLog.Warn` and `TiLog.Error` are non-throwing and safe to call from any thread. The spec's scraper code logs from Task.Run threads; if `TiLog` has thread-safety issues, that's a bug surface.
+
+2. **`IMainThreadDispatcher.Post`**: I assume this is safe to call from the scraper's poll-loop thread and that it reliably delivers to the Godot main thread. If `Post` can drop messages under load, YT votes could silently disappear.
+
+3. **`ITimerScheduler`**: I assume the spec's `_retryTimer` is backed by `ITimerScheduler` (injected into `YouTubeChatService`), which the spec mentions in the constructor but doesn't explicitly use in the reconnect-arming pseudocode. If the timer fires on a thread-pool thread, the reconnect logic needs to be thread-safe (especially the `_cts` manipulation).
+
+4. **`IYouTubeHttp`**: I assume this wraps `HttpClient` and supports `AllowAutoRedirect = true` for the discovery flow. The spec doesn't define this interface explicitly; I'm inferring its shape from usage.
+
+5. **YouTube's `authorChannelId` availability**: I assume this field is present on all `liveChatTextMessageRenderer` payloads. If YouTube sometimes omits it (e.g., for legacy accounts), the fallback-to-anon-guid in failure mode #17 will create a unique-per-message voter that can vote infinitely — this is a degenerate behavior worth testing.
+
+6. **Godot `RichTextLabel` line count**: The split-rendering adds one extra line per platform. If the label is tightly anchored, it could overflow. The spec mentions this in the anchors section but doesn't specify a maximum line count. I assume the label has room for 1–2 extra lines.
+
+7. **`ModEntry` teardown ordering**: I assume `chat.Dispose()` happens before other teardown that might try to send a final receipt. If teardown ordering is wrong, the multi disposes its children (closing connections) before the final receipt fires — the receipt would fail silently. This is a pre-existing concern, not new to this spec.
+
+---
+
+## Summary
+
+This is a strong v1 spec. The architectural spine (aggregator pattern, prefix-based platform discrimination, parallel side-dict, scraper isolation) is correct and unlikely to need revision. The failure-mode enumeration is thorough. The acceptance gate is real.
+
+The one thing I'd push back on firmly is the `ConnectAsync` throw (Change 1). Everything else (vote-echo on label, 429 backoff, receipt verification, debounce tuning) is "should-add but not blocking."
+
+If I were the spec author, I'd apply Changes 1–4, leave Change 5 as a note, and move to implementation.

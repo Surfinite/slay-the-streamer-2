@@ -28,17 +28,18 @@ In StS2, Neow and the 6 mid-run Ancients are structurally identical: all are `An
 
 The B.1 patch (`NeowBlessingVotePatch`) attaches Harmony to `NEventRoom.OptionButtonClicked` and bails to vanilla unless the active event model is `Neow`. Inheritance research (verified against [`decompiled/sts2/MegaCrit/sts2/Core/Models/Events/*.cs`](../../../decompiled/sts2/MegaCrit/sts2/Core/Models/Events/) on 2026-05-13):
 
-- `Neow`, `Pael`, `Tezcatara`, `Orobas`, `Nonupeipe`, `Tanx`, `Vakuu` all inherit `AncientEventModel`.
+- `Neow`, `Pael`, `Tezcatara`, `Orobas`, `Nonupeipe`, `Tanx`, `Vakuu`, `Darv` all inherit `AncientEventModel`.
 - `DeprecatedAncientEvent` is the only sibling we must exclude (sealed class, intentionally unused).
-- All 6 ancients are stored in the `_event` field on `NEventRoom` exactly like Neow, accessed via the same `_eventField` `FieldInfo` cache.
-- All 6 ancients resolve options via `OptionButtonClicked(EventOption option, int index)` with the identical signature B.1 patches.
+- All 7 mid-run ancients are stored in the `_event` field on `NEventRoom` exactly like Neow, accessed via the same `_eventField` `FieldInfo` cache.
+- All 7 ancients resolve options via `OptionButtonClicked(EventOption option, int index)` with the identical signature B.1 patches.
 
 Act mapping (informational — the patch doesn't care which act):
 - Act 1 (`Underdocks` / `Overgrowth`): Neow only (gated on `NeowEpoch`).
 - Act 2 (`Hive`): Orobas (gated on `OrobasEpoch`), Pael, Tezcatara.
 - Act 3 (`Glory`): Nonupeipe, Tanx, Vakuu.
+- Cross-act (`AllSharedAncients` at [`ModelDb.cs:121`](../../../decompiled/sts2/MegaCrit/sts2/Core/Models/ModelDb.cs#L121)): Darv (gated on `DarvEpoch`). Darv was missed during initial brainstorming research — found during T3 code review on 2026-05-13. Inheritance-based predicate handles it correctly without code changes.
 
-Epoch-based unlock gating is handled at the act level (`GetUnlockedAncients(UnlockState)`). By the time `OptionButtonClicked` fires, the chosen ancient has already passed all unlock + character-pool filters — the patch sees only valid, currently-offered ancients.
+Epoch-based unlock gating is handled at the act level (`GetUnlockedAncients(UnlockState)`) or cross-act (`AllSharedAncients`). By the time `OptionButtonClicked` fires, the chosen ancient has already passed all unlock + character-pool filters — the patch sees only valid, currently-offered ancients.
 
 ## Code changes
 
@@ -49,11 +50,7 @@ Epoch-based unlock gating is handled at the act level (`GetUnlockedAncients(Unlo
 - Comment in [`src/ModEntry.cs:177`](../../../src/ModEntry.cs#L177) updated to reference `AncientVotePatch`
 - [`tests/slay_the_streamer_2.tests.csproj:23`](../../../tests/slay_the_streamer_2.tests.csproj#L23) `Compile Remove` path updated to the new filename
 
-**New using directive** (so `AncientEventModel` resolves):
-```csharp
-using MegaCrit.Sts2.Core.Entities.Ancients;
-```
-(`DeprecatedAncientEvent` is already covered by the existing `using MegaCrit.Sts2.Core.Models.Events;`.)
+**Using directives** (correction applied during T3 implementation, 2026-05-13): the original spec proposed adding `using MegaCrit.Sts2.Core.Entities.Ancients;`, but `AncientEventModel` actually lives in `MegaCrit.Sts2.Core.Models` (verified at [`decompiled/sts2/MegaCrit/sts2/Core/Models/AncientEventModel.cs:22`](../../../decompiled/sts2/MegaCrit/sts2/Core/Models/AncientEventModel.cs#L22)) — that namespace is already imported. `DeprecatedAncientEvent` is in `MegaCrit.Sts2.Core.Models.Events`, also already imported. No new using directive needed.
 
 **Predicate (the substantive change)** — replaces `IsNeowEvent`:
 ```csharp

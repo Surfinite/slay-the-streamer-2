@@ -35,6 +35,22 @@ Per-task commits to `main` with a slice-specific prefix:
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 
+Every Claude commit ends with the trailer:
+
+```
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+```
+
+Pass the message via a single-quoted HEREDOC to `git commit -m` so the trailer renders correctly.
+
+### Periodic-tally dedup keys on tally STATE, not rendered text
+
+`VoteSession`'s periodic-tally dedup compares the underlying tally state (option index → count), NOT the rendered receipt string. Every render includes `<remaining>s left` so text-equality dedup would never fire and the receipt would spam every tick. Surfaced as a bug during spec v2.3 review. **If you refactor the dedup or the receipt formatter, keep the comparison on the structural tally — never on the formatted text.**
+
+### `*.sln` is intentionally gitignored
+
+`dotnet build` auto-generates a `.sln` that references gitignored paths (build output, copied DLLs). Committing it would break fresh clones. If you open the repo in Rider/VS expecting a solution file, generate one locally with `dotnet sln` — don't commit the result.
+
 ---
 
 ## Architectural rules (Tier 2 — load-bearing)
@@ -71,6 +87,23 @@ All YouTube-specific fragility lives under `src/Ti/Chat/YouTubeChat/`. This fold
 
 Maintenance task: `notes/youtube-fixture-refresh.md` documents the monthly capture-and-refresh process for fixture files.
 
+### 0-indexed chat vote options
+
+Chat votes are 0-indexed: `#0`, `#1`, `#2`, ... matching Tempus's StS1 mod convention. **Do not regress to 1-indexed** — most C# instincts pull toward `array[i+1]` UI labels, but the user preference is explicit. `VoteSession`, `VoteCoordinator`, `EnglishReceipts`, and `VoteTallyLabel` all assume 0-indexing end-to-end. Future vote-bearing decisions (B.2.2 Ancients, B.2.3 map, B.3 boss) must follow the same convention.
+
+### Test-fake triad and `VoteSessionTestBase`
+
+The standard test setup for any `VoteSession`/`VoteCoordinator`-adjacent code is:
+
+```csharp
+FakeClock clock = new();
+FakeTimerScheduler scheduler = new(clock);
+ImmediateDispatcher dispatcher = new();
+Random rng = new(42);   // seeded for determinism
+```
+
+Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the triad + the `IReadOnlyList<string> configuredPlatforms` ctor parameter. **Don't roll your own** — extending `VoteSessionTestBase` or its sibling fixtures is correct; instantiating raw `VoteCoordinator` in a new test class will silently disagree with timing/dispatch assumptions and bite during async-await tests.
+
 ---
 
 ## Navigation (Tier 3 — where things live)
@@ -88,6 +121,7 @@ Maintenance task: `notes/youtube-fixture-refresh.md` documents the monthly captu
 | Pre-spec landscape research (settings UI hook surface + tunable-knobs inventory) | `notes/09-settings-and-tunable-knobs.md` |
 | Pre-spec landscape research (B.3 act boss vote feasibility) | `notes/10-boss-vote-feasibility.md` |
 | Decompiled game source (regenerable, gitignored) | `decompiled/sts2/MegaCrit/sts2/...` |
+| Reference repos (gitignored, cloned per-workspace) | `references/SlayTheStreamer-sts1/` (Tempus's StS1 original — feature reference only, no license, no code copy); `references/STS2FirstMod/` (jiegec's StS2 modding toolkit reference) |
 
 ---
 
@@ -104,3 +138,4 @@ Maintenance task: `notes/youtube-fixture-refresh.md` documents the monthly captu
 - **`Neow.GenerateInitialOptions` branches on `RunState.Modifiers.Count > 0`, NOT `GameMode == Custom`** ([`decompiled/sts2/MegaCrit/sts2/Core/Models/Events/Neow.cs:215`](decompiled/sts2/MegaCrit/sts2/Core/Models/Events/Neow.cs#L215)). Any modifier whose `GenerateNeowOption(EventModel)` returns non-null (`SealedDeck`, `Draft`, `Specialized`, `Insanity`, `AllStar`) replaces the standard pick-3 with a single-option modifier kickoff. Don't infer Neow behavior from the game mode — infer it from the modifier list. Affects any future Neow-adjacent patch (B.2.2 Ancients predicate-widening, sealed-deck "Neow before draft" polish, etc.). Surfaced in notes/08.
 - **`CardRarityOddsType.RegularEncounter` rarity odds NEVER roll `CardRarity.Basic`**. `CardFactory.RollForRarity` ([`decompiled/sts2/MegaCrit/sts2/Core/Factories/CardFactory.cs:199`](decompiled/sts2/MegaCrit/sts2/Core/Factories/CardFactory.cs#L199)) only weights Common/Uncommon/Rare. Character-identity Basics like `Bodyguard`/`Unleash` (Necrobinder) and `Zap`/`Dualcast` (Defect) are silently absent from any pool generated with these odds — including `SealedDeck` and `Draft` modifier pools. Affects any feature that samples "a player's character cards" via `CardCreationOptions(..., RegularEncounter)`. Surfaced in notes/08.
 - **`replaceTreasureWithElites` parameter in `ActModel.CreateMap` / `StandardActMap.CreateFor` is dead code in this build.** The only live caller (`RunManager.cs:549`) hardcodes `false`. No ascension level activates it; the `AscensionLevel` enum tops out at `DoubleBoss` and has no "chests as elites" entry. Don't infer ascension behavior from this parameter's existence. The only ascension that interacts with bosses is `DoubleBoss` (final act only). Surfaced in notes/10 after a research correction round.
+- **CRLF/LF normalization warnings on Windows are expected and harmless.** `warning: in the working copy of '...', LF will be replaced by CRLF the next time Git touches it` fires on every `git add` for text files. Subagents that scan tool output sometimes report these as concerns; they aren't. Don't change `core.autocrlf` to silence them — the warning is informational about a working-copy normalization that Git is doing correctly.

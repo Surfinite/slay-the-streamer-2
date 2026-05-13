@@ -1,0 +1,40 @@
+**1. One-line verdict**
+The spec designs a functional test for Godot custom node autoloading, but it fundamentally fails its primary objective of validating Plan B's deadlock risk because Smoke B tests a concurrent fire-and-forget execution rather than the blocking `await` actually required for vote substitution.
+
+**2. What's good**
+- **Strict isolation for testing:** Using `FakeChatService.SimulateMessage` bypasses the IRC parser and network stack entirely, perfectly isolating the thread/dispatcher smoke test from unrelated networking logic.
+- **First-time guard:** `Interlocked.Exchange` inside `SmokeMainMenuPatch` is a clean, low-overhead way to prevent infinite vote spam every time the Main Menu scene becomes active without needing to un-patch dynamically.
+- **Clear disposable boundaries:** The separation of `src/Smoke/` from `src/Godot/` makes post-smoke cleanup trivial. 
+
+**3. Concerns & risks**
+- **Critical: Smoke B is a false negative for deadlocks.** (`SmokeRunner` / `Smoke B (Harmony prefix context)`) 
+  The spec notes: Plan B needs the game to wait/substitute player input. However, `static void Prefix()` with `_ = SmokeRunner.RunSmokeB(...)` is a synchronous method firing a background task. This allows the original game method to continue immediately, meaning the main thread is never blocked. If Plan B proposes blocking the main thread (e.g. `Task.Wait()` or `Result`) inside a Harmony prefix to force the game to halt while a vote occurs, the standard Godot workflow will deadlock because `CallDeferred` operates on the very main thread that Harmony just halted. Smoke B does not test this blocking scenario at all. 
+- **High: `IMainThreadDispatcher` fails to implement the interface.** (`GodotMainThreadDispatcher : IMainThreadDispatcher`)
+  The code snippet omits `Task DrainAsync()`. A .NET 9 project will refuse to compile this outright. 
+- **High: `ModInitializer` lifecycle timing.** (`ModEntry.Init()`)
+  The StS2 `ModManager` likely fires `[ModInitializer]` extremely early in the boot process. If `Engine.GetMainLoop()` evaluates to `null` because the `SceneTree` hasn't been instantiated yet by the engine wrapper, `Init()` will throw an exception abruptly stopping mod initialization before any smokes execute.
+
+**4. Suggested changes**
+- **Rewrite Smoke B to validate blocking / suspension:** If the real Plan B requires stopping game execution until `.AwaitWinnerAsync()` completes, you must test a blocking mechanism. Create a "Smoke C" (or change B) that actually blocks the thread (e.g., `.GetAwaiter().GetResult()`) inside a Prefix. If it deadlocks (as expected), you now know you must pivot to an async/coroutine patch strategy (e.g., returning `false` from a prefix to abort original execution, then re-triggering the logic yourself once the `Task` completes). 
+- **Implement `DrainAsync()`:** Add `public Task DrainAsync() => Task.CompletedTask;` to `GodotMainThreadDispatcher.cs`. Since `CallDeferred` queues up for the very next engine frame, there's no safe synchronous way to "wait" for the Godot message pump from a BCL interface without native awaitables. Document inline that frame-deferred pumps do not block for drains.
+- **Guard the MainLoop access:** In `ModEntry.Init()`, add a null check for `Engine.GetMainLoop()`. If it is null, abort the autoload insertion and log a critical error that you must hook into an early Node `_EnterTree` via Harmony instead of registering in `Init()`.
+- **Add observability to the Prefix itself:** Before calling `RunSmokeB`, add `Log.Info("[smoke-B] Prefix hooked and executed.");`. If Smoke B never happens, you need to know if it's because the patch failed to apply, or if the `fakeChat.Inject` failed to trigger.
+
+**5. Alternatives**
+- **Alternative to `Root.AddChild` in `ModInitializer`:** Instead of trying to race engine startup and risking a null `MainLoop`, inject your `DispatcherAutoload` component dynamically by patching the `_EnterTree` or `_Ready` method of the game's core bootstrap node (e.g., `MegaCrit.Sts2.Core.GameCore`).
+- **Alternative to CallDeferred:** If `CallDeferred` combined with Harmony prefixes deadlocks (highly likely if blocking), write a Harmony patch exposing Godot's `_Process(double delta)` on a core looping object, and manually pump a thread-safe `ConcurrentQueue<Action>` in `GodotMainThreadDispatcher`. This decouples you from Godot's internal deferred constraints.
+
+**6. Additions**
+- In `ModEntry.Init()`, catch the return value of `Harmony.PatchAll(...)`. It returns a method list. Add: `var patched = new Harmony(...).PatchAll(...); Log.Info($"[slay_the_streamer_2] Successfully patched {patched.GetPatchedMethods().Count()} methods.");`. This directly solves the failure observability question from the context document.
+- Prepend `// SMOKE-TEST: DELETE AFTER VALIDATION` to the top of all files in `src/Smoke/`, and directly above the `SmokeChat` local in `ModEntry.cs`.
+
+**7. Removals**
+- Remove the assumption that `_ = SmokeRunner(...)` acts as an architectural sign-off for Harmony `await` deadlocks. The `Success matrix` table needs to be amended to reflect that `Smoke B (winner=0)` only proves that tasks can run in the background *alongside* the main thread, not that a Harmony patch can safely block it.
+
+**8. Minor / nits**
+- `GodotMainThreadDispatcher.Post` uses the null coalescing throw expression `_autoload ?? throw...` every single invocation. It works, but injecting the dependency via the constructor (e.g., `new GodotMainThreadDispatcher(autoload)`) instead of `SetAutoload` prevents the uninitialized state entirely.
+
+**9. Assumptions you're making**
+- I am assuming StS2 uses a standard blocking Harmony 0/1 prefix model—meaning any `await` you do in a standard Godot C# method patch will return a Task, but Harmony prefixes that return `void` or `bool` don't yield engine frames to Godot's loop, they just block the C# invocation thread. 
+- I am assuming `Engine.GetMainLoop()` does not initialize until *after* Godot loads external .NET assemblies and runs module initializers.
+- I am assuming Surfinite is not already employing a custom task scheduler/coroutine manager for Harmony prefixes in StS2.

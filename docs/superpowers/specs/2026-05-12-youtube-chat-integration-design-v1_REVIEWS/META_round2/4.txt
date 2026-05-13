@@ -1,0 +1,714 @@
+## 1. One-line verdict
+
+v3 is much stronger than v1/v2 and mostly implementation-ready, but it still has several contract-shape, concurrency, UI, and vote-nonce integration problems that should be fixed before coding.
+
+---
+
+## 2. What’s good
+
+- **The `IChatConsumer` / `IChatService` split is the right direction.** It removes the v1 `MultiChatService.ConnectAsync` LSP violation cleanly and documents that `VoteCoordinator` only needs the consumer surface.
+
+- **The B.2.1 skip-gate masking fix is essential and correctly identified.** The new `GetChildState(ChatPlatformNames.Twitch)` routing in `ModEntry` / `CardRewardSkipGatePatch.cs` is a real correctness fix, not polish.
+
+- **EU consent handling is a necessary addition.** Pre-setting a consent cookie and preserving cookies through discovery/page/poll is the right shape for EU users.
+
+- **Initial-poll backlog suppression should be kept.** This is one of the most important correctness protections for YouTube chat and is worth the minor risk of dropping genuinely-new messages during connection setup.
+
+- **HTTP 429 carve-out is correct.** Keeping fixed 60s retry for “not live yet” but using `Retry-After` / backoff for rate limiting is the right compromise.
+
+- **Dropping missing-`authorChannelId` messages is better than anonymous GUID fallback.** The v1 fallback would have polluted vote tallies and broken latest-wins semantics.
+
+- **Side-dict per-platform tally remains a reasonable choice.** Keeping merged and per-platform tally updates in the same latest-wins code path is probably less risky than extracting a collaborator prematurely.
+
+- **Vote-nonce is the right replacement for Noita-style alternating numbers.** Preserving `#0 = skip` while offering `#N!ID` precision is a good product choice.
+
+- **Fixture-refresh documentation and scraper telemetry are good low-cost maintenance additions.** They acknowledge that the scraper will break and make future diagnosis less painful.
+
+- **TI extraction modularity section is useful.** The taxonomy makes the portability boundary legible and should be preserved.
+
+---
+
+## 3. Concerns & risks, ranked by severity
+
+### Critical 1 — `VoteTallyLabel` rendering contradicts the configured-platform requirement
+
+In `VoteTallyLabel`, the multi-platform rendering loop does this:
+
+```csharp
+foreach (var platform in PlatformDisplayOrder) {
+    if (!perPlatform.Keys.Any(k => k.Platform == platform)) continue;
+    ...
+}
+```
+
+This means a configured-but-silent YouTube child will not render a YouTube row. That directly contradicts:
+
+- **Supported degraded modes**: “if YT is configured but disconnected, the label still shows the YouTube row with zero counts”
+- **Decision 10**: split rendering gates on configuration, not observation
+- **VoteSession per-platform tally**: `TalliesByPlatform` exists when multi-platform is configured
+
+This is not a minor implementation nit; it breaks one of the main v2/v3 correctness fixes.
+
+**Action:** `VoteSession` needs to expose configured platforms, not just `bool IsMultiPlatformConfigured`. For example:
+
+```csharp
+public IReadOnlyList<string> ConfiguredPlatforms { get; }
+```
+
+Then `VoteTallyLabel` renders all configured platforms in display order, regardless of whether `perPlatform` has keys yet.
+
+---
+
+### Critical 2 — Vote-nonce is not visible to YouTube viewers if receipts only go to Twitch
+
+Decision 11 says the open receipt becomes:
+
+```text
+Vote [42]: #0 Strike, #1 Defend...
+```
+
+But YouTube is read-only and receives no receipts. In the worst case:
+
+- Twitch is dead, YouTube works.
+- No chat receipts fire.
+- The in-game tally label header still says only:
+
+```text
+Chat voting — 30s left
+```
+
+So YouTube viewers do not see the vote ID needed to use `#1!42`.
+
+This undercuts the main reason C3 was promoted: helping delayed YouTube chat avoid cross-vote collisions.
+
+**Action:** Add the vote ID to the in-game tally label header:
+
+```text
+Chat voting [42] — 30s left
+```
+
+This makes the nonce visible on stream/overlay to both Twitch and YouTube viewers, regardless of receipt availability.
+
+Also update acceptance Step 4 / vote-nonce tests to verify the label includes the ID.
+
+---
+
+### Critical 3 — `IChatConsumer.ConnectionStateChanged` as an explicit no-op event is a bad contract
+
+`IChatConsumer` requires:
+
+```csharp
+event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;
+```
+
+But `MultiChatService` implements it as:
+
+```csharp
+event EventHandler<ChatConnectionChangedEventArgs>? IChatConsumer.ConnectionStateChanged {
+    add { /* no-op */ }
+    remove { }
+}
+```
+
+This is a contract lie. Any future consumer that subscribes through `IChatConsumer` will silently receive nothing. That is worse than the old `ConnectAsync` throw because it fails invisibly.
+
+It also creates risk if existing `VoteCoordinator` currently uses `ConnectionStateChanged` for cancellation, failure detection, or logging. The spec says “nothing uses it,” but without codebase access I would not trust that until validated.
+
+**Action:** Choose one:
+
+1. **Preferred:** Keep aggregate `ConnectionStateChanged` and emit only when the aggregate state actually changes. Also keep `ChildConnectionStateChanged` for per-child receipts.
+2. **Alternative:** Split the interface further so `VoteCoordinator` depends on an interface that truly does not include connection-state events.
+
+Do not implement an interface event as a no-op.
+
+---
+
+### Critical 4 — YouTube status reasons are specified but not wired consistently
+
+The v3 text introduces:
+
+```csharp
+public enum YouTubeChatStatusReason { ... }
+public YouTubeChatStatusReason LastStatusReason { get; private set; }
+```
+
+But the shown `TransitionTo` implementation still has only:
+
+```csharp
+private void TransitionTo(ChatConnectionState next, string reason)
+```
+
+And the poll loop calls:
+
+```csharp
+TransitionTo(ChatConnectionState.Reconnecting, "live broadcast ended");
+TransitionTo(ChatConnectionState.Reconnecting, $"poll failed: {ex.GetType().Name}");
+```
+
+No status reason is passed. That makes D8’s reason-specific receipt wording under-specified.
+
+**Action:** Make the signature concrete everywhere:
+
+```csharp
+private void TransitionTo(
+    ChatConnectionState next,
+    string reason,
+    YouTubeChatStatusReason statusReason = YouTubeChatStatusReason.None)
+```
+
+Then all transition sites must set the reason explicitly:
+
+- discovery null → `NoLiveBroadcastFound`
+- no continuation → `LiveBroadcastEnded`
+- `HttpRequestException` / timeout → `NetworkError`
+- 429 → `RateLimited`
+- scraper parse failure → `ScraperParseFailed`
+- unknown catch → `UnknownError`
+
+Add tests that assert `LastStatusReason` for each failure path.
+
+---
+
+### Critical 5 — HTTP 429 handling is underspecified / probably wrong with `HttpRequestException`
+
+The spec shows:
+
+```csharp
+private TimeSpan NextReconnectDelay(Exception? lastError, TimeSpan? retryAfter) {
+    if (lastError is HttpRequestException httpEx && IsHttp429(httpEx)) {
+        ...
+    }
+}
+```
+
+But `IYouTubeHttp` returns `HttpResponseMessage`:
+
+```csharp
+Task<HttpResponseMessage> GetWithRedirectAsync(...)
+Task<HttpResponseMessage> PostJsonAsync(...)
+```
+
+`Retry-After` lives on the response headers. It will not reliably survive inside `HttpRequestException` unless the implementation calls `EnsureSuccessStatusCode()` and preserves `StatusCode`, and even then `Retry-After` is not naturally available from the exception.
+
+**Action:** Pin one of these shapes:
+
+Option A — return responses and handle status codes before throwing:
+
+```csharp
+if (response.StatusCode == HttpStatusCode.TooManyRequests) {
+    var retryAfter = response.Headers.RetryAfter;
+    throw new YouTubeRateLimitedException(retryAfter);
+}
+```
+
+Option B — make `IYouTubeHttp` throw a custom exception:
+
+```csharp
+internal sealed class YouTubeHttpException : Exception {
+    public HttpStatusCode? StatusCode { get; }
+    public TimeSpan? RetryAfter { get; }
+}
+```
+
+Then `NextReconnectDelay` keys on `YouTubeHttpException.StatusCode == 429`.
+
+As written, the 429 carve-out is conceptually right but mechanically too vague.
+
+---
+
+### High 6 — Cross-thread state handling needs to be specified
+
+`YouTubeChatService` has fields mutated from async/poll-loop contexts and read from main/game contexts:
+
+```csharp
+private ChatConnectionState _state;
+private bool _disposed;
+private string? _continuation;
+private CancellationTokenSource? _cts;
+private Task? _pollLoopTask;
+```
+
+The context document says the project convention is **Interlocked-int flags for cross-thread state, not bool**. v3 does not carry that into the YouTube service.
+
+Potential issues:
+
+- `State` read while background task writes.
+- `Dispose()` racing with `ArmReconnect()`.
+- `ConnectAsync()` racing with `Disconnect()`.
+- retry timer firing after disposal.
+- `ConnectionStateChanged` dispatched after disposal.
+- `LastError` / `LastStatusReason` read from `ModEntry` while poll loop updates.
+
+**Action:** Add a concurrency subsection for `YouTubeChatService`:
+
+- Represent state as an `int` or protect it with a private lock.
+- `_disposed` should be an `int` with `Interlocked.Exchange`.
+- `ArmReconnect()` should no-op if disposed.
+- retry timer callback should re-check disposed and current generation.
+- use a connection generation/token to prevent stale poll loops from publishing messages after reconnect/dispose.
+- ensure `Dispose()` cancels CTS, disposes timer, and awaits/observes poll loop exceptions where practical.
+
+Add explicit dispose-race tests.
+
+---
+
+### High 7 — `ConnectAsync` is fire-and-forget in `ModEntry`; unobserved exceptions are possible
+
+`ModEntry` shows:
+
+```csharp
+_ = twitch.ConnectAsync(...);
+_ = youtube.ConnectAsync(...);
+```
+
+That may already be the Twitch pattern, but v3 adds more async HTTP work and more failure modes.
+
+If `ConnectAsync` can throw synchronously before the service’s internal catch/retry machinery takes over, the exception becomes unobserved. If it faults asynchronously, same problem unless the task handles itself.
+
+**Action:** Specify the lifecycle contract:
+
+- Either `ConnectAsync` must never throw for external failures; it catches, logs, transitions, arms reconnect.
+- Or `ModEntry` wraps it in a safe fire-and-forget helper that observes/logs exceptions.
+
+Example:
+
+```csharp
+private static void FireAndLog(Task task, string context) {
+    _ = task.ContinueWith(
+        t => TiLog.Error($"[{context}] failed: {t.Exception}"),
+        TaskContinuationOptions.OnlyOnFaulted);
+}
+```
+
+---
+
+### High 8 — Latest-wins per-platform tally update algorithm is missing
+
+The spec says side-dict is parallel to merged `_tallies`, but does not spell out how latest-wins updates mutate `_talliesByPlatform`.
+
+This is easy to get wrong. Example:
+
+1. YouTube user votes `#0`.
+2. Same YouTube user changes to `#1`.
+
+Correct result:
+
+- merged `#0` decrements
+- merged `#1` increments
+- YouTube `#0` decrements
+- YouTube `#1` increments
+
+If the implementation only increments the new platform/option, per-platform tallies drift.
+
+**Action:** In `VoteSession per-platform tally`, add pseudocode for accepted vote update:
+
+```csharp
+var voterKey = msg.VoterKey;
+var platform = PlatformOf(msg);
+
+if (_votesByVoter.TryGetValue(voterKey, out var previous)) {
+    _tallies[previous.OptionIndex]--;
+    _talliesByPlatform[(previous.Platform, previous.OptionIndex)]--;
+}
+
+_votesByVoter[voterKey] = new VoteRecord(optionIdx, platform);
+_tallies[optionIdx]++;
+_talliesByPlatform[(platform, optionIdx)]++;
+```
+
+This probably requires the existing per-voter record to store platform as well as option.
+
+Add tests for same-platform vote changes and cross-platform separate voters.
+
+---
+
+### High 9 — `IsMultiPlatformConfigured` bool is no longer enough
+
+v3 uses:
+
+```csharp
+bool isMultiPlatformConfigured
+```
+
+But the rendering and future extraction story now need more information:
+
+- Which platforms are configured?
+- Should Twitch row render when Twitch is terminal but configured?
+- Should YouTube row render with zero votes when configured but disconnected?
+- What happens in a future YT-only build where Twitch child is not registered?
+
+A bool only answers “single vs multi,” not “which rows.”
+
+**Action:** Replace or supplement the bool with:
+
+```csharp
+IReadOnlyList<string> configuredPlatforms
+```
+
+Then:
+
+- Twitch-only: `[twitch]`
+- Twitch + YouTube: `[twitch, youtube]`
+- future YT-only: `[youtube]`
+
+This also fixes the `VoteTallyLabel` contradiction above.
+
+---
+
+### High 10 — `MultiChatService.SendMessageAsync` hides all-send-failed cases too aggressively
+
+The spec says:
+
+```csharp
+// Success if at least one child succeeded; logged failures don't surface.
+```
+
+But the implementation returns completed even when **all** sendable children throw.
+
+That may be acceptable for degraded behavior, but it changes receipt failure semantics. If Twitch is the only sendable child and it throws, a close receipt silently disappears except for a Warn. Existing code may expect send failures to surface or be logged at the call site.
+
+**Action:** Define semantics explicitly:
+
+- If zero `CanSend` children: Debug + completed.
+- If at least one succeeds: completed.
+- If all attempted sends fail: either
+  - return completed but log Warn/Error with “all send targets failed”, or
+  - throw an aggregate exception.
+
+Given the project’s fail-soft philosophy, I would keep completed but log a stronger warning:
+
+```text
+[MultiChatService] SendMessageAsync: all 1 sendable children failed; receipt dropped
+```
+
+Also avoid `ContinueWith` unless there is a specific reason. Prefer straightforward `async`/`await` for readability and correct cancellation behavior.
+
+---
+
+### High 11 — Escalation receipt mechanism must not create a TI → Game dependency
+
+The spec says:
+
+> `YouTubeChatService` exposes an event `EscalationRequested` **or just calls `ModEntry.SendEscalationReceipt()` via a static facade**.
+
+The second option violates the TI/Game seam.
+
+**Action:** Remove the static-facade option. Use an event only:
+
+```csharp
+public event EventHandler<YouTubeEscalationRequestedEventArgs>? EscalationRequested;
+```
+
+`ModEntry` subscribes and sends via the Twitch child.
+
+---
+
+### High 12 — The `Noita-pattern regression analysis` section is stale / contradictory in v3
+
+The section still says:
+
+> Spec author’s call for v2: ship with mitigation #1 applied; offer mitigation #2 as Consider C3 with a lean-no recommendation...
+
+But v3 has applied C3 and promoted it to Decision 11.
+
+**Action:** Rewrite or delete the stale v2 posture. The section should now say:
+
+- v3 applies mitigation #2.
+- `notes/06` will be updated to mark Noita-style numbering superseded.
+- operator validation should measure whether bare `#N` still causes visible wrong-vote issues despite nonce availability.
+
+---
+
+## 4. Suggested changes
+
+### Must change before implementation
+
+1. **Fix `VoteTallyLabel` to render configured platforms, not observed platforms.**
+   - Add `ConfiguredPlatforms` to `VoteSession`.
+   - Render zero rows for configured platforms with no votes.
+
+2. **Display `VoteId` in the in-game tally label.**
+   - Header should become something like:
+     ```text
+     Chat voting [42] — 30s left
+     ```
+
+3. **Remove the no-op `IChatConsumer.ConnectionStateChanged` implementation.**
+   - Either emit aggregate changes or split the interface again.
+
+4. **Make `YouTubeChatStatusReason` mechanically mandatory at transition sites.**
+   - Update `TransitionTo`.
+   - Add tests for each reason.
+
+5. **Pin HTTP 429 handling around response status / custom exception, not vague `HttpRequestException` inspection.**
+
+6. **Add a concurrency/lifecycle subsection for `YouTubeChatService`.**
+   - Interlocked/lock policy.
+   - dispose/reconnect race behavior.
+   - stale poll-loop prevention.
+
+7. **Specify latest-wins updates for `_talliesByPlatform`.**
+   - Store previous vote’s platform.
+   - Decrement old platform/option on vote change.
+
+8. **Remove the `ModEntry` static-facade option for escalation receipts.**
+   - Event-only, preserving TI extraction.
+
+9. **Clean stale v2/C3 language.**
+   - Especially `Noita-pattern regression analysis` and `Open questions` references that still treat C3 as undecided.
+
+10. **Clarify whether malformed optional `youtubeChannelId` should degrade the whole mod or only disable YouTube.**
+    - I strongly recommend disabling YouTube only unless existing `ModSettings` architecture makes that impossible.
+
+---
+
+### Should change before implementation
+
+1. **Define whether `VoteId` is zero-padded.**
+   - The spec says “2-digit ID” but examples use `[42]`.
+   - Decide between `[7]` and `[07]`.
+   - If using `!07`, tests should cover it.
+
+2. **Mention nonce syntax in open receipts.**
+   Current proposed receipt says:
+   ```text
+   type #N or N
+   ```
+   But that does not teach `#N!42`.
+
+   Better:
+   ```text
+   Vote [42]: #0 Strike, #1 Defend — 30s, type #N or #N!42
+   ```
+
+   If that is too long for Twitch, at minimum the in-game label should show:
+   ```text
+   Chat voting [42] — type #N!42 for delayed chat
+   ```
+
+3. **Add a “nonce collision after 100 votes” note.**
+   This is probably acceptable, but document the assumption:
+   - 100 votes × 30s ≈ 50 minutes.
+   - YouTube chat delay is seconds, not 50 minutes.
+   - Therefore 0–99 cycling is acceptable.
+
+4. **Clarify `VoteParsingPolicy` behavior.**
+   The regex builder currently makes bare digits match even when both `AcceptHashCommands` and `AcceptBangCommands` are false. That may be intentional, but the policy name suggests otherwise.
+
+5. **Tighten `MultiChatService` aggregate terminal ranking.**
+   `Disposed > AuthenticationFailed > JoinFailed > Disconnected` is questionable. `AuthenticationFailed` is usually more actionable than `Disposed`.
+
+   Consider:
+   ```text
+   AuthenticationFailed > JoinFailed > Disposed > Disconnected
+   ```
+
+   But since skip-gate now routes through Twitch-specific state, aggregate terminal semantics are mostly diagnostic.
+
+6. **Define unsubscribe/dispose behavior for `MultiChatService`.**
+   If children can outlive the aggregator, unsubscribe from events on dispose. If not, document that disposing the aggregator owns/disposes children and no unsubscribe is needed.
+
+7. **Make `ChildConnectionStateChanged` invocation exception-safe in shown code.**
+   Failure mode #19 says consumer throws → caught/logged Error, but `MultiChatService` pseudocode does not show that.
+
+8. **Clarify how startup receipts interact with 120s debounce and 30-failure escalation.**
+   The escalation receipt should bypass normal flap debounce or be governed by a separate one-shot rule.
+
+9. **Add tests for `VoteId` in `VoteSnapshot`.**
+   Since `EnglishReceipts.FormatOpen` depends on `snapshot.VoteId`, test snapshot propagation, not only receipt formatting.
+
+10. **Add acceptance validation for vote-nonce on YouTube specifically.**
+    Example:
+    - Trigger vote 42.
+    - Type delayed `#1!42` after vote 43 starts.
+    - Verify it is dropped, not counted for vote 43.
+
+---
+
+## 5. Alternatives
+
+### Alternative A — Keep `ConnectionStateChanged` aggregate event
+
+Instead of no-op explicit implementation:
+
+```csharp
+public event EventHandler<ChatConnectionChangedEventArgs>? ConnectionStateChanged;
+public event EventHandler<ChildConnectionStateChangedEventArgs>? ChildConnectionStateChanged;
+```
+
+When a child changes:
+
+1. compute old aggregate before update
+2. child updates
+3. compute new aggregate
+4. fire child event always
+5. fire aggregate event only if aggregate changed
+
+This preserves the `IChatConsumer` contract and still gives `ModEntry` detailed child state.
+
+---
+
+### Alternative B — Replace `IsMultiPlatformConfigured` with `ChatTopology`
+
+Instead of passing `bool isMultiPlatformConfigured`, introduce a tiny immutable value:
+
+```csharp
+public sealed record ChatTopology(IReadOnlyList<string> ConfiguredPlatforms) {
+    public bool IsMultiPlatform => ConfiguredPlatforms.Count > 1;
+}
+```
+
+`VoteCoordinator` passes this to `VoteSession`.
+
+This avoids future bool creep and makes rendering deterministic.
+
+---
+
+### Alternative C — Use a 3-digit or random short vote ID
+
+The 0–99 cycling ID is probably okay, but a 3-digit ID reduces accidental collision risk while still being human-typeable:
+
+```text
+#1!042
+```
+
+Downside: slightly more typing. Upside: cycle window becomes ~8.3 hours at 30s/vote.
+
+I do not think this is required, but it is worth deciding deliberately.
+
+---
+
+### Alternative D — Malformed YouTube setting disables YouTube only
+
+Current D6 says malformed control-char value makes settings `Malformed`, and failure mode #1c says “entire mod degrades.”
+
+Since `youtubeChannelId` is optional and non-secret, a softer behavior may be better:
+
+- Twitch settings valid + YouTube field malformed → log Warn, disable YouTube, continue Twitch.
+- Core Twitch settings malformed → degrade whole mod.
+
+This better matches the goal “all YT failure modes degrade to Twitch-only.”
+
+---
+
+## 6. Additions
+
+### Add to `VoteTallyLabel` section
+
+A clear rendering contract:
+
+| Configured platforms | Active platforms | Rows shown |
+|---|---|---|
+| Twitch only | Twitch | Twitch row only |
+| Twitch + YouTube | Twitch only | Twitch row + YouTube zero row |
+| Twitch + YouTube | YouTube only | Twitch zero row + YouTube row, or explicitly justify YT row only |
+| Twitch + YouTube | neither | both zero rows while vote active |
+| future YouTube only | YouTube | YouTube row only |
+
+Right now the prose and code disagree on this.
+
+---
+
+### Add to `YouTubeChatService` section
+
+A lifecycle table:
+
+| Event | Required behavior |
+|---|---|
+| `ConnectAsync` called while disconnected | starts discovery |
+| `ConnectAsync` called while connecting | no-op or restart? |
+| `Disconnect()` while connecting | cancels discovery |
+| `Disconnect()` while poll active | cancels poll loop |
+| `Dispose()` while retry timer armed | cancels timer |
+| retry fires after dispose | no-op |
+| poll response arrives after reconnect generation changed | drop |
+
+This will prevent subtle task/timer bugs.
+
+---
+
+### Add to tests
+
+1. `VoteTallyLabel_ShowsConfiguredYouTubeRow_WithZeroes_BeforeFirstYouTubeVote`
+2. `VoteTallyLabel_HeaderIncludesVoteId`
+3. `YouTubeOnlyMode_LabelIncludesVoteId`
+4. `VoteSession_ChangingVote_DecrementsOldPlatformTally`
+5. `VoteSession_NonceMismatch_DoesNotUpdateLastVoteByPlatform`
+6. `MultiChatService_IChatConsumerConnectionStateChanged_FiresAggregateOrIsAbsent`
+7. `YouTubeChatService_429RetryAfter_UsesHeader`
+8. `YouTubeChatService_429WithoutRetryAfter_ExponentialBackoff`
+9. `YouTubeChatService_DisposeBeforeRetryTimerFires_NoReconnect`
+10. `YouTubeChatService_StalePollLoop_DoesNotEmitMessagesAfterReconnect`
+11. `EscalationRequested_EventDoesNotDependOnModEntry`
+12. `MalformedYoutubeChannelId_DisablesYoutubeOnly` if you adopt that softer behavior
+
+---
+
+### Add to acceptance gate
+
+A new explicit vote-nonce step:
+
+> **Step 8 — Vote nonce / delayed chat.** During dual-platform live testing, start two back-to-back votes. Send `#1!OLD_ID` from YouTube after the second vote starts. Verify it is dropped and does not affect the second tally. Send `#1!CURRENT_ID`; verify it counts. Verify the vote ID is visible in the in-game tally label.
+
+---
+
+## 7. Removals
+
+1. **Remove the explicit no-op aggregate event implementation.**
+   This is the biggest removal I recommend.
+
+2. **Remove “or just calls `ModEntry.SendEscalationReceipt()` via a static facade.”**
+   That violates TI extraction.
+
+3. **Remove stale v2 “C3 is Consider / lean-no” language.**
+   It now conflicts with Decision 11.
+
+4. **Remove or rewrite the old C3 detail block at the bottom.**
+   The bottom “Detail entries” still says C3 recommendation is “Neutral.” In v3 it is applied. Keeping the old recommendation block is confusing.
+
+5. **Remove duplicate/contradictory C8 wording.**
+   The table says fixture-based test applied; the old C8 detail still recommends operator validation. Preserve it only as historical context if clearly marked obsolete.
+
+---
+
+## 8. Minor / nits
+
+- **Decision 7 says “reset to 60s on next non-2xx response.”** That sounds wrong. For 429, backoff should reset on next non-429 or on success, not “non-2xx.” If the next response is 500, default 60s is okay, but phrase it as “reset on next non-429 outcome.”
+
+- **`InvalidOrUnavailableChannel` enum says collapsed to `NoLiveBroadcastFound`.** If collapsed, consider removing it until needed. Otherwise tests should cover when it is set.
+
+- **`ScraperVersion = "2026-05-12-v1"` in design v3 is confusing.** Maybe use scraper version independent of design version, but document why it says v1.
+
+- **`LastMessageReceivedAt` implementation should avoid LINQ edge surprises.** It is probably okay with nullable `Max`, but a manual loop is clearer and allocation-free.
+
+- **`VoteTallyLabel` uses `perPlatform.Keys.Any(...)` inside a loop.** Even after fixing semantics, avoid repeated key scans. Use configured platforms and direct lookups.
+
+- **`SendMessageAsync` should avoid `ContinueWith`.** Use `async`/`await`; it is easier to reason about exceptions and cancellation.
+
+- **Receipt examples should consistently use one format.** The spec has both `Vote [42]` and older `Vote #42` language.
+
+- **“2-digit ID” should define formatting.** `[07]` vs `[7]`.
+
+- **`#1!100` test says “nonce out of 0–99 range” but code only drops because it does not equal current `VoteId`.** Either enforce range explicitly or reword the test.
+
+- **`YouTubeLiveBroadcastDiscoveryTests` EU consent test may be hard to unit-test realistically.** A fake handler can simulate it, but do not imply the unit test proves real-world consent behavior unless operator validation covers it.
+
+- **`Twitch-only deployment mode` says zero allocations on YT path.** True enough for runtime YT service, but the code still allocates `MultiChatService`; avoid overclaiming “zero allocations” globally.
+
+---
+
+## 9. Assumptions I’m making
+
+- I assume `VoteCoordinator` may currently subscribe to `ConnectionStateChanged` or could reasonably do so in future. If it truly never uses it, the no-op event is less immediately dangerous, but still a bad interface contract.
+
+- I assume `VoteSession` currently stores per-voter latest vote in a structure that only records option index. If it already stores richer vote records, the per-platform decrement issue is easier to implement.
+
+- I assume the in-game tally label is visible on the stream capture. If FrostPrime does not capture it clearly, vote-nonce discoverability becomes worse and may need another mechanism.
+
+- I assume `ChatConnectionState.Disconnected` is not truly terminal in the same sense as `AuthenticationFailed` / `JoinFailed` / `Disposed`. If the existing code treats it as terminal, validate the aggregate priority table against that reality.
+
+- I assume `ModSettings.Malformed` currently disables the whole mod. If existing settings architecture cannot represent “settings success but YouTube disabled due bad optional field,” then keep current behavior but document the harsher trade-off.
+
+- I assume `HttpClient` implementation details are not already pinned elsewhere. If `IYouTubeHttp` already wraps 429 into a richer exception in the actual code plan, the spec should still say so explicitly.
+
+- I assume no codebase-level synchronization primitive already exists for chat service state. If Twitch has an established pattern, reuse that pattern and mention it in the YouTube service section.

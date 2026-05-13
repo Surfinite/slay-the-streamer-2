@@ -1,0 +1,1048 @@
+## 1. One-line verdict
+
+The spec is directionally useful for validating Godot dispatch and Harmony patch discovery, but it currently does **not** validate the real Plan B blocking/substitution pattern and has several implementation-level gaps that could produce false positives or false failures.
+
+---
+
+## 2. What’s good
+
+- **The purpose is well-scoped and valuable.** Validating `#6 Godot autoload from a mod assembly` and `#7 Harmony deadlock risk` before writing 6+ real patches is the right move.
+
+- **Using `FakeChatService` is the right dependency choice.** The smoke should isolate Godot/Harmony/dispatcher behavior, not Twitch IRC behavior. Keeping real IRC out of scope is correct.
+
+- **The disposable/permanent split is good.** The spec clearly distinguishes:
+  - permanent scaffolding: `ModEntry`, `GodotMainThreadDispatcher`, `DispatcherAutoload`, build/install updates;
+  - disposable smoke-only code: `src/Smoke/*`, `ModEntry.SmokeChat`, smoke launch lines.
+
+- **The smoke runner catches exceptions.** Wrapping `RunSmokeA/B` in `try/catch` is important because the calls are fire-and-forget. This avoids unobserved task exceptions and makes log output actionable.
+
+- **The explicit `Harmony.PatchAll(Assembly.GetExecutingAssembly())` is correct.** Given the context that the game only auto-patches when no `[ModInitializer]` exists, the spec handles this correctly.
+
+- **The success matrix is useful.** The distinction between “Smoke A green, Smoke B silent” and “Smoke A green, Smoke B hangs” is valuable diagnostic framing.
+
+- **The build pipeline correctly avoids shipping `0Harmony.dll`.** Referencing the game’s `0Harmony.dll` with `<Private>false</Private>` is the right way to avoid Harmony type-load conflicts.
+
+- **The spec intentionally tests the mod-loaded assembly path.** That is the exact risk area; unit tests cannot validate this.
+
+---
+
+## 3. Concerns & risks, ranked by severity
+
+### 1. Critical: Smoke B does not validate the real Plan B blocking/substitution pattern
+
+The spec says the architectural concern is:
+
+> Can a Harmony prefix safely `await Voter.Start(...).AwaitWinnerAsync()` on the Godot main thread...
+
+But `SmokeMainMenuPatch` does this:
+
+```csharp
+static void Prefix() {
+    if (Interlocked.Exchange(ref _fired, 1) == 1) return;
+    _ = SmokeRunner.RunSmokeB(ModEntry.SmokeChat);
+}
+```
+
+This validates only:
+
+- Harmony patch discovery;
+- prefix execution;
+- fire-and-forget async vote launched from a prefix;
+- dispatcher close callback flow.
+
+It does **not** validate:
+
+- blocking the original game action until a vote completes;
+- substituting the chosen option into the original method;
+- safely waiting from a main-thread Harmony prefix;
+- avoiding deadlock when `.Result`, `.Wait()`, or `.GetAwaiter().GetResult()` blocks the Godot frame pump.
+
+In fact, with the current dispatcher design, a synchronous main-thread wait is expected to deadlock:
+
+```text
+main thread blocks waiting for AwaitWinnerAsync
+timer fires on threadpool
+timer posts CloseNowInternal to Godot main thread via CallDeferred
+Godot main thread cannot process CallDeferred because it is blocked
+winner task never completes
+```
+
+`RunContinuationsAsynchronously` avoids inline continuation reentrancy; it does **not** solve “main thread is blocked and therefore cannot run the close callback.”
+
+So the spec’s most important claim is not being tested.
+
+---
+
+### 2. Critical: The realistic Plan B architecture may need to avoid blocking entirely
+
+If Plan B needs to “replace a click with a vote result,” then a synchronous Harmony prefix that waits for the vote is probably the wrong shape.
+
+The safer architectural pattern is likely:
+
+```text
+Harmony prefix intercepts player action
+  suppress original action
+  start async vote
+  return immediately to Godot
+vote completes later on main thread
+  invoke the selected game action programmatically
+```
+
+That is an async state-machine pattern, not a blocking-prefix pattern.
+
+If the real Plan B patches are designed around blocking the main thread until a vote completes, this smoke should probably cause the team to reconsider that architecture before implementation.
+
+---
+
+### 3. High: Smoke A and Smoke B may overlap and interfere with each other
+
+`Smoke A` starts during `ModEntry.Init()` and runs for 3 seconds. `Smoke B` starts when `NMainMenu._Ready` fires. It is plausible that the main menu appears within 3 seconds.
+
+If both smokes run concurrently, this could cause false failures depending on `VoteCoordinator` semantics:
+
+- If only one active vote is allowed, `Smoke B` may throw or silently fail.
+- If multiple sessions are allowed, the same `#0` injection pattern may affect both sessions.
+- If the coordinator has shared state around active votes, labels, receipts, or chat subscriptions, overlap could produce misleading results.
+
+The spec assumes the two votes are independent, but that is not guaranteed from the context document.
+
+This is especially important because failures would be misattributed to Harmony or the dispatcher.
+
+---
+
+### 4. High: `IMainThreadDispatcher.DrainAsync()` is missing from the implementation contract
+
+The context document explicitly says:
+
+> `IMainThreadDispatcher` has `Post(Action)` AND `Task DrainAsync()` methods.
+
+The spec’s `GodotMainThreadDispatcher` snippet only implements `Post`.
+
+That means the code as written will not compile unless the actual interface differs from the context. This should not be left as a reviewer question only; the spec should define the implementation.
+
+A reasonable smoke-quality implementation is a barrier drain:
+
+```csharp
+public Task DrainAsync() {
+    var tcs = new TaskCompletionSource(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+
+    Post(() => tcs.TrySetResult());
+
+    return tcs.Task;
+}
+```
+
+This gives useful semantics: “complete after all previously posted dispatcher work has had a chance to run.” It does not drain work recursively posted by drained actions, but that is acceptable if documented.
+
+A pure `Task.CompletedTask` no-op is less useful and may hide bugs later.
+
+---
+
+### 5. High: `Engine.GetMainLoop().Root` may not compile as written
+
+The snippet uses:
+
+```csharp
+Engine.GetMainLoop().Root.AddChild(autoload);
+```
+
+In Godot C#, `Engine.GetMainLoop()` generally returns a `MainLoop`, not a `SceneTree`. `Root` is on `SceneTree`.
+
+The safer pattern is probably:
+
+```csharp
+var tree = Engine.GetMainLoop() as SceneTree
+    ?? throw new InvalidOperationException("Godot main loop is not a SceneTree.");
+
+tree.Root.AddChild(autoload);
+```
+
+Without this, the smoke may fail at compile time or runtime for a reason unrelated to the architectural concern.
+
+---
+
+### 6. High: `DispatcherAutoload.Post` may be too clever and may not be Godot-source-generator safe
+
+The proposed implementation:
+
+```csharp
+public partial class DispatcherAutoload : Node {
+    public void Post(Action action) =>
+        CallDeferred(MethodName.Run, Callable.From(action));
+
+    private void Run(Callable callable) => callable.Call();
+}
+```
+
+Potential issues:
+
+- `MethodName.Run` may not be generated for a `private` method.
+- Godot may not expose private C# methods for deferred calls by name.
+- Passing a `Callable` as an argument through `CallDeferred` may or may not marshal cleanly.
+- Exceptions thrown by the action are not caught/logged.
+- If `Post` is called from a threadpool thread, the thread-safety of calling `CallDeferred` on a Godot `Node` from that thread should be treated as an assumption to validate.
+
+A more robust pattern is a queue plus a public drain method:
+
+```csharp
+public partial class DispatcherAutoload : Node {
+    private readonly ConcurrentQueue<Action> _queue = new();
+
+    public void Post(Action action) {
+        _queue.Enqueue(action);
+        CallDeferred(MethodName.Drain);
+    }
+
+    public void Drain() {
+        while (_queue.TryDequeue(out var action)) {
+            try {
+                action();
+            } catch (Exception e) {
+                Log.Error($"[slay_the_streamer_2] dispatcher action failed: {e}");
+            }
+        }
+    }
+}
+```
+
+This avoids passing delegates through Godot’s variant/deferred-call argument system and makes exception behavior explicit.
+
+---
+
+### 7. Medium-high: The spec tests `CallDeferred`, not actual frame ticks
+
+The concern is phrased as:
+
+> Can a mod register a `Node`-derived class to receive frame ticks at runtime?
+
+But the implementation does not override `_Process`, call `SetProcess(true)`, or log frame ticks. It tests whether `CallDeferred` runs on a node added to the scene tree.
+
+That may be sufficient for the dispatcher use case, but it is not the same as validating “receive frame ticks.”
+
+The spec should either:
+
+- reword the concern to “can a runtime-added node process deferred calls on the main thread?”; or
+- add a tiny `_Process` canary to validate actual frame processing.
+
+For example, disposable-only:
+
+```csharp
+public override void _Process(double delta) {
+    if (Interlocked.Exchange(ref _processSeen, 1) == 0) {
+        Log.Info("[slay_the_streamer_2] DispatcherAutoload _Process seen");
+    }
+}
+```
+
+But if Plan B only needs `CallDeferred`, don’t over-test `_Process`.
+
+---
+
+### 8. Medium-high: The `Engine.RegisterSingleton` path may be unnecessary and may introduce lifecycle/name-conflict risk
+
+The spec’s primary path is:
+
+```csharp
+Engine.GetMainLoop().Root.AddChild(autoload);
+Engine.RegisterSingleton("DispatcherAutoload", autoload);
+```
+
+But for the dispatcher’s needs, `Root.AddChild` is the load-bearing operation. `Engine.RegisterSingleton` is not what makes a `Node` process, receive deferred calls, or live in the scene tree.
+
+Risks:
+
+- singleton name conflict;
+- duplicate registration on hot reload or repeated mod load;
+- confusing “autoload” terminology when this is not a real project autoload;
+- unnecessary global exposure of an implementation detail.
+
+The smoke should probably treat `Engine.RegisterSingleton` as optional instrumentation, not the main mechanism.
+
+Suggested framing:
+
+```text
+Primary mechanism: add DispatcherAutoload as a child of SceneTree.Root.
+Optional experiment: also try Engine.RegisterSingleton to see if runtime singleton registration works, but do not depend on it for dispatch.
+```
+
+---
+
+### 9. Medium: Failure observability for Harmony patching is too weak
+
+If Smoke B is silent, the current matrix says:
+
+> Harmony prefix not auto-applied or filtering issue...
+
+But the log would not tell you whether:
+
+- `PatchAll` found zero patches;
+- `PatchAll` threw;
+- the target method name was wrong;
+- `NMainMenu._Ready` never fired;
+- the player never reached main menu;
+- `SmokeRunner.RunSmokeB` threw before logging.
+
+`ModEntry.Init()` should log patch diagnostics immediately after patching.
+
+At minimum:
+
+```csharp
+var harmony = new Harmony("slay_the_streamer_2");
+harmony.PatchAll(Assembly.GetExecutingAssembly());
+
+var patched = Harmony.GetAllPatchedMethods()
+    .Where(m => Harmony.GetPatchInfo(m)?.Owners.Contains("slay_the_streamer_2") == true)
+    .ToList();
+
+Log.Info($"[slay_the_streamer_2] Harmony patched methods: {patched.Count}");
+
+foreach (var method in patched) {
+    Log.Info($"[slay_the_streamer_2] patched: {method.DeclaringType?.FullName}.{method.Name}");
+}
+```
+
+Also log inside the prefix before starting the smoke:
+
+```csharp
+Log.Info("[smoke-B] NMainMenu._Ready prefix fired");
+```
+
+That separates “patch did not apply” from “vote failed.”
+
+---
+
+### 10. Medium: `registeredSingleton` is assigned but unused
+
+In `ModEntry.Init()`:
+
+```csharp
+bool registeredSingleton = false;
+try {
+    Engine.GetMainLoop().Root.AddChild(autoload);
+    Engine.RegisterSingleton("DispatcherAutoload", autoload);
+    registeredSingleton = true;
+    Log.Info(...);
+}
+```
+
+`registeredSingleton` is never read. Remove it or use it to log final state.
+
+---
+
+### 11. Medium: Catching both `AddChild` and `RegisterSingleton` in one block obscures diagnosis
+
+Current structure:
+
+```csharp
+try {
+    Engine.GetMainLoop().Root.AddChild(autoload);
+    Engine.RegisterSingleton("DispatcherAutoload", autoload);
+    ...
+} catch (Exception e) {
+    ...
+    if (autoload.GetParent() == null) {
+        Engine.GetMainLoop().Root.AddChild(autoload);
+    }
+}
+```
+
+This makes it hard to tell what failed:
+
+- main loop unavailable;
+- root unavailable;
+- add child failed;
+- singleton registration failed.
+
+Recommended split:
+
+```csharp
+var tree = Engine.GetMainLoop() as SceneTree
+    ?? throw new InvalidOperationException("MainLoop is not SceneTree.");
+
+tree.Root.AddChild(autoload);
+Log.Info("[slay_the_streamer_2] dispatcher node added to SceneTree.Root");
+
+try {
+    Engine.RegisterSingleton("DispatcherAutoload", autoload);
+    Log.Info("[slay_the_streamer_2] dispatcher registered as Engine singleton");
+} catch (Exception e) {
+    Log.Warn($"[slay_the_streamer_2] Engine.RegisterSingleton failed; continuing with Root.AddChild only: {e}");
+}
+```
+
+This is clearer and avoids treating `Root.AddChild` as fallback when it is actually the core mechanism.
+
+---
+
+### 12. Medium: The spec’s log strings are inconsistent
+
+The Purpose/Scope says log:
+
+```text
+"Smoke X starting"
+"Smoke X: winner=N"
+```
+
+The `SmokeRunner` code logs:
+
+```csharp
+Log.Info($"[{label}] starting...");
+Log.Info($"[{label}] winner={winner} (expected 0)");
+```
+
+The Success Criteria in the context says:
+
+```text
+[smoke-B] starting (from Harmony prefix on NMainMenu._Ready)...
+```
+
+Pick one exact log format. For a smoke test, exact log strings are the test interface.
+
+Suggested:
+
+```text
+[smoke-A] starting
+[smoke-A] injected #0 from alice
+[smoke-A] winner=0 expected=0
+[smoke-B] prefix fired: NMainMenu._Ready
+[smoke-B] starting
+[smoke-B] injected #0 from bob
+[smoke-B] winner=0 expected=0
+```
+
+---
+
+### 13. Medium: The spec says `SimulateMessage`, but the code uses `Inject`
+
+The Scope says:
+
+> Inject `"#0"` once via `FakeChatService.SimulateMessage(...)`
+
+But the actual code and context say the API is:
+
+```csharp
+FakeChatService.Inject(ChatMessage msg)
+```
+
+Fix the spec terminology everywhere. Otherwise reviewers/implementers may search for a nonexistent method.
+
+---
+
+### 14. Medium: The smoke does not verify that dispatcher actions actually run on the Godot main thread
+
+The smoke indirectly proves that the deferred close runs, but it does not log/check thread identity.
+
+Given the architectural concern, it would be valuable to capture the init thread ID and assert/log that dispatched actions run on the same thread.
+
+Example:
+
+```csharp
+internal static int GodotMainThreadId { get; private set; }
+
+public static void Init() {
+    GodotMainThreadId = Environment.CurrentManagedThreadId;
+    Log.Info($"[slay_the_streamer_2] Init thread={GodotMainThreadId}");
+}
+```
+
+Then in `DispatcherAutoload.Drain` or `Run`:
+
+```csharp
+var current = Environment.CurrentManagedThreadId;
+if (current != ModEntry.GodotMainThreadId) {
+    Log.Warn($"[slay_the_streamer_2] dispatcher running on unexpected thread: {current}");
+}
+```
+
+This would turn an implicit assumption into explicit evidence.
+
+---
+
+### 15. Low-medium: `SmokeChat.ConnectAsync(...).GetAwaiter().GetResult()` is acceptable for fake chat, but should be labeled smoke-only
+
+This is safe only because `FakeChatService.ConnectAsync` should be immediate/in-memory. In production, synchronous blocking of a network connect inside `Init()` would be bad.
+
+Add a comment:
+
+```csharp
+// SMOKE-ONLY: FakeChatService.ConnectAsync completes synchronously.
+// Do not copy this pattern to TwitchIrcChatService.
+```
+
+---
+
+### 16. Low-medium: Build/install scripts need path configurability
+
+The spec assumes a game install path but does not say how `build.ps1` or `install.ps1` receives it.
+
+If Plan A already has this, ignore. Otherwise, add parameters:
+
+```powershell
+param(
+    [string]$GameInstall = "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2"
+)
+```
+
+And validate:
+
+```powershell
+if (-not (Test-Path $GameInstall)) {
+    throw "Game install not found: $GameInstall"
+}
+```
+
+---
+
+## 4. Suggested changes
+
+### A. Replace Smoke B’s stated purpose
+
+Current framing:
+
+> Exercises the realistic Plan-B pattern: Harmony prefix on the main thread that awaits a vote.
+
+Suggested replacement:
+
+```text
+Smoke B exercises Harmony patch discovery and fire-and-forget async vote startup from a main-thread prefix. It does not validate a blocking/substitution prefix.
+```
+
+Then add a separate required smoke for the real Plan B pattern.
+
+---
+
+### B. Add Smoke C or redesign Smoke B to test the real pattern
+
+Do **not** add a smoke that simply blocks the main thread with:
+
+```csharp
+Voter.Start(...).AwaitWinnerAsync().GetAwaiter().GetResult();
+```
+
+That is expected to deadlock with the current dispatcher.
+
+Instead, add a smoke that validates the likely production-safe shape:
+
+```text
+Smoke C — suppress-and-resume pattern
+1. Harmony prefix fires on a benign target.
+2. Prefix starts a vote and returns immediately.
+3. Original action is either allowed or suppressed depending on target safety.
+4. Vote completion posts a continuation back to the Godot main thread.
+5. Continuation logs "would resume selected action N".
+```
+
+If you need to validate “skip original then resume later,” choose a patch target where skipping once is safe. If no safe target exists yet, log the intended resume action instead of mutating game state.
+
+The important thing to prove is:
+
+```text
+Harmony prefix can initiate async vote without blocking;
+vote completion can marshal selected result back to main thread;
+later main-thread code can execute the chosen continuation.
+```
+
+That is much closer to a viable Plan B architecture.
+
+---
+
+### C. Serialize Smoke A and Smoke B
+
+Avoid overlapping votes.
+
+Option 1: Store Smoke A task:
+
+```csharp
+internal static Task SmokeATask { get; private set; } = Task.CompletedTask;
+```
+
+In `Init()`:
+
+```csharp
+SmokeATask = SmokeRunner.RunSmokeA(SmokeChat);
+_ = SmokeATask;
+```
+
+In Smoke B:
+
+```csharp
+_ = RunAfterSmokeA();
+
+static async Task RunAfterSmokeA() {
+    await ModEntry.SmokeATask;
+    await SmokeRunner.RunSmokeB(ModEntry.SmokeChat);
+}
+```
+
+Log that Smoke B is waiting:
+
+```csharp
+Log.Info("[smoke-B] prefix fired; waiting for smoke-A before starting");
+```
+
+Option 2: Do not start Smoke A automatically when Smoke B is enabled. But serializing is better because it preserves both tests.
+
+---
+
+### D. Implement `DrainAsync()` with barrier semantics
+
+In `GodotMainThreadDispatcher`:
+
+```csharp
+public Task DrainAsync() {
+    var tcs = new TaskCompletionSource(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+
+    Post(() => tcs.TrySetResult());
+
+    return tcs.Task;
+}
+```
+
+Document:
+
+```text
+DrainAsync completes after previously posted dispatcher actions have run. It does not guarantee recursive draining of actions posted by those actions.
+```
+
+---
+
+### E. Change `DispatcherAutoload` to queue actions
+
+Suggested permanent-quality version:
+
+```csharp
+using System.Collections.Concurrent;
+using Godot;
+using MegaCrit.Sts2.Core.Logging;
+
+namespace SlayTheStreamer2.Godot;
+
+public partial class DispatcherAutoload : Node {
+    private readonly ConcurrentQueue<Action> _queue = new();
+
+    public void Post(Action action) {
+        ArgumentNullException.ThrowIfNull(action);
+
+        _queue.Enqueue(action);
+        CallDeferred(MethodName.Drain);
+    }
+
+    public void Drain() {
+        while (_queue.TryDequeue(out var action)) {
+            try {
+                action();
+            } catch (Exception e) {
+                Log.Error($"[slay_the_streamer_2] dispatcher action failed: {e}");
+            }
+        }
+    }
+}
+```
+
+This is easier to reason about than passing a `Callable` through `CallDeferred`.
+
+---
+
+### F. Use `SceneTree` explicitly
+
+In `ModEntry.Init()`:
+
+```csharp
+var tree = Engine.GetMainLoop() as SceneTree
+    ?? throw new InvalidOperationException("Engine.GetMainLoop() is not a SceneTree.");
+
+tree.Root.AddChild(autoload);
+```
+
+Do not rely on `Engine.GetMainLoop().Root`.
+
+---
+
+### G. Make `Root.AddChild` the core mechanism and `RegisterSingleton` optional
+
+Suggested structure:
+
+```csharp
+var autoload = new DispatcherAutoload {
+    Name = "SlayTheStreamer2Dispatcher"
+};
+
+tree.Root.AddChild(autoload);
+Log.Info("[slay_the_streamer_2] dispatcher node added to SceneTree.Root");
+
+try {
+    Engine.RegisterSingleton("SlayTheStreamer2Dispatcher", autoload);
+    Log.Info("[slay_the_streamer_2] dispatcher registered with Engine.RegisterSingleton");
+} catch (Exception e) {
+    Log.Warn($"[slay_the_streamer_2] Engine.RegisterSingleton failed; continuing with Root.AddChild only: {e}");
+}
+```
+
+Also consider not using `RegisterSingleton` at all unless some future code needs `Engine.GetSingleton`.
+
+---
+
+### H. Add Harmony patch diagnostics
+
+After `PatchAll`:
+
+```csharp
+var harmony = new Harmony("slay_the_streamer_2");
+harmony.PatchAll(Assembly.GetExecutingAssembly());
+
+var ownPatchedMethods = Harmony.GetAllPatchedMethods()
+    .Where(method => {
+        var info = Harmony.GetPatchInfo(method);
+        return info?.Owners?.Contains("slay_the_streamer_2") == true;
+    })
+    .ToList();
+
+Log.Info($"[slay_the_streamer_2] Harmony patched methods: {ownPatchedMethods.Count}");
+
+foreach (var method in ownPatchedMethods) {
+    Log.Info(
+        $"[slay_the_streamer_2] patched: {method.DeclaringType?.FullName}.{method.Name}");
+}
+```
+
+In the prefix:
+
+```csharp
+Log.Info("[smoke-B] NMainMenu._Ready prefix fired");
+```
+
+---
+
+### I. Add smoke-only headers
+
+At top of disposable files:
+
+```csharp
+// SMOKE-TEST ONLY.
+// Delete this file after Plan B prep smoke succeeds.
+// Do not ship in production builds.
+```
+
+Also above `ModEntry.SmokeChat`:
+
+```csharp
+// SMOKE-TEST ONLY. Remove after validation.
+internal static FakeChatService SmokeChat = null!;
+```
+
+---
+
+### J. Fix log strings and API names
+
+Replace `SimulateMessage` references with `Inject`.
+
+Normalize smoke logs across Scope, Flow, Success Criteria, and code.
+
+---
+
+## 5. Alternatives
+
+### Alternative 1: No `Engine.RegisterSingleton`; root child only
+
+For the actual dispatcher use case, this is probably enough:
+
+```csharp
+tree.Root.AddChild(autoload);
+dispatcher.SetAutoload(autoload);
+```
+
+Advantages:
+
+- fewer moving parts;
+- no singleton name conflict;
+- no global mutable Godot singleton;
+- directly validates the mechanism you actually need.
+
+If later code needs to discover the dispatcher globally, use `ModEntry.Dispatcher` or a local static rather than `Engine.RegisterSingleton`.
+
+---
+
+### Alternative 2: Use Godot’s `SynchronizationContext` if available
+
+If Godot 4.5 Mono installs a useful main-thread `SynchronizationContext`, production dispatcher could potentially be:
+
+```csharp
+public sealed class GodotMainThreadDispatcher : IMainThreadDispatcher {
+    private readonly SynchronizationContext _context;
+
+    public GodotMainThreadDispatcher(SynchronizationContext context) {
+        _context = context;
+    }
+
+    public void Post(Action action) {
+        _context.Post(_ => action(), null);
+    }
+}
+```
+
+But this should only be used if verified. The `Node` + `CallDeferred` approach is more explicit and likely easier to diagnose.
+
+---
+
+### Alternative 3: Use a persistent dispatcher service, not an “autoload”
+
+Rename `DispatcherAutoload` to something less Godot-project-specific, such as:
+
+```text
+GodotDispatcherNode
+MainThreadDispatcherNode
+```
+
+Because this is not a project autoload registered in `project.godot`; it is a runtime-added node.
+
+This avoids conceptual confusion.
+
+---
+
+### Alternative 4: Plan B patches should be async state machines, not blocking prefixes
+
+For real gameplay patches, prefer:
+
+```text
+Prefix detects player intent
+Prefix captures enough context to replay/apply choice later
+Prefix suppresses original if safe
+Prefix starts vote and returns
+Vote completion posts selected action to main thread
+Selected action invokes original-equivalent behavior
+```
+
+This is the main architectural alternative the smoke should validate.
+
+---
+
+### Alternative 5: Patch a safer synthetic/test target if available
+
+If there is a benign game method that:
+
+- is called after main menu loads;
+- can be skipped without breaking the game;
+- has a simple observable side effect;
+
+then Smoke C could patch that instead of `NMainMenu._Ready`.
+
+If no such target exists, keep Smoke C as “resume continuation logs on main thread” rather than mutating game state.
+
+---
+
+## 6. Additions
+
+### Add a “What this smoke does not prove” section
+
+Suggested text:
+
+```text
+This smoke does not prove that a Harmony prefix can synchronously block the Godot main thread until a vote completes. With the CallDeferred dispatcher, such blocking is expected to deadlock because the close callback must run on the same main thread. The viable Plan B pattern is expected to be suppress-and-resume rather than block-and-return.
+```
+
+This would prevent a false sense of validation.
+
+---
+
+### Add thread ID logging
+
+Add logs for:
+
+- init thread;
+- timer close post thread if accessible;
+- dispatcher drain thread;
+- smoke continuation thread.
+
+This will produce very useful evidence:
+
+```text
+[slay_the_streamer_2] Init thread=1
+[slay_the_streamer_2] dispatcher Drain thread=1
+[smoke-A] continuation thread=9
+```
+
+The exact IDs do not matter; the relationship does.
+
+---
+
+### Add patch target verification
+
+Explicitly log the resolved target:
+
+```csharp
+var target = AccessTools.Method(typeof(NMainMenu), "_Ready");
+Log.Info($"[smoke-B] NMainMenu._Ready target resolved: {target is not null}");
+```
+
+If `target` is null, fail loudly before `PatchAll`.
+
+---
+
+### Add a timeout watchdog around each smoke
+
+Even though the vote duration is 3 seconds, add a smoke-level timeout so hangs are logged.
+
+Example:
+
+```csharp
+var winnerTask = session.AwaitWinnerAsync();
+var timeoutTask = Task.Delay(TimeSpan.FromSeconds(10));
+
+var completed = await Task.WhenAny(winnerTask, timeoutTask);
+
+if (completed != winnerTask) {
+    Log.Error($"[{label}] FAILED: timed out waiting for winner");
+    return;
+}
+
+var winner = await winnerTask;
+```
+
+This will not help if the entire Godot main thread is hard-blocked, but it helps for non-deadlock failures where the task simply never completes.
+
+---
+
+### Add “expected failure if sync wait is tried” documentation
+
+If you keep discussion of `.Result` / `.Wait()`, explicitly state:
+
+```text
+A direct synchronous wait from the Godot main thread is expected to deadlock with this dispatcher. If Plan B requires waiting for a vote, the patch must be reshaped to avoid blocking the frame pump.
+```
+
+---
+
+### Add build validation for `0Harmony.dll` version/source
+
+Log or print:
+
+```text
+Using Harmony from: <game path>\data_sts2_windows_x86_64\0Harmony.dll
+```
+
+This helps diagnose accidental NuGet/reference drift.
+
+---
+
+### Add install script dry-run or path echo
+
+`install.ps1` should print:
+
+```text
+Installing from: dist/slay_the_streamer_2
+Installing to:   <game-install>/mods/slay_the_streamer_2
+```
+
+This prevents silent wrong-folder installs.
+
+---
+
+## 7. Removals
+
+### Remove or demote `Engine.RegisterSingleton` as a primary requirement
+
+It is not necessary for the dispatcher. Keep it only if the specific question is “does runtime singleton registration work?” Otherwise it adds complexity without proving the dispatcher path.
+
+---
+
+### Remove `registeredSingleton`
+
+It is currently unused.
+
+---
+
+### Remove “autoload” terminology where it implies Godot project autoload
+
+The node is runtime-attached, not a Godot autoload configured at engine boot.
+
+Consider renaming:
+
+```text
+DispatcherAutoload.cs
+```
+
+to:
+
+```text
+GodotDispatcherNode.cs
+```
+
+If you keep the name because it maps to the deferred follow-up item, add a note:
+
+```text
+Despite the name, this is not registered through ProjectSettings.AddAutoloadSingleton; it is a runtime-added dispatcher node.
+```
+
+---
+
+### Remove the claim that Smoke B validates the deadlock concern
+
+As designed, it does not. It validates only the non-blocking path.
+
+---
+
+### Remove ambiguity around `SimulateMessage`
+
+Use only `Inject`.
+
+---
+
+## 8. Minor / nits
+
+- `SmokeRunner.RunSmokeA` and `RunSmokeB` could log the vote duration and options once:
+
+  ```text
+  [smoke-A] starting duration=3s options=A,B,C
+  ```
+
+- Prefer `TimeSpan.FromSeconds(3)` as a shared constant in `SmokeRunner` to avoid drift if more smokes are added.
+
+- Consider using the full mod ID in Harmony:
+
+  ```csharp
+  new Harmony("com.surfinite.slay_the_streamer_2")
+  ```
+
+  Not required, but Harmony IDs are conventionally globally unique. If the current ID is intentional, keep it.
+
+- The `SmokeMainMenuPatch` guard is good, but log duplicate suppression at debug/info level only if useful. Otherwise do not spam.
+
+- The code should include explicit namespaces in the spec snippets if the project uses file-scoped namespaces. The current snippets are fine conceptually, but implementation should follow project conventions.
+
+- `TiLog.Sink` is wired, but the smoke code snippets use `Log.Info` directly. That is acceptable for Godot/Harmony scaffolding, but if the goal is to validate `TiLog` passthrough, have `SmokeRunner` use `TiLog.Info` or explicitly state that smoke logging uses game `Log` directly.
+
+- The component contract says:
+
+  ```csharp
+  private void Run(Callable callable) => callable.Call();
+  ```
+
+  If this pattern is retained, make `Run` public unless Godot C# definitely supports private deferred-call targets.
+
+- The “Outcome” section should include updating the smoke spec/result note with the exact game version/branch tested.
+
+- The build pipeline says build Release before tests. That is okay, but if tests fail, you may already have a Release artifact. Consider test before dist assembly, not necessarily before build.
+
+---
+
+## 9. Assumptions I’m making
+
+- I assume `VoteCoordinator` may not support concurrent active votes safely. If it does support them explicitly, the Smoke A/B overlap concern is less severe, but serialization is still cleaner.
+
+- I assume Godot main-thread blocking prevents `CallDeferred` from running. That is the standard frame-pump model and appears central to the dispatcher design.
+
+- I assume Plan B’s actual gameplay patches need to either suppress or delay original game behavior until the vote result is known. If instead Plan B only launches advisory votes and never substitutes input, then Smoke B is closer to sufficient — but that contradicts the stated “vote-replaces-click” goal.
+
+- I assume `Engine.GetMainLoop()` returns `MainLoop` and needs casting to `SceneTree` before accessing `Root`. The spec author should verify against Godot 4.5.1 C# bindings.
+
+- I assume `MethodName.Run` generation and private-method deferred invocation are not guaranteed. If Godot’s source generator does include private methods and `Callable` arguments marshal correctly, the proposed code may work, but the queue-based version is still more robust.
+
+- I assume `DrainAsync()` is part of the actual `IMainThreadDispatcher` interface and therefore must be implemented for compilation.
+
+- I assume `FakeChatService.Inject` synchronously delivers the message to active sessions. If delivery is asynchronous, the smoke should await or drain after injection.
+
+- I assume `NMainMenu._Ready` is a plausible Harmony target but not guaranteed; therefore patch diagnostics are necessary.
+
+- I assume the game does not unload/reload mod assemblies repeatedly during one process lifetime. If it does, singleton registration and static state need more cleanup discipline.

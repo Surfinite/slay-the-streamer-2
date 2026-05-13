@@ -1,0 +1,45 @@
+Here is the critical analysis and meta-review of the **Plan B.1 vertical slice** spec based on the context provided.
+
+### 1. One-line verdict
+A highly disciplined and pragmatic vertical slice design with rock-solid thread-safety fundamentals, though it carries a critical risk of Godot lifecycle crashes and potential UI-bypass from keyboard hotkeys.
+
+### 2. What's good
+- **Suspend-and-resume Harmony pattern:** Adhering strictly to the fire-and-forget pattern with `dispatcher.Post` for the resume perfectly circumvents the Godot `SynchronizationContext` deadlocks proven in the smoke test.
+- **Strict Scope Boundaries:** Stripping out UI polish, multi-vote complexity, and settings screens correctly isolates the heaviest technical risk (putting the IRC client and Harmony patch into a live game loop).
+- **Graceful Degradation:** The failsafe paths (Vanilla fallback on null session, null creds, auth failure, exception) are exceptionally well thought out.
+- **Two-flag guard:** The `_voteInProgress` and `_resumeInProgress` flags correctly map out the state machine required for re-entrant patches on a synchronous void method. 
+
+### 3. Concerns & risks
+- **Godot `ObjectDisposedException` on `QueueFree()` (High Severity):** You noted an edge case where the streamer exits the Neow screen mid-vote. If that happens, the `NEventRoom` and its children (including your `VoteTallyLabel`) are freed by the Godot engine. When the 30s timer elapses, `VoteSession.Closed` fires, invoking `label.QueueFree()` on a C# wrapper whose underlying native Node has been destroyed. This will crash the game.
+- **Keyboard Hotkey Bypass (High Severity):** Patching `NEventRoom.OptionButtonClicked` relies on mouse interaction. If Slay the Spire 2 allows viewers to press keyboard shortcuts (e.g., `1`, `2`, `3`) to select dialog options (as StS1 did), the game input logic likely calls `ChooseLocalOption` directly, completely bypassing your patch.
+- **Resume Race Condition on Async Effects (Medium Severity):** Your `finally` block in the resume `Post` synchronously sets `_voteInProgress = 0` the moment `OptionButtonClicked` returns. However, the game leverages `TaskHelper.RunSafely(option.Chosen())`. The UI might linger for several frames (or seconds) while the blessing effect animates. If the exact moment the flag is cleared happens while buttons are still visible and clickable, a fast double-click from the user will initiate a brand-new vote against the terminating event room.
+
+### 4. Suggested changes
+- **Fix the Node Lifecycle Crash:** Inside `VoteTallyLabel.AttachTo`, explicitly check if the Godot instance is still valid before calling `QueueFree`.
+  ```csharp
+  session.Closed += (_, _) => { if (GodotObject.IsInstanceValid(label)) label.QueueFree(); };
+  session.Cancelled += (_, _) => { if (GodotObject.IsInstanceValid(label)) label.QueueFree(); };
+  ```
+  Alternatively, use Godot's `_Notification(int what)` override to check for `NOTIFICATION_PREDELETE` and unsubscribe from the session events.
+- **Strengthen IRC Connection Check:** In the patch Prefix, checking `Voter.Default.Chat.IsConnected` is insufficient. `IsConnected` may be true while the client is merely in a `ConnectedReadOnly` state or has successfully connected to TCP/TLS but hasn't received the channel `JOIN` ACK yet. Check `chat.State == ChatConnectionState.ConnectedReadWrite` (or ensure `chat.CanSend` is true) to prevent starting a vote whose audience drops into the void. 
+- **Mitigate Streamer-Click Race Natively:** Rather than just relying on the `_voteInProgress` guard during the duration of the polling, forcefully disable the game's UI buttons when the vote starts. In `HandleVoteAsync`, before `AwaitWinnerAsync`, call StS2's internal UI disabler (e.g. `room.Layout.DisableEventOptions()` if it exists), and re-enable it on fail/fallback.
+- **Swap `Label` for `RichTextLabel`:** Slay the Spire relies heavily on string markup for localization and rendering (e.g. coloring keywords, inserting gold/health icons). Calling `GetRawText()` and pushing it into a standard Godot `Label` will likely render jagged string tags. Use `RichTextLabel` and enable BBCode integration.
+
+### 5. Alternatives
+- **Alternative Patch Target - `EventSynchronizer.ChooseLocalOption(int index)`:** Instead of patching `OptionButtonClicked` at the UI room level, patch the layer just immediately beneath it. 
+  * *Why?* It natively guards against keyboard hotkey bypasses, naturally isolates you from UI-level node manipulation, and is literally designed to centralize state transitions (both local and multiplayer). You can still suspend and resume it exactly the same way using `dispatcher.Post(() => originalChooseLocalOption(winnerIndex))`.
+
+### 6. Additions
+- **Disconnect Cleanup on `VoteTallyLabel`:** If a vote is rendered invalid because of the streamer-escapes-Neow edge case, the background `VoteSession` runs for nothing. Ensure that `VoteTallyLabel`'s `TreeExiting` signal (or `Dispose`) explicitly calls `session.Cancel()` if the node is forcibly removed by the engine before the vote concludes.
+
+### 7. Removals
+- None. The scope control isolating this to purely B.1 execution without UI polish or multi-event concerns is spot-on. 
+
+### 8. Minor / nits
+- Make `ModEntry.Dispatcher` an `internal static` rather than a `public static`. Nothing outside the mod assembly needs it, and setting it to internal enforces the boundary that prevents `Ti/` from referencing the execution context defined in `Game/`.
+- The decision to use `_Process` to poll once-per-frame instead of subscribing to `TallyChanged` is perfectly fine. Drawing UI per-frame is idiot-proof in Godot and avoids complex UI threading bugs. Do not try to "optimize" this with events for a text label.
+
+### 9. Assumptions you're making
+- I'm assuming that the underlying Godot nodes are garbage collected differently than CLR objects, making closure-captured node references (`label`) dangerous if the scene tree frees them. You will need to validate native null tracking (`IsInstanceValid`) in Godot Mono 4.5.1.
+- I'm assuming that keyboard input (hotkeys) for event selection is present in Slay the Spire 2. (This needs to be checked in the decompiled logic, likely near `NEventRoom._UnhandledInput` or input maps).
+- I'm assuming the StS2 UI components do not instantly destroy themselves when `OptionButtonClicked` returns.

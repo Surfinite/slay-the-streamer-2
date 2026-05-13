@@ -1,0 +1,137 @@
+# Thoughts on v3
+
+## Overall
+
+This is solid. The C1–C4 picks are the right ones from the Consider list, and the TI extraction section is useful documentation. I have a few substantive concerns — one about the vote-nonce's boundary-crossing, one about the escalation-receipt mechanism design, and a couple of smaller specification issues.
+
+---
+
+## The Good
+
+**C1 (`YouTubeChatStatusReason`)**: Clean. The enum directly addresses the "generic disconnect wording" complaint from the meta-review. The mapping from failure cause to `LastStatusReason` is straightforward; the D8 receipt formatter becomes a simple switch. No architectural impact.
+
+**C2 (30-failure escalation receipt)**: Genuinely clever compromise on D7. It preserves "no heuristic for 404 vs transient" (which I still believe is correct for a hobbyist mod) while capping the silent-failure window at ~30 minutes. The one-shot-per-burst design prevents spam. The "still no live broadcast after 30 min — check your settings" wording is specific enough to prompt action without claiming to know WHY it's failing.
+
+**C9 (fixture-refresh task)**: Good discipline. A `notes/` file that says "do this monthly" costs nothing and prevents the "scraper silently broke 3 months ago and nobody noticed" scenario. The PowerShell helper being deferred until manual capture proves tedious is the right call — don't automate a process you haven't done manually at least twice.
+
+**TI extraction section**: Well-reasoned. The single-version-with-config argument is correct — two build configs would be maintenance theater for a few KB of dormant code. The "delete `YouTubeChat/` folder → rest compiles" property is exactly the right standard for extractability.
+
+---
+
+## Concerns
+
+### 1. Vote-nonce (C3) expands scope into `Ti/Voting/` — and the spec understates this
+
+This is the biggest v3 concern. The vote-nonce is a real solution to a real problem (quantified in the Noita regression analysis), but it's **not a YouTube-chat feature**. It's a `Ti/Voting/` feature that happens to be surfaced now because YouTube's latency makes the pre-existing Noita problem acute.
+
+The spec says "~40 LOC in `Ti/Voting/`" for the nonce. I think that's optimistic. The actual surface touched:
+
+- `VoteSession` constructor (new `voteId` parameter)
+- `VoteSession.OnChatMessage` (nonce parsing + drop logic)
+- `VoteCoordinator.Start` (assign + cycle `_nextVoteId`)
+- `VoteCoordinator` (new field `_nextVoteId`)
+- `EnglishReceipts.FormatOpen` (new `Vote [NN]:` prefix)
+- `VoteSnapshot` (new `VoteId` property)
+- `VoteParsingPolicy` or the regex construction (nonce group)
+- `VoteSession` tests (~8 new tests)
+- `EnglishReceipts` tests (open-receipt format change)
+
+That's ~7 files touched, minimum. The enforcement mechanism in `BuildRegex` — adding `(?:!(\d+))?` to the regex — is clean but it's still a **semantic change to vote parsing**, which is Plan A core. Every future vote feature (Ancients, map path, act boss) inherits this.
+
+I'm **not saying don't do it**. The Noita regression analysis makes a strong case. But the spec should be honest that this is ~60–80 LOC across ~7 files, not "~40 LOC in `Ti/Voting/`," and that it's a Plan A vote-engine change masquerading as a YouTube slice feature.
+
+**Suggestion**: Add a one-sentence scope acknowledgment: "C3 is a Ti/Voting/ engine change, not a YouTube-chat feature; it's included in this slice because YouTube latency makes the pre-existing Noita problem acute, and the fix must ship before YT integration meaningfully expands the affected audience."
+
+### 2. Escalation receipt mechanism is under-specified
+
+The spec says:
+
+> `YouTubeChatService` exposes an event `EscalationRequested` (or just calls `ModEntry.SendEscalationReceipt()` via a static facade). `ModEntry` subscribes and routes to the Twitch child's `SendMessageAsync` at priority High.
+
+This is hand-wavy in a way the rest of the spec isn't. The rest of the spec pins exact method signatures, state machines, and failure modes. The escalation path gets "an event or a static facade or something."
+
+This matters because:
+- A static facade (`ModEntry.SendEscalationReceipt`) creates a reverse dependency from `Ti/Chat/YouTubeChat/` back to `ModEntry` — violating the TI/Game seam.
+- An event (`EscalationRequested`) is clean but requires someone to subscribe, and `ModEntry` already wires up in a specific order. Adding another subscription point needs explicit placement in the wiring pseudocode.
+- A callback (`Func<string, Task>? onEscalationRequested`) passed at construction is another option — clean, testable, no seam violation.
+
+**Suggestion**: Pin the mechanism. I'd recommend the callback approach:
+
+```csharp
+public YouTubeChatService(
+    ...,
+    Func<string, Task>? onEscalationRequested = null)  // optional; null means no escalation
+```
+
+Then in `ModEntry`:
+```csharp
+var youtube = new YouTubeChatService(
+    ...,
+    onEscalationRequested: async msg => {
+        if (twitch.IsConnected && twitch.CanSend)
+            await twitch.SendMessageAsync(msg, OutgoingMessagePriority.High);
+    });
+```
+
+The `YouTubeChatService` just calls `_onEscalationRequested?.Invoke(message)` when the counter hits 30. No reverse dependency. Testable: pass a mock callback in `YouTubeChatServiceTests`.
+
+If you prefer the event, that's also fine — but pick one and specify it concretely, not as an either/or parenthetical.
+
+### 3. `YouTubeChatStatusReason.InvalidOrUnavailableChannel` conflicts with D7
+
+The enum includes:
+```csharp
+InvalidOrUnavailableChannel,   // (defensive — 404 on channel page itself; collapsed to NoLiveBroadcastFound for v1)
+```
+
+The comment says it's "collapsed to NoLiveBroadcastFound for v1." If it's never emitted, it shouldn't be in the enum. D7 explicitly says we don't distinguish permanent 404s from transient ones — having a named enum value for the exact thing we refuse to distinguish is confusing. Future readers will see it and wonder "when does this fire?" 
+
+**Suggestion**: Remove `InvalidOrUnavailableChannel` from the enum. If v0.2+ adds 404-shape disambiguation, add the enum value then. For v1, the values should map 1:1 to actual emitted reasons.
+
+### 4. Scraper health-check telemetry may be over-engineered for v1
+
+C4's per-failure-location counter with one-shot Error suppression is a good idea in principle, but the implementation described:
+
+```csharp
+_consecutiveParseFailuresAt : Dictionary<string, int>
+```
+
+...with keys like `"INNERTUBE_API_KEY_regex"`, `"initial_continuation_extract"`, etc. — this is a mini-telemetry system. For a scraper that has maybe 4 distinct parse-failure points, a dictionary with string-keyed counters feels heavy.
+
+Simpler alternative that achieves the same goal: a single `(string? lastFailureLocation, int consecutiveCount)` tuple. If the same location fails N times, log Error with the truncated sample. If a different location fails, reset. No dictionary allocation; same diagnostic value.
+
+**Suggestion**: Simplify to a single failure-location tracker for v1. The full per-location dictionary is fine as v0.2 polish if the scraper proves to have many distinct failure modes.
+
+### 5. `VoteTallyLabel.PlatformDisplayOrder` references `ChatPlatformNames.YouTube` in a Godot-dependent file
+
+Minor, but: `VoteTallyLabel.cs` lives in `Ti/Ui/` and is Godot-dependent. It references `ChatPlatformNames.YouTube`, which is fine. But the TI extraction section says:
+
+> `ChatPlatformNames.YouTube` becomes an orphaned `const string` in a Twitch-only fork — harmless.
+
+The label's `PlatformDisplayOrder` would also reference it. In a Twitch-only fork, the YouTube entry in `PlatformDisplayOrder` silently iterates over a key that never exists in `perPlatform.Keys` — which is fine, but the spec could explicitly note this for the extraction section so someone doing a Twitch-only port doesn't wonder "should I remove this line?"
+
+---
+
+## Smaller observations
+
+**C8 (members-only fixture test)**: Good pragmatic alternative to an operator-validation step. The test is: feed scraper a members-only response shape → verify it returns `(messages: [], nextContinuation: null, nextTimeoutMs: 0)`. One question: what IS a members-only response shape? Does YouTube return an empty `actions` array? A specific error code? A redirect? The spec says "typically: empty `actions` array + null/missing continuation" — is this confirmed from `pytchat` docs or assumed? If assumed, worth flagging as "verify during implementation."
+
+**Dropped C5 (YT discoverability receipt)**: I agree with dropping this — a startup receipt telling YouTube viewers how to vote is noise for 95% of the stream when viewers already know. The streamer handles this organically.
+
+**Dropped C7 (cache `_videoId`)**: Also agree. The cost of re-discovery (one HTTP GET per 60s) is negligible, and clearing `_videoId` on failure is the safer default.
+
+**Dropped C10 (display-name index)**: Correct call. YAGNI. The D1 future heuristic may never happen, and pre-building data structures for hypothetical features is the definition of speculative complexity.
+
+---
+
+## Bottom line
+
+v3 is ready modulo:
+
+1. **Acknowledge C3's scope honestly** — it's a Plan A vote-engine change, ~60–80 LOC across ~7 files. Not a problem; just be accurate about it.
+2. **Pin the escalation receipt mechanism** — callback preferred, event acceptable, but "or just calls a static facade" is hand-wavy and risks a seam violation.
+3. **Remove `InvalidOrUnavailableChannel` from the enum** — conflicts with D7.
+4. **Simplify C4 telemetry** to a single failure-location tracker for v1.
+5. **Clarify the members-only response shape** in the C8 test description.
+
+Items 1 and 2 are the ones worth spending time on. 3–5 are spec-nits that take 30 seconds each to fix.

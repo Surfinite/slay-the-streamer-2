@@ -1,0 +1,222 @@
+# Reviewer Notes — YouTube Chat Parallel Integration (design v1)
+
+**Reviewer**: Claude (Anthropic)
+**Date**: 2026-05-12
+**Scope**: Critical review of `2026-05-12-youtube-chat-integration-design-v1.md` per the CONTEXT doc brief.
+
+---
+
+## 1. One-line verdict
+
+Architecturally sound and unusually well-scoped for a v1, but two real implementation gaps (gate-degradation routing through the aggregator; aggregate-state fall-through) and one materially understated UX risk (Noita-pattern compounding with YT lag) need resolving before this is plan-ready.
+
+---
+
+## 2. What's good (preserve as-is)
+
+- **Aggregator pattern keeping `VoteCoordinator` unchanged** (Architecture diagram; D-table row 4). The seam choice is correct: implementing the multi as another `IChatService` rather than threading multi-platform awareness into the voting layer is the right tradeoff. Voting stays game-agnostic and platform-agnostic; the extraction-into-a-base-mod goal is preserved.
+- **D9's "yt:" UserId prefix instead of a `Platform` field on `ChatMessage`.** Avoids a schema change that would ripple through Plan A's existing tests. Discipline-not-schema is exactly the right call for a load-bearing primitive at this stage.
+- **Per-platform tally as a parallel side-dict, not a replacement of `_tallies`** (D10 + Headline-shift 4). Preserves B.1's close-receipt invariants while enabling D10's split UI. The "merged sum equals per-platform sum" invariant in `VoteSessionPerPlatformTallyTests` is exactly right.
+- **Failure-mode enumeration (21 entries)** covering both new failure surfaces and degradation behaviour. This is the kind of artefact that gets cut under deadline pressure; doing it pre-implementation saves real debugging time later.
+- **Single-child `MultiChatService` as a passthrough** (Headline-shift 6; Failure-mode #1). One code path beats two; the architectural cost is zero and the testing cost stays bounded.
+- **Fixture-based scraper tests.** Right call for a scraping component — pure-function parse tests against captured JSON, refresh fixture when YouTube changes shape. This is the maintenance model that has kept `pytchat` working across years of YouTube redesigns.
+- **Acceptance gate Step 0 explicitly verifies the aggregator is functionally identical to direct-Twitch.** Catches the most likely regression early.
+- **D6 added retroactively, openly, with rationale.** The decisions log shows its history rather than smoothing over the gap. This is healthier for future-you than a pretend-it-was-always-there fix.
+
+---
+
+## 3. Concerns & risks (ranked)
+
+### 🔴 P1 — `ShouldEnforceSkipGate()` routing through the aggregator is unspecified
+
+**Where**: B.2.1 Decision 21 amendment (per CONTEXT §6); this spec's D-table row 6 ("YouTube child's state has no influence on `ShouldEnforceSkipGate()`"); `§"Aggregate state rule"`.
+
+**Problem**: `ShouldEnforceSkipGate()` from B.2.1 reads chat state to decide whether to enforce the gate. With Twitch alone, it reads the Twitch service directly. After this spec, what does it read?
+
+Three scenarios where the aggregate masks Twitch's terminal failure:
+
+| Twitch | YouTube | Aggregate (per rule) | Should gate enforce? |
+|---|---|---|---|
+| AuthenticationFailed (terminal) | Reconnecting | Reconnecting | NO (terminal Twitch) |
+| AuthenticationFailed | ConnectedReadOnly | ConnectedReadOnly | NO (terminal Twitch) |
+| JoinFailed | ConnectedReadOnly | ConnectedReadOnly | NO (terminal Twitch) |
+
+In all three, if `ShouldEnforceSkipGate()` reads `MultiChatService.State`, it gets `Reconnecting` or `ConnectedReadOnly` and ENFORCES the gate — contradicting Decision 21.
+
+Operator validation Step 1 ("worst-of-both-worlds mode") is exactly this scenario. The spec says "Card-skip gate is degraded (per B.2.1 Decision 21 amendment)" but doesn't specify *how* the gate sees through the aggregator to the Twitch terminal state.
+
+**Suggested resolution**: Add a `MultiChatService.GetChildState(string name)` accessor (or expose children read-only by name). Explicitly route `ShouldEnforceSkipGate()` through it for the Twitch child only. Add a §"Gate-degradation routing" subsection making this contract explicit. Add a unit test for each of the three masking scenarios in `MultiChatServiceTests`.
+
+### 🔴 P1 — Aggregate priority table has an undefined fall-through case
+
+**Where**: `§"Aggregate state rule"`, priority table.
+
+Priorities 5–8 say "matched by all children". If children are in *different* terminal states — e.g., Twitch in `JoinFailed` and YouTube in `AuthenticationFailed` (the latter is unreachable per the YT state machine notes, but the same logic gap exists for any mixed-terminal combination) — none of the "all" predicates match. The rule cascade has no terminal-state-mismatch case and the spec doesn't specify what happens.
+
+Implementations will either return a default (likely `Disconnected`), fall off the end (NRE), or — worst — silently return the first state that matches "any child" by accident.
+
+**Suggested resolution**: Add an explicit rule for "all children in some terminal state but not the same one." Options:
+- Return the worst per a documented ranking (`Disposed > AuthenticationFailed > JoinFailed > Disconnected`).
+- Synthesise a `MultiplyFailed` aggregate value (probably overkill).
+- Return the terminal state of the *first* child whose state is terminal, with a Warn log noting the mismatch (least invasive; preserves debuggability).
+
+Pick one and pin it. Don't leave undefined.
+
+### 🟠 P2 — D7's "all transient → Reconnecting forever" is real UX harm, not just log noise
+
+**Where**: Decisions table row 7; Failure-mode #2; CONTEXT Q1.
+
+The spec frames this as "one Warn per minute, no in-game impact." That dismisses real harm.
+
+The "typo'd `youtubeChannelId`" case is observationally identical to "stream isn't live yet" from the mod's perspective, but the *streamer's* experience differs:
+- Stream-not-live-yet resolves itself when they go live.
+- Typo NEVER resolves. They'll stream for hours with the YT integration silently doing nothing and no idea why.
+
+The D8 startup receipt is the same wording in both cases (`YouTube: no live broadcast found, retrying`). The streamer cannot distinguish "your config is wrong" from "your stream isn't live yet on YT." They will not check logs proactively.
+
+**Suggested resolution**: One simple, robust heuristic — a *retry counter*, not a 404-shape heuristic. After N consecutive discovery failures with no successful connect (suggest N=30, ≈30 min), fire one elevated-priority Twitch receipt:
+
+> `YouTube: still no live broadcast after 30 min — check that "youtubeChannelId" is correct (logs for details).`
+
+State machine stays unchanged (still `Reconnecting`, still 60s cadence). No 404-vs-network-error disambiguation. Just a counter and a one-shot receipt. ~10 LOC. Addresses the real UX gap that D7's "don't disambiguate" decision creates, without inventing the fragile heuristic the spec rightly fears.
+
+### 🟠 P2 — D7 should carve out HTTP 429 for exponential backoff
+
+**Where**: Failure-mode #4; CONTEXT Q3.
+
+The spec's rationale ("stream isn't live yet has no faster-recovery property") is correct for the modal failure case but wrong for ratelimits. Hammering YouTube every 60s after a 429 is a real path to a soft IP block, which would then look exactly like the "no live broadcast" case — invisible to the streamer.
+
+**Suggested resolution**: One counter, reset on HTTP 200. On consecutive 429s, multiply cadence by 2 (60 → 120 → 240 → … cap 600s). ~5 LOC inside `ArmReconnect()`. The "single cadence" simplicity argument is preserved for everything except 429. Documented as the only exception in D7's commentary.
+
+The cost of NOT doing this is asymmetric: if 429 backoff turns out to be unnecessary, you've added 5 LOC. If 429 backoff turns out to be needed and you didn't add it, you've shipped a thing that can quietly poison itself against YouTube.
+
+### 🟠 P2 — Cross-platform Noita-pattern is materially worsened, not just "tracked for v0.2"
+
+**Where**: CONTEXT §6 known issues ("Worse under YT — flag for the meta-review"); CONTEXT Q10.
+
+Twitch-only Noita is mostly a 0.5–2s issue. Adding YouTube simulcast adds:
+- YT broadcast latency (5–15s viewer-side)
+- YT chat lag (2–5s send-to-delivery)
+- → effective vote-command latency for a YT viewer is **7–20s**, vs **0.5–2s** for Twitch.
+
+Vote N closes after 30s; vote N+1 opens. A YT viewer typing `#1` at second 28 of vote N gets their message delivered at second 33–48 of *some* vote. Depending on game pacing, often vote N+1.
+
+Twitch-only, this was a rare edge case. With YT integration, it'll be **every-vote-or-two**. The user-visible behaviour is "my vote went to the wrong question." The spec ships a known and frequently-occurring bug without addressing it, because the v0.1 frame ("Noita is a v0.2 problem") was set when Twitch-only made it rare.
+
+**Suggested resolution**: At minimum, add a "Noita-pattern regression analysis" subsection to "Failure modes & degradation" with quantified before/after estimates, so the meta-review can decide whether to ship knowingly. Better: fold a minimal fix into this spec. Cheapest option is a per-vote nonce in vote commands — `#1!42` where 42 is the vote ID, falls back to "any vote" when omitted. ~30 LOC in vote-parsing, backward-compatible.
+
+### 🟠 P2 — `MultiChatService.ConnectAsync` throwing is a real interface smell
+
+**Where**: `§"MultiChatService"` code; CONTEXT Q4.
+
+The spec picks (b) "accept the throw and document." Push back — (a) interface split is correct here.
+
+Cost of (b): anyone who ever writes code that takes `IChatService` and calls `ConnectAsync` (a test helper, a future refactor, the eventual TI-core base-mod consumer) gets `NotSupportedException` with no compile-time signal. The seam is *meant* to be extracted into a base mod — this is exactly the wrong time to ship an `IChatService` that lies about its own contract.
+
+Cost of (a): one new interface. `IChatConsumer` exposes read/send/state. `IChatService : IChatConsumer` adds `ConnectAsync`. `MultiChatService : IChatConsumer`. `VoteCoordinator` takes `IChatConsumer` (currently the only consumer). Type-system enforces "can't accidentally connect the multi." ~30 LOC of refactor, all in Plan A's code; one consumer to update.
+
+This is the kind of decision that's cheap now and expensive later. Do it now.
+
+### 🟡 P3 — Two-event API on `MultiChatService` is a footgun nothing actually uses
+
+**Where**: `§"Event forwarding"`; CONTEXT Q5.
+
+`ConnectionStateChanged` (aggregate, fires only on aggregate transitions) AND `ChildConnectionStateChanged` (per-child, fires on every child transition). Subscribers to both get duplicate notifications when an aggregate change occurs.
+
+Critically: **nothing in the spec actually uses the aggregate event.** `VoteCoordinator` doesn't subscribe to it. ModEntry subscribes to `ChildConnectionStateChanged`. Why does the aggregate event exist?
+
+**Suggested resolution**: Drop `ConnectionStateChanged` from `MultiChatService` (or implement it as no-op-with-Obsolete to match `IChatService` shape if interface forces it — but see the IChatConsumer split which makes this go away). Keep only `ChildConnectionStateChanged`. Document the omission with rationale.
+
+### 🟡 P3 — Flap-suppression debounce of 30s is effectively unreachable
+
+**Where**: `§"Startup receipt extension"`; CONTEXT Q6.
+
+With a 60s reconnect cadence, you cannot flap faster than 60s. A 30s debounce window is therefore unreachable in normal operation. Either:
+- It's meant to suppress redundant receipts within a single state (but the spec already does this with "only fire on real transitions, not retry attempts"), or
+- It's targeting some scenario the spec doesn't enumerate.
+
+**Suggested resolution**: Either set to 120s (≈2× cadence, which actually constrains transient + flaky stacking) or drop it entirely and rely on the "real transitions only" rule. Don't ship a value that does nothing.
+
+### 🟡 P3 — `LastError` aggregation is wrong
+
+**Where**: `§"MultiChatService"` code, `LastError` property.
+
+`_children.Select(c => c.LastError).FirstOrDefault(x => x is not null)` returns the first non-null in *iteration order*, not the most recent. For diagnostics, recency is what you want.
+
+**Suggested resolution**: Either pair errors with timestamps and pick max-timestamp, or return null and document that consumers should query per-child. The latter is honest — aggregating errors loses information.
+
+---
+
+## 4. Suggested changes (specific, actionable)
+
+1. Add `§"Gate-degradation routing"` to MultiChatService section pinning down how `ShouldEnforceSkipGate()` reads Twitch state through the aggregator (per P1 #1). Add a `MultiChatService.GetChildState(string name)` accessor or an equivalent. Add the three masking scenarios to `MultiChatServiceTests`.
+2. Add the "all children terminal but mismatched" rule to the Aggregate state priority table (per P1 #2).
+3. Add a 30-failure retry counter + elevated receipt to address D7's UX gap (per P2 #1). Update D8 receipt-text variants.
+4. Carve out HTTP 429 for exponential backoff in D7's commentary and `ArmReconnect()` (per P2 #2).
+5. Add a quantified "Noita-pattern regression analysis" subsection to "Failure modes & degradation" OR fold a vote-nonce fix into this spec (per P2 #3).
+6. Replace `MultiChatService.ConnectAsync throws` with an `IChatConsumer` interface split (per P2 #4).
+7. Drop the aggregate `ConnectionStateChanged` event from `MultiChatService`; keep only `ChildConnectionStateChanged` (per P3 #1).
+8. Change flap-suppression debounce from 30s to 120s, OR drop it entirely (per P3 #2).
+9. Document `MultiChatService.LastError` as null-returning; tell consumers to query per-child (per P3 #3).
+10. Specify `HttpClient` lifecycle in `§"YouTubeChatService"` — single instance per process, injected via factory, disposed with the service. Currently silent.
+11. Operator-validation Step 3d wording: change `live broadcast ended` to generic `lost connection, will retry` (the current wording is actively misleading for network failures).
+
+---
+
+## 5. Alternatives worth considering
+
+- **Per-vote nonce in vote commands** (`#1!N` where N is the vote ID). Addresses Noita pattern. Backward-compatible (bare `#1` still works, treated as "current vote"). ~30 LOC in vote-parsing; this spec mainly needs to acknowledge the dependency.
+- **Cache `_videoId` across short-window failures.** `§"Reconnect arming"` clears `_videoId` on every retry. Wasteful if the failure was in steady-state polling and the broadcast is still live. Keep `_videoId` cached for ~5 min; clear only on "broadcast ended" (no continuation) or after TTL.
+- **Basic shape-validation for `youtubeChannelId` in `ModSettings.Load`** (per D6). Spec rejects format validation citing "channel IDs have evolved over time." A relaxed pattern (`^[a-zA-Z0-9_-]{20,30}$`) catches paste-error cases without committing to the "UC..." prefix. Cheap defensive layer that complements D6's existing whitespace/control-char rules.
+- **`IChatConsumer` interface split** (see P2 #4) — listed as a suggestion because the spec author may prefer the simpler accept-the-throw posture, but it's the architecturally correct call.
+
+---
+
+## 6. Additions
+
+- **Future-platform extensibility note** in D-table row 9. The spec claims `PlatformOf` is "extensible to a registered table." The full cost of adding a third platform isn't zero: tally-label rendering order and display-name handling, ModEntry construction, settings JSON field, per-platform receipt suffix variants, tests. Document "additive cost is bounded but not zero" so future-Surfinite doesn't believe a third platform is one LOC.
+- **Display-name index on `VoteSession`** to enable D1's "same-name heuristic" future-work cheaply. ~10 LOC now (just track names alongside `_voters`); the alternative is retrofitting the data structure later. Worth pre-investing.
+- **"Refresh fixtures monthly" task in `notes/`.** The load-bearing scraper fixtures rot silently if not refreshed — you only find out when YouTube changes shape *and* your fixtures were already stale. A documented monthly task (or, better, a "refresh and run" PowerShell script) is the smallest fix.
+- **Operator-validation Step 8: "members-only chat probe."** What does the scraper do when discovery succeeds but live chat is members-only? Spec doesn't say. D5 declares it non-goal but doesn't specify the failure mode. Probably it surfaces as "no continuation" (treated as broadcast-ended), but confirm and add to Failure-mode table.
+- **Rebroadcast / immediate-restart scenario** in Failure modes. Streamer ends a broadcast, starts a new one minutes later. Discovery re-runs (good), but new broadcast's chat is empty initially. If a vote was open during the gap, YT-side tallies persist but get no new messages until next broadcast. Probably correct behaviour, but should be explicit.
+
+---
+
+## 7. Removals
+
+- The aggregate `ConnectionStateChanged` event on `MultiChatService` (per P3 #1). Nothing uses it.
+- `LastError` aggregation on `MultiChatService` (per P3 #3). Return null; document per-child query.
+- The 30s flap-suppression debounce (per P3 #2) if not changed to 120s.
+- D6's stricter validation table entry for "control char" is over-engineered — `char.IsControl` will trigger on TAB, LF, CR which are realistic copy-paste pollution rather than malicious input. Tightening to "any control char that isn't whitespace-trimmed" might be more useful, but more likely just trim aggressively and only flag if non-empty post-trim contains control chars. Minor.
+
+---
+
+## 8. Minor / nits
+
+- `§"Connection flow"` step 8: clearing `_videoId` on every poll failure is wasteful when the failure was downstream of discovery. See Alternatives §"Cache `_videoId`".
+- `§"Steady-state poll loop"`: `Login = msg.AuthorChannelId` is misleading for log/debug forensics — logs will show UC-prefixed channel IDs where a human would expect a display name. Use `msg.AuthorDisplayName` for `Login`; `UserId` already carries the unique ID with "yt:" prefix.
+- `§"VoteTallyLabel"`: `_Process` runs every frame; rebuilding the StringBuilder + LINQ `Keys.Select(...).Distinct()` per frame is unnecessary. Cache the rendered text, invalidate only on `TallyChanged`. Small perf, eliminates a per-frame allocation hot path. (Probably true for the existing single-platform path too; v0.2 polish.)
+- `§"VoteSession"`: `TalliesByPlatform` copies the dictionary on every read. Return `IReadOnlyDictionary<>` wrap, not a fresh copy. Tests that need mutation can use a test-only accessor.
+- Failure-mode #17: spec writes `Login = "yt:anon-..."` but the discipline is "yt:" prefix on `UserId`, not `Login`. Confirm — should be `UserId = "yt:anon-" + Guid.NewGuid().ToString("N")[..8]`, with `Login` being something display-appropriate.
+- D10 rendering order via `StringComparer.Ordinal` is alphabetical accident — twitch < youtube. Fine today, fragile when a third platform arrives. Use an explicit `PlatformDisplayOrder` constant.
+- `§"MultiChatService"` `MessageReceived` re-raises with `this` as sender — fine — but the `_dispatcher.Post(...)` closure in `YouTubeChatService.PollAsync` should null-check `_disposed` to avoid posting on a torn-down service.
+- LOC estimate is light. 815 + 360 + new scraper familiarisation + 7-step operator gate validation, in a hobby/part-time setting, is realistically 3–4 weeks. Doesn't change architecture but affects slice-ordering with B.2.2 (CONTEXT Q7).
+- CONTEXT Q7 (slice order): recommend **B.2.2 first**, then this. B.2.2 is predicate-widening on an existing patch — small, low-risk, ships fast, completes StS2 vote coverage on the next decision. This slice is a much larger surface area with a new external dependency and fragility. Shipping B.2.2 first means StS2 vote coverage is more complete when YT integration lands, and the YT slice gets to ride on a steadier base. Override only if FrostPrime's timeline forces it.
+
+---
+
+## 9. Assumptions I'm making (where I lacked codebase visibility)
+
+- `ShouldEnforceSkipGate()` from B.2.1 reads chat state via the same `IChatService` reference `VoteCoordinator` is given. If it reads Twitch via a *separate* injection at construction (not threading through the chat seam), P1 #1 dissolves — but the spec should still pin this down explicitly so a future refactor doesn't reintroduce the bug.
+- `IChatService.ConnectionStateChanged`'s `ChatConnectionChangedEventArgs` carries old + new states. If it doesn't, the "real transition vs. retry" detection for receipt emission is harder than the spec implies.
+- `IClock`, `ITimerScheduler`, `IMainThreadDispatcher` in `Ti/Internal/` are stable abstractions; spec uses them in constructor signatures without re-introducing them.
+- `OS.GetUserDataDir()` returns a writable path on the modded Godot runtime (settings load works as in B.1).
+- Plan A's `OutgoingMessageQueue` is the right place for outgoing messages, and YouTube not having one is acceptable because YT is read-only.
+- Godot's `_Process` is called on the main thread; the `dispatcher.Post` pattern requires this and the Plan A `IMainThreadDispatcher` enforces it.
+- The existing startup-receipt code lives in `ModEntry` (the spec says "ModEntry (or the existing startup-receipt module — pin in implementation)"). If it's a separate module, the D8 changes affect that module, not ModEntry.
+- `EnglishReceipts` is in `Ti/Voting/`; `FormatClose` is its existing method. The spec says it should "ignore" the new `TalliesByPlatform` field — assuming it's a pure-function formatter, that's straightforward.
+- Aggregate-state CHILD events fire on the dispatcher thread (i.e., main thread), so the flap-suppression debounce can use a simple field-based last-fire-timestamp without locking. If they fire on the poll-loop thread, the debounce needs locking or interlocked-int discipline.
+
+---
+
+**End of review.** Happy to expand on any of the P1/P2 items if useful.

@@ -1,0 +1,43 @@
+### 1. One-line verdict
+The B.2.1 spec presents a well-scoped and pragmatic application of the proven suspend-and-resume pattern, but critically overlooks both in-memory state leakage across save/loads and the risk of vanilla soft-locking if partial reward claims aren't properly evaluated by the `HasUnclaimedCardReward` check.
+
+### 2. What's good
+*   **Chat-vs-streamer asymmetry:** Recognizing that chat would abuse a "skip card" option and implementing it as a streamer-side, budget-gated mechanic is a deeply insightful design choice that protects the stream's entertainment value.
+*   **Reusing `NRewardsScreen.DisallowSkipping()`:** Hooking into vanilla's existing state machine for Proceed-blocking rather than brute-forcing the `OnProceedButtonPressed` handler is elegant, resilient, and minimizes Harmony footprint. 
+*   **Run-ID guard addition:** Capturing `RunManager.Instance.DebugOnlyGetState()?.Id` perfectly mitigates the B.1 mid-vote-abandon race condition.
+*   **Rule of Three discipline:** Resisting the urge to abstract the suspend-and-resume boilerplate at *n=2* is the right call for minimizing risk in a v0.1. Copy-pasting ~200 LOC is cheaper than a premature abstraction.
+*   **Failing open on `Prepare`:** Explicitly checking for vanilla field/method shape changes and failing to vanilla (aborting patch registration) aligns perfectly with the mod's degraded-experience philosophy.
+
+### 3. Concerns & risks
+*   **Severity 1: The Save/Load Loophole.** Static `int` skip counters (`_actSkipsUsed`, `_runSkipsUsed`) are stored in-memory. If a streamer saves, quits to the main menu, and reloads mid-run, `_lastSeenRunId` will be re-initialized / mismatch immediately, and the budget will erroneously reset to 0 used. A streamer can use this to get infinite skips. (See Section: *CardRewardSkipGatePatch State*).
+*   **Severity 1: `HasUnclaimedCardReward` False Positives.** In multi-reward combats (e.g., Gold, Potion, Card), if a streamer *claims* the card but leaves the Gold, `HasUnclaimedCardReward` must not report `true`. If the reflection only checks `Reward is CardReward` blindly without also checking if that specific button is `isDone` or `isClaimed`, the Skip Gate will trap the streamer and force them to abandon the Gold/Potion if they are out of skips.
+*   **Severity 2: Multi-Card Reward Combats & Negative Budget.** Some encounters might yield multiple card rewards. If a streamer clicks Proceed to skip *both*, `RewardSkippedFrom` will fire twice. If the streamer only had 1 skip remaining, the budget will drop to -1. The current spec math handles this without crashing, but the chat receipt will look weird: `(2/1 act, 2/∞ run)`.
+*   **Severity 3: Act UI Reset Race.** "Act change is detected at the next rewards screen". If a streamer defeats the Act Boss, takes the boss card reward, skips it, *does the counter count towards Act 1 or Act 2?* Mechanically, they are still in Act 1, so the Act 1 budget is penalized, which is perfectly fine. But ensure the Act index transition exactly matches StS2's map-switch logic.
+
+### 4. Suggested changes
+*   **Update `CardRewardSkipGatePatch` (HasUnclaimedCardReward):** Explicitly mandate in the spec that `HasUnclaimedCardReward` MUST check the claimed/completed state of the `NRewardButton` (e.g., `!button.IsHidden` or `!reward.isClaimed`), not just its type.
+*   **Address the Save/Load Loophole:** For v0.1, you do not need to persist the counters to `slay_the_streamer_2.json`. However, you **must document this as a known loophole** in the spec under Edge Cases, acknowledging that streamer save-scumming resets the counter.
+*   **Format Clamp in Skip Receipt:** In the receipt payload `(<actUsed>/<actLimit> act)`, clamp the `<actUsed>` visual to `<actLimit>` so it doesn't output `(2/1 act)` if they proceed-skip a multi-card screen on exactly 1 remaining budget.
+*   **UI Anchoring Resiliency:** In `CardSkipCounterLabel (the UI)`, specify that the Godot Label should use `Control.SetAnchorsAndOffsetsPreset(...)` relative to the Proceed button to ensure they stay structurally bound if the screen scales.
+
+### 5. Alternatives
+*   **Act/Run Start detection:** Instead of lazily checking `runState.Id` and `CurrentActIndex` on every `_Ready` (which requires null-tracking and generates the save/load flaw), you could postfix StS2's actual `StartRun` and `TransitionToAct` methods to reset the static counters. This guarantees precision over lazy calculation, though lazy is acceptable if the save/load limit is acknowledged.
+*   **Streamer Escape UI:** Instead of anchoring a new Godot Label, the existing `VoteTallyLabel` (which is already globally positioned and verified to work) could simply add a line at the bottom: `"Skips available: 1"`. This completely circumvents UI parenting risks around `NRewardsScreen`.
+
+### 6. Additions
+*   **Clarify Alternate Button Behavior:** The spec says Alternates aren't patched. Add an explicit note acknowledging that clicking an Alternate (like "Singing Bowl" Max HP instead of a card) *will bypass chat entirely*. This is a valid streamer out, but the spec should mathematically acknowledge it's an intended loophole.
+*   **Add a Multi-Card Test Case:** Add a test case to `CardRewardSkipGateTests.cs` that verifies behavior when two card rewards are skipped concurrently (incrementing counters appropriately without crashing).
+
+### 7. Removals
+*   Nothing needs to be removed. The constraints to avoid B.2.2/B.2.3 and to defer base-class extraction are firmly and accurately established.
+
+### 8. Minor / nits
+*   *Question 1 (Should MP show the label?):* No. Bailing on MP in the gate logic means the budget is not enforced. Displaying the counter label when the gate is bypassed is confusing UI. Hide the label dynamically if `Players.Count > 1`.
+*   *Question 2 (Run-ID guard `Prepare` behavior):* The core constraint demands a soft fail. If the run identifier field cannot be found, you should absolutely fail-open (abort patch registration), log a warning, and allow vanilla reward screens. Do not risk crashing the game or breaking loop state.
+*   *Question 3 (Reroll chat receipt):* No receipt. You correctly assessed it's an edge case. Spamming Twitch chat with a cancellation message every time a streamer rerolls a shop/card selection is unnecessary noise. 
+*   *Question 4 (Skip via Proceed unopened):* Counting unopened card skips is correct. If they didn't cost a skip, the streamer could blindly bypass chat without consequence.
+
+### 9. Assumptions you're making
+*   **Vanilla Button State:** I am assuming `NRewardButton` or `CardReward` has a reliable public/internal boolean (like `isClaimed`, `isDone`, or `isHidden`) that allows you to distinguish an unused card reward from a consumed one. If this doesn't exist, the skip gate implementation as written in the spec is fundamentally unworkable.
+*   **Proceed Synchronicity:** I am assuming that clicking "Proceed" in vanilla StS2 evaluates `RewardSkippedFrom` for all remaining items *synchronously* on the main thread before the screen is destroyed. 
+*   **DisallowSkipping() dynamic evaluation:** I am assuming that if `DisallowSkipping()` is triggered in `_Ready`, vanilla StS2 properly re-evaluates `TryEnableProceedButton` when a card actually *gets claimed*. If vanilla does not re-evaluate this, the streamer will remain soft-locked on the reward screen even after Chat picks a card.

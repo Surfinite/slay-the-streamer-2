@@ -1,0 +1,67 @@
+**One-line verdict:** A solid, tightly-scoped vertical slice that correctly extends the B.1 suspend-and-resume pattern, but it hinges on an unverified debug-only run identifier and a speculative settings-accessor abstraction that must be resolved before coding starts.
+
+**What's good — preserve as-is**
+
+- **Rule of Three discipline on helper extraction.** Keeping `CardRewardVotePatch` as a deliberate copy-paste-modify of `NeowBlessingVotePatch` is the right call. The shared structure will be obvious after B.2.2; abstracting now would cement the wrong interface.
+- **Piggybacking on `DisallowSkipping()` instead of patching `OnProceedButtonPressed`.** This is a materially smaller Harmony surface and correctly respects vanilla's existing skip-state machine.
+- **Skip-as-streamer-only escape valve.** The chat-vs-streamer asymmetry framing is load-bearing and correctly excludes skip from the vote options. This should remain non-negotiable.
+- **Fail-soft degradation matrix (Section "Failure modes & degradation").** Every row has a clean vanilla fallback. This philosophy is the reason B.1 shipped without incident.
+- **Vote-on-click model preserved.** Starting the vote on card click (not screen open) lets the streamer read, reroll, or think before triggering chat agency. This is strictly better than vote-on-open for card rewards.
+
+**Concerns & risks — ranked**
+
+1. **Critical: Run-ID guard relies on `RunManager.Instance.DebugOnlyGetState()?.Id`.** The method name `DebugOnlyGetState` strongly implies it is stripped, inlined differently, or returns null in release builds. `Prepare` can verify the method *exists* via reflection, but it cannot verify it returns a stable non-null identifier at runtime. If this returns null in production, the guard silently disables itself and the resume-after-abandon race returns. *Suggested fix:* Verify this returns a real value in a release build of StS2 before committing to it. If it does not, fall back to a composite key (e.g., `RunState.Acts.Count + RunState.CurrentRoom.NodeId + player.Health`) or accept that `IsInstanceValid` plus a timestamp heuristic is the best you can do. Do not ship a safety feature that only works in debug.
+
+2. **High: Skip receipt risks violating the TI/Game seam.** The spec prefers adding a skip-receipt helper to `Ti/Voting/EnglishReceipts`, but `EnglishReceipts` lives in the game-agnostic `Ti/` namespace. Card-skip budget semantics are strictly `Game/` concerns. Putting skip receipt text in `Ti/` creates a seam violation and complicates future extraction. *Suggested fix:* Keep skip receipt formatting in `Game/` (inline in the patch or a new `Game/Ui/Receipts.cs`). Do not touch `Ti/Voting/EnglishReceipts` for this.
+
+3. **High: Speculative settings accessor (`ModEntryState.Settings`).** The spec introduces `ModEntryState.Settings` in `CardRewardSkipGatePatch`, but B.1's context describes no such static state holder. `ModSettings` is a JSON reader returning a `SettingsResult`; it is not shown as a long-lived static singleton. If the patch author invents `ModEntryState` ad-hoc, it may duplicate settings-loading logic or hold stale state. *Suggested fix:* Explicitly define how patches access settings. If `ModEntry` caches a `ModSettings.Success` record in a static field, document that in the Architecture section and show the type name. Do not leave it as "injected via static accessor or constructor-equivalent."
+
+4. **Medium: Skip receipt may bypass `OutgoingMessageQueue` rate limiting.** The spec says "Send chat receipt via `Voter.Default.Coordinator.Chat`". If `VoteCoordinator` exposes the raw `IChatService`, skip receipts will bypass Plan A's `OutgoingMessageQueue` (which enforces 20 msg / 30s). A burst of skips + votes could hit Twitch's hard rate limit or get the bot shadow-banned. *Suggested fix:* Ensure skip receipts go through the same enqueue pipeline as vote receipts. If `VoteCoordinator` does not expose a `SendReceipt(string)` method, add one rather than reaching around it.
+
+5. **Medium: Random fallback forces a card pick even when skip budget is available.** If chat sends zero votes, the streamer is forced to take a random card. In B.1 (Neow), picking something is mandatory. In B.2.1, skip is a valid streamer action. A dead chat should not override the streamer's skip budget. *Suggested fix:* Either (a) make the random fallback respect skip budget and pick skip when budget allows, or (b) document this as intentional "chat silence = forced card" and confirm streamers accept it. I lean toward (a) for consistency with the streamer-ownership principle.
+
+6. **Medium: `CardRewardSkipGatePatch` reset logic is not atomic with increments.** `_actSkipsUsed` and `_runSkipsUsed` are incremented via `Interlocked.Increment` in `RewardSkippedFrom`, but reset via plain assignment in `_Ready`. While Godot signals usually run on the main thread, this mixed concurrency model is brittle if a future patch introduces background skip detection. *Suggested fix:* Either use `Interlocked.Exchange` for resets or add a comment proving both sites are main-thread-only. Consistency matters for the next maintainer.
+
+7. **Low: `Guid?` assumption for run ID.** The spec guesses `Guid` but adds a parenthetical "replace with actual run-id type if not Guid". This should be resolved before implementation, not deferred to the coding phase. *Suggested fix:* Verify the type in decompiled source and fix the spec now.
+
+**Suggested changes**
+
+- **Section `CardRewardVotePatch` / Run-ID guard:** Change "capture `RunManager.Instance.DebugOnlyGetState()?.Id`" to a two-tier approach: try `DebugOnlyGetState()?.Id` first; if null, compute a synthetic run fingerprint from `RunState` fields that are known to exist. Log at `Warn` if the debug method returns null so the operator knows the guard is degraded.
+- **Section `CardRewardSkipGatePatch` / Receipt format note:** Strike the suggestion to add skip receipts to `Ti/Voting/EnglishReceipts`. Instead, add a static helper in `Game/DecisionVotes/CardRewardSkipGatePatch` or a new `Game/Ui/SkipReceiptFormatter.cs`.
+- **Section `CardRewardSkipGatePatch` / Settings access:** Replace `ModEntryState.Settings` with an explicit call pattern, e.g. `ModEntry.Settings` (if `ModEntry` holds the cached record) or `ModSettings.LoadOrDefault()`. Show the real type.
+- **Section Decisions / Decision 10 (Random fallback):** Amend to "Random fallback picks a random card, or skip if skip budget allows and chat sent zero votes." Or explicitly document the "chat silence = forced card" contract in the context doc if you reject this.
+- **Section `CardSkipCounterLabel`:** Add a fallback for the "∞" glyph. Godot's default project font may not render U+221E. Use the string "unlimited" or "inf" if the glyph fails a quick render test, or switch to `RichTextLabel` with a known-good dynamic font. This is v0.1 polish that prevents a broken-looking UI.
+- **Add operator-validation sub-step:** In Step 5, explicitly test "Start vote, streamer opens menu and clicks Abandon Run, wait for vote timer to expire" to verify the run-ID guard actually fires in a real runtime (not just code review).
+
+**Alternatives worth considering**
+
+- **Single-mode skip budget instead of dual.** The dual model (`perAct` + `perRun`) is not over-designed, but it *is* under-utilized: the default (`1/act, ∞/run`) means the per-run limit is effectively inert. Consider whether B.2.4 (settings UI) will actually expose both knobs, or if you should default to `perAct` only and add `perRun` later when a streamer actually asks for it. The code cost is sunk either way, but the settings-schema surface area is not.
+- **Route skip receipts through `VoteCoordinator.Start` as a zero-option "vote".** This would unify rate limiting, receipt formatting, and chat-service access. Rejected because it conflates skip mechanics with vote mechanics, but it would solve the seam violation and rate-limiting concerns in one shot. Worth a one-sentence revisit in B.2.2.
+- **Use `RichTextLabel` for `CardSkipCounterLabel` from day one.** If you later want colour (e.g., red text when act budget is exhausted), you'll have to swap the node type and re-test layout. `RichTextLabel` with no BBCode is functionally identical to `Label` but leaves the door open.
+
+**Additions — missing and should be added**
+
+- **Explicit MP-bail consistency check.** `NeowBlessingVotePatch` bails on `Players.Count > 1`, but Neow happens before `RunState` exists. `CardRewardVotePatch` and `CardRewardSkipGatePatch` need to bail on the same condition, yet the spec only mentions it in the skip gate. Verify that `Players` is accessible from `NCardRewardSelectionScreen.SelectCard`'s context (it likely is via a static `GameState` or similar, but state it explicitly).
+- **What happens if streamer clicks Proceed while `NCardRewardSelectionScreen` is open?** The spec assumes the sub-screen blocks interaction with the rewards screen, but this is an assumption. If Proceed is clickable, the skip gate could fire while `_voteInProgress == 1`, potentially decrementing the skip budget and leaving the vote orphaned. Add a guard: `if (CardRewardVotePatch.VoteInProgress) return;` in the skip gate, or verify via decompilation that the sub-screen is modal.
+- **Run-ID guard fallback logging.** If the guard fires, it currently logs at `Info`. Because this is a safety feature that silently drops a vote, it should log at `Warn` so operators can detect it during validation. Info-level logs are often filtered out.
+- **A `Prepare` shape check for `_proceedButton`.** The label placement depends on finding the proceed button. If its field name or type changes, the label fallback (fixed offset from root) may place the label off-screen. `Prepare` should verify `_proceedButton` exists so the patch can fail closed on UI layout changes, or at least log that the label is running in degraded positioning mode.
+
+**Removals — should be cut**
+
+- **Nothing major.** Scope is appropriately tight. Do not remove the copy-paste duplication; that is correct.
+
+**Minor / nits**
+
+- **Decision 14 / DevConsole:** Confirm that `ModManager.IsRunningModded()` is true for assembly-mod loads, not just Steam Workshop mods. It almost certainly is, but it's worth a one-line assertion in the spec.
+- **`DisableEventOptions` analogue omission:** The spec notes `NCardRewardSelectionScreen` has no equivalent and relies on `_voteInProgress`. This is acceptable, but consider whether rapid clicks could queue multiple Godot signals before the prefix re-enters. The `Interlocked` guard handles this, but the spec should explicitly state "the first click wins; subsequent clicks during the 30s vote are no-ops" for clarity.
+- **Tests:** `CardRewardSkipGateTests` should include a test for negative values other than `-1` (e.g., `-5` clamps to `-1`). The spec lists this for `ModSettingsTests` but not for the gate logic itself.
+- **Operator validation Step 2:** The expected receipt string uses `∞`. If the chat font or Twitch chat doesn't render this glyph well, the operator validation will look wrong even if the code is right. Consider using `unlimited` in receipts and reserving `∞` for the in-game label only.
+
+**Assumptions I'm making (validate in meta-review)**
+
+1. **`DebugOnlyGetState()` exists as a method on `RunManager` in the decompiled source and returns an object with an `Id` property.** I am assuming the spec author has seen this in decompilation, but the "DebugOnly" prefix makes me suspect it may be conditional or stripped.
+2. **`Voter.Default.Coordinator` exposes a way to send chat messages, or the `IChatService` is reachable from `Game/` code without crossing the TI/Game seam.** The spec hand-waves this as "or equivalent accessor."
+3. **`NRewardsScreen._Ready` and `RewardSkippedFrom` always execute on Godot's main thread**, making the `Interlocked` increments thread-safe relative to the resets in `_Ready`. If Godot defers signals to a worker, the counter state will race.
+4. **`_rewardButtons` is a field on `NRewardsScreen` containing `Control`-derived buttons that expose a `Reward` property or field.** The spec implies this is already known from decompilation.
+5. **`NCardRewardSelectionScreen` blocks input to the parent `NRewardsScreen` while open**, preventing the streamer from clicking Proceed during an active card vote. If this is false, the skip-gate / vote-patch interaction needs rethinking.
+6. **A static settings holder (e.g., `ModEntryState` or `ModEntry.Settings`) will be created or already exists** to give patches access to parsed settings without reloading JSON on every rewards screen.

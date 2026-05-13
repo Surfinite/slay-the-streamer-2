@@ -127,7 +127,7 @@ internal static class AncientVotePatch {
         // CardRewardVotePatch's same-named check; Surfinite's request 2026-05-12 after
         // Discord feedback flagged it as a real edge case.
         if (labels.Count <= 1) {
-            TiLog.Info($"[SlayTheStreamer2][ancient-vote] single-option blessing; skipping vote (option: {labels[0]})");
+            TiLog.Info($"[SlayTheStreamer2][ancient-vote] single-option offering; skipping vote (option: {labels[0]})");
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }

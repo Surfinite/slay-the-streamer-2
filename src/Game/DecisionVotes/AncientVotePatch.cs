@@ -122,7 +122,7 @@ internal static class AncientVotePatch {
         var optionsSnapshot = liveOptions.ToList();
         var labels = optionsSnapshot.Select(o => o.Title.GetFormattedText()).ToList();
 
-        // Single-option Neow bonus is degenerate (chat "votes" on the only option).
+        // Single-option ancient offering is degenerate (chat "votes" on the only option).
         // Skip the ceremony, let vanilla apply the streamer's click directly. Mirrors
         // CardRewardVotePatch's same-named check; Surfinite's request 2026-05-12 after
         // Discord feedback flagged it as a real edge case.
@@ -134,7 +134,7 @@ internal static class AncientVotePatch {
 
         VoteSession session;
         try {
-            session = coordinator.Start("Neow's Bonus", labels, TimeSpan.FromSeconds(30));
+            session = coordinator.Start(GetVoteTitle(__instance), labels, TimeSpan.FromSeconds(30));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][ancient-vote] Voter.Default.Start threw; falling back to vanilla", ex);
             Interlocked.Exchange(ref _voteInProgress, 0);
@@ -263,6 +263,12 @@ internal static class AncientVotePatch {
     private static bool IsAncientEvent(NEventRoom room) {
         var eventModel = _eventField.Value?.GetValue(room);
         return eventModel is AncientEventModel and not DeprecatedAncientEvent;
+    }
+
+    private static string GetVoteTitle(NEventRoom room) {
+        var eventModel = _eventField.Value?.GetValue(room) as EventModel;
+        var name = eventModel?.Title.GetFormattedText() ?? "Ancient";
+        return $"{name}'s Offering";
     }
 
     private static IReadOnlyList<EventOption>? GetCurrentOptions(NEventRoom room) {

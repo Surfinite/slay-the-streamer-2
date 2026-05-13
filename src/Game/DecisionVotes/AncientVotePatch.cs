@@ -72,7 +72,7 @@ internal static class AncientVotePatch {
 
     static bool Prefix(NEventRoom __instance, EventOption option, int index) {
         if (_resumeInProgress == 1) return true;
-        if (!IsNeowEvent(__instance)) return true;
+        if (!IsAncientEvent(__instance)) return true;
         if (option.IsLocked || option.IsProceed) return true;
 
         if (TryGetEventOwnerPlayerCount(__instance) is int playerCount && playerCount > 1) {
@@ -193,8 +193,8 @@ internal static class AncientVotePatch {
                 TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume: room no longer valid; dropping resume");
                 return;
             }
-            if (!IsNeowEvent(room)) {
-                TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume: active event is no longer Neow; dropping resume");
+            if (!IsAncientEvent(room)) {
+                TiLog.Warn("[SlayTheStreamer2][ancient-vote] resume: active event is no longer an ancient; dropping resume");
                 return;
             }
             // Run-state liveness checks. Catches:
@@ -260,9 +260,9 @@ internal static class AncientVotePatch {
         }
     }
 
-    private static bool IsNeowEvent(NEventRoom room) {
+    private static bool IsAncientEvent(NEventRoom room) {
         var eventModel = _eventField.Value?.GetValue(room);
-        return eventModel is Neow;
+        return eventModel is AncientEventModel and not DeprecatedAncientEvent;
     }
 
     private static IReadOnlyList<EventOption>? GetCurrentOptions(NEventRoom room) {

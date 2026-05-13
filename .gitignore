@@ -29,6 +29,9 @@ Thumbs.db
 
 # Claude Code per-user state (commands/skills/shared settings DO get committed)
 .claude/settings.local.json
+# Claude Code worktrees: local isolated workspaces for feature branches,
+# managed by the EnterWorktree/ExitWorktree harness tools.
+.claude/worktrees/
 
 # sts2.dll and 0Harmony.dll are copied per-build from the game install;
 # they're MegaCrit / HarmonyLib binaries, not ours to redistribute.

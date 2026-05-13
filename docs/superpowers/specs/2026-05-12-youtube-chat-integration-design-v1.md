@@ -701,8 +701,8 @@ Carried forward from notes/07 (no design changes in this spec; just spec authors
 2. **What's the expected YouTube chat volume?** The `pytchat`-class scrapers reportedly lag on >1000 msg/min; we'd need to benchmark before committing if FrostPrime's YT audience is that big. Mitigation if it is: rate-limit `MessageReceived` propagation in the YT child (sample 1-of-N), or extend the vote-window. Either way, we'd want to measure before redesigning.
 3. **Members-only or public chat?** Determined non-goal per D5; confirm with FrostPrime that members-only-disabled-during-streams is acceptable.
 4. **Cross-platform vote-counting policy preference (D1)?** Per-platform double-count is the v1 decision; FrostPrime may want a different policy (e.g., display-name-match heuristic). Hooks for it are in place via the `PlatformOf` helper + per-platform tally side-dict.
-5. **Does the existing chat-overlay he uses for YouTube (the "displays both chats on screen" tool Jessie mentioned) constrain our integration shape?** If the overlay is reading from the same `youtubei` endpoint, we may be doubling load on YouTube's side; benchmarking + maybe coordinate.
-6. **Is FrostPrime open to having Surfinite continue this work after the tournament rather than commissioning someone else?** Per ArmadilloTea: "he intended on paying someone". Coordination question, not a spec question.
+5. **Does the existing chat-overlay he uses for YouTube (the "displays both chats on screen" tool a community member mentioned) constrain our integration shape?** If the overlay is reading from the same `youtubei` endpoint, we may be doubling load on YouTube's side; benchmarking + maybe coordinate.
+6. **Is FrostPrime open to having Surfinite continue this work after the tournament rather than commissioning someone else?** Per a community member: "he intended on paying someone". Coordination question, not a spec question.
 
 ## LOC estimate + risk areas
 

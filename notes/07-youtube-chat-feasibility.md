@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-12
 **Status**: Feasibility analysis. Not yet a spec or plan; not committed to a release. Promote to a real spec under `docs/superpowers/specs/` if/when scoped for a slice.
-**Motivation**: FrostPrime — the streamer this mod is being aimed at — wants YouTube chat participation alongside Twitch (per ArmadilloTea in FrostPrime's Discord, 2026-05-12). This file captures the research Surfinite already did via a Claude desktop conversation, plus the architectural fit with our existing `Ti/Chat/` layer, so a future session can pick this up without re-deriving the landscape.
+**Motivation**: FrostPrime — the streamer this mod is being aimed at — wants YouTube chat participation alongside Twitch (per a community member in FrostPrime's Discord, 2026-05-12). This file captures the research Surfinite already did via a Claude desktop conversation, plus the architectural fit with our existing `Ti/Chat/` layer, so a future session can pick this up without re-deriving the landscape.
 
 ## TL;DR
 
@@ -146,14 +146,14 @@ Total: **~1–2 weeks** of focused work. Most risk is in the scraper because You
 
 ## Open questions for FrostPrime
 
-If Surfinite and FrostPrime sync up (per ArmadilloTea's suggestion, when the tournament finishes):
+If Surfinite and FrostPrime sync up (per a community member's suggestion, when the tournament finishes):
 
 1. Is YouTube parallel a hard requirement, or nice-to-have? Affects whether we ship without it.
 2. What's the expected YouTube chat volume? Pytchat-class scrapers reportedly lag on >1000 msg/min; we'd need to benchmark if his audience is that big.
 3. Members-only or public chat?
 4. Cross-platform vote-counting policy preference (D1)?
-5. Does the existing chat overlay he uses for YouTube (the "displays both chats on screen" tool Jessie mentioned) constrain our integration shape?
-6. Is FrostPrime open to having Surfinite continue this work after the tournament rather than commissioning someone else? (per ArmadilloTea: "he intended on paying someone")
+5. Does the existing chat overlay he uses for YouTube (the "displays both chats on screen" tool a community member mentioned) constrain our integration shape?
+6. Is FrostPrime open to having Surfinite continue this work after the tournament rather than commissioning someone else? (per a community member: "he intended on paying someone")
 
 ## Cross-references
 

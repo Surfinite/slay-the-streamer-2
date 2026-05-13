@@ -106,11 +106,11 @@ These are the "should chat vote on this decision?" knobs. Each ships as `bool` w
 | `voteOnAncients` (Pael / Tezcatara) | 🔵 planned | B.2.2 work. Same shape as Neow vote per [sts2_ancients](../../../Users/Surfinite/.claude/projects/c--Users-Surfinite-slay-the-streamer-2/memory/sts2_ancients.md) — likely predicate-widening on `NeowBlessingVotePatch.IsNeowEvent`. Toggle would gate the predicate. |
 | `voteOnMapRoute` | 🔵 planned + 🟣 ask | Surfinite's example: "streamer wants chat to pick the map route". Not yet implemented; map-route patch surface unknown. |
 | `voteOnShop` | 🔵 planned | Buy what, remove what. Per [notes/06](06-followups-and-deferred.md): "Plan A non-goals → shop covered later". |
-| `voteOnEvent` | 🔵 planned | Per [notes/06](06-followups-and-deferred.md) + Discord 2026-05-12 (ArmadilloTea): original Tempus mod **deliberately did NOT chat-control events** ("for the best"). Krakput flagged Slippery Bridge / The Trial as bad-for-chat-control. **Default off** if shipped; only enable per streamer's explicit choice. |
+| `voteOnEvent` | 🔵 planned | Per [notes/06](06-followups-and-deferred.md) + Discord 2026-05-12 (a community member): original Tempus mod **deliberately did NOT chat-control events** ("for the best"). Another community member flagged Slippery Bridge / The Trial as bad-for-chat-control. **Default off** if shipped; only enable per streamer's explicit choice. |
 | `voteOnSealedDeckDraft` | 🔵 planned | Per [notes/08](08-sealed-deck-custom-mode-investigation.md): vanilla `Draft` modifier emergently lets chat vote on all 10 picks via our existing patches. So this is more like "does the streamer ENABLE Draft modifier" than "does our mod do something" — but worth a settings line that documents the interaction. |
 | `voteOnPotionUse` | 🔵 planned | Far future. Chat decides when to drink the potion. Not in any current spec. |
 | `voteOnCombatTargeting` | 🔵 planned | Far future. Per-card-play target vote. Slow; only relevant for Whispering Earrings-style "chat plays for the streamer" mode. |
-| `voteOnWhisperingEarringsFirstTurn` | 🔵 planned | Per [notes/06](06-followups-and-deferred.md): two variants — `whisperingEarringsMode: "voteEachCard"` (slow) or `"spam"` (Krakput's first-vote-wins). Pick one or expose both. |
+| `voteOnWhisperingEarringsFirstTurn` | 🔵 planned | Per [notes/06](06-followups-and-deferred.md): two variants — `whisperingEarringsMode: "voteEachCard"` (slow) or `"spam"` (community-proposed first-vote-wins). Pick one or expose both. |
 
 ### B.3 — Per-vote tuning (when a vote IS happening, how does it behave)
 

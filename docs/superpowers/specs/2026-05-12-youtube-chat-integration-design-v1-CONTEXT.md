@@ -64,7 +64,7 @@ Decisions D1–D10 were resolved in conversation between Surfinite and Claude on
 
 End users are streamers running Twitch + (optionally) YouTube simulcasts of Slay the Spire 2 who want chat participation. Chat viewers on either platform type vote commands like `#0` / `#1` / `#2` (or bare `0`, `1`, `2`).
 
-The specific streamer driving this slice is **FrostPrime**, brought to Surfinite's attention via FrostPrime's Discord (ArmadilloTea, 2026-05-12). FrostPrime hasn't been contacted directly yet; the spec's "Open questions" section captures FrostPrime-coordination questions to ask once his tournament finishes.
+The specific streamer driving this slice is **FrostPrime**, brought to Surfinite's attention via FrostPrime's Discord (a community member, 2026-05-12). FrostPrime hasn't been contacted directly yet; the spec's "Open questions" section captures FrostPrime-coordination questions to ask once his tournament finishes.
 
 ---
 

@@ -216,6 +216,40 @@ Those are Task 18's responsibility; this spike (Task 1) only commits the two top
 
 ---
 
+## Plan B.2.2 ancient vote (resolved 2026-05-14)
+
+Plan B.2.2's spec is at [`docs/superpowers/specs/2026-05-13-plan-b-2-2-ancient-vote-design.md`](../docs/superpowers/specs/2026-05-13-plan-b-2-2-ancient-vote-design.md); the implementation plan at [`docs/superpowers/plans/2026-05-13-plan-b-2-2-ancient-vote.md`](../docs/superpowers/plans/2026-05-13-plan-b-2-2-ancient-vote.md). Slice tagged `plan-b-2-2-complete`.
+
+### Acceptance gate — green (one ancient presumed good without in-game observation)
+
+- [x] **Neow regression** — vote title reads "Neow's Offering" in Twitch chat (cosmetic regression from "Neow's Bonus" was accepted in the spec). Chat votes apply.
+- [x] **Act 2 ancients** — Pael, Tezcatara, Orobas all validated in-game. Vote opens with `{Name}'s Offering` title, chat votes apply, winning relic granted.
+- [x] **Act 3 ancients** — Nonupeipe, Tanx validated in-game. **Vakuu not encountered** during operator-validation (vanilla seed/character roll didn't surface him); presumed good on the strength of the inheritance-based predicate plus successful validation of the other five mid-run ancients.
+- [x] **Darv** (cross-act, `AllSharedAncients`, gated on `DarvEpoch`) — validated in-game. Confirms the inheritance predicate handles the cross-act path that the per-act `AllAncients` lists don't surface.
+- [x] **Trolling override** — streamer click overridden by chat vote on at least one ancient. Suspend-and-resume flow works on the new event types.
+- [x] **Log inspection** — `[ancient-vote]` log lines appear; no `[neow-vote]` lines remain anywhere in `godot.log`.
+
+### Architecture-defining outcomes
+
+**Inheritance-based predicate is the right shape for "events that share an underlying option-button flow".** The predicate `eventModel is AncientEventModel and not DeprecatedAncientEvent` covered all seven mid-run ancients (Neow + 6 ancients + Darv via `AllSharedAncients`) without any per-type allow-list maintenance. Future ancients MegaCrit ships will auto-work. The existing safety nets (single-option skip → vanilla; multiplayer bail → vanilla; `HandleVoteAsync` try/catch → fallback to player click; resume-time liveness checks) cover any non-standard option semantics in future ancients without preemptive defensive coding.
+
+**Per-event-model vote title derivation generalizes cleanly.** `eventModel.Title.GetFormattedText()` returned the expected localized names ("Neow", "Pael", "Tezcatara", etc.) with no fallback hits during validation. The `"Ancient"` fallback in `GetVoteTitle` remained unreachable as expected. The `$"{name}'s Offering"` suffix is English-only and would need localization for a non-English build (not in current scope).
+
+### Findings worth preserving
+
+- **Darv was missed in initial brainstorming research.** It's an `AncientEventModel` subclass exposed via `ModelDb.AllSharedAncients` (cross-act) rather than any per-act `AllAncients` list at [`decompiled/sts2/MegaCrit/sts2/Core/Models/ModelDb.cs:121`](../decompiled/sts2/MegaCrit/sts2/Core/Models/ModelDb.cs#L121). Caught during T3's code review. Lesson for future predicate-widening slices: grep `class.*:.*AncientEventModel` (or equivalent base-class probe) across `decompiled/sts2/MegaCrit/sts2/Core/Models/Events/`, not just the per-act `AllAncients` enumerations.
+- **`AncientEventModel` lives in `MegaCrit.Sts2.Core.Models`, NOT `MegaCrit.Sts2.Core.Entities.Ancients`.** The B.2.2 spec originally claimed the latter; T3's implementer verified the actual namespace from the decompile and corrected upstream. The `Entities/Ancients/` folder contains dialogue + identity types (`AncientDialogueSet`, etc.), not the model itself. Memory entry [`sts2_ancients`](../../.claude/projects/c--Users-Surfinite-slay-the-streamer-2/memory/sts2_ancients.md) updated to flag this.
+- **The "Strike/Defend dependency on ancient relic pickup" investigation surfaced two relics worth knowing about.** Only `NutritiousSoup` (Tezcatara Pool1, enchants Basic Strikes — silently inert if deck has no Strikes) and `ArchaicTooth` (Orobas Pool3, transcends one of `{Bash, Neutralize, Unleash, FallingStar, Dualcast}` — game-side filtered via `SetupForPlayer`) interact with starter cards. The game handles ArchaicTooth correctly without our help; NutritiousSoup is a vanilla quirk we don't fix (Sealed/Draft-only edge case). See spec § Edge cases.
+- **Suspend-and-resume Harmony pattern (from B.1) is fully event-type-agnostic.** No changes needed to the resume flow, run-id guard, or multiplayer bail to support six new event types. Predicate-widening alone was sufficient.
+
+### Follow-ups + observations
+
+- **Mod-version hash mystery (2026-05-14):** Surfinite's runtime log at validation time showed `[INFO] [SlayTheStreamer2] mod version: 1.0.0+d7eb5a5985018847dd27239366bd03dd3d8ab25d`, but `d7eb5a5` is the commit that *predates* all six B.2.2 commits. New behaviors (`[ancient-vote]` log lines, "Neow's Offering" vote title) were confirmed running in-game, so the deployed dist is current — the version-hash capture in `build.ps1` appears to be stale or out of sync with the actual HEAD at build time. Worth a forensic dive on what `build.ps1` reads vs. what `git log -1 --format=%H` would say. Doesn't block the slice; flag for v0.2 polish.
+- **Vakuu acceptance-gate gap.** Not encountered during validation. The inheritance-based predicate makes per-ancient coverage rationally optional once a few have been confirmed, but if a Vakuu vote ever misbehaves later, this gap is the explanation.
+- **Stale internal vocabulary fixes were caught in code review, not brainstorming.** Two log/comment strings still said "Neow blessing" / "Neow bonus" after T3-T4's main edits. Caught in T3 and T4 code-reviewer agents, fixed in follow-up commits `e314048` and via T4's bundled polish. Lesson: when widening the scope of an existing patch, grep for ALL string-literal references to the old narrow term (`git grep "Neow"`), not just the function names.
+
+---
+
 ## Plan B.2.1 card reward vote (resolved 2026-05-11)
 
 Plan B.2.1's spec is at [`docs/superpowers/specs/2026-05-10-plan-b-2-1-card-reward-vote-design-v4.md`](../docs/superpowers/specs/2026-05-10-plan-b-2-1-card-reward-vote-design-v4.md) (with two 2026-05-11 amendments to Decisions 18 and 21); the implementation plan at [`docs/superpowers/plans/2026-05-10-plan-b-2-1-card-reward-vote.md`](../docs/superpowers/plans/2026-05-10-plan-b-2-1-card-reward-vote.md). Tagged `plan-b-2-1-complete`.

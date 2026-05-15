@@ -168,18 +168,28 @@ internal static class BossVotePatch {
     /// on the game-over screen (or main menu after save-quit) with the popup
     /// still rendered on top, blocking the Continue / Main Menu buttons.
     /// Triggers on: RunManager.Instance null, IsAbandoned, runState null,
-    /// or IsGameOver. Fail-safe defaults to false — a transient null/throw
-    /// during normal play shouldn't kill an active vote.
+    /// or IsGameOver. Side-effect: also clears the (run, act) idempotency
+    /// marker so that a save-quit-and-Continue scenario re-fires the vote
+    /// (StS2's save-quit snapshot can predate the boss-swap commit, leaving
+    /// the run state without a swap; without clearing the marker, the
+    /// idempotency check would skip the re-vote and the streamer would
+    /// fight vanilla's pre-rolled boss).
+    /// Fail-safe defaults to false — a transient null/throw during normal
+    /// play shouldn't kill an active vote.
     /// </summary>
     private static bool IsRunDying() {
         try {
             var rm = RunManager.Instance;
-            if (rm is null) return true;
-            if (rm.IsAbandoned) return true;
-            var state = rm.DebugOnlyGetState();
-            if (state is null) return true;
-            if (state.IsGameOver) return true;
-            return false;
+            bool dying =
+                rm is null
+                || rm.IsAbandoned
+                || rm.DebugOnlyGetState() is null
+                || (rm.DebugOnlyGetState()?.IsGameOver ?? false);
+            if (dying) {
+                _lastSwapRunId = null;
+                _lastSwapActIndex = -1;
+            }
+            return dying;
         } catch {
             return false;
         }

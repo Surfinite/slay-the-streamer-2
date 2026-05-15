@@ -41,16 +41,21 @@ Net change: ~80–100 LOC across 3 modified files + 1 new helper file + 1 new te
 
 Three files change; one new helper file is created; no new abstractions are introduced.
 
-### TI/Game seam — absolute preservation
+### TI/Game seam — public surface absolute, private impl typed
 
-<!-- CHANGED: language reflects ProcessMode design; seam concession removed entirely — Reviewers 1, 3, 7, 8 -->
+<!-- CHANGED: language reflects ProcessMode design; seam concession removed for occlusion path — Reviewers 1, 3, 7, 8 -->
+<!-- CHANGED: typed private helpers per user-applied Optional #1 — duck-typing was over-engineering -->
 
-The ProcessMode.Disabled approach eliminates the v1 design's private-field concession:
+The ProcessMode.Disabled approach eliminates the v1 design's *occlusion* private-field concession. The fit-measurement helper retains typed access to `NCreatureVisuals` via *private static* helpers — the public API surface stays MegaCrit-free, which is what matters for TI extraction:
 
 - [`src/Game/Ui/BossVotePopupOption.cs`](../../../src/Game/Ui/BossVotePopupOption.cs) — fully MegaCrit-free. DTO's only new field is `Func<Node2D>? VisualsFactory`, a delegate type from `System` + `Godot` only.
-- [`src/Game/Ui/BossVotePopup.cs`](../../../src/Game/Ui/BossVotePopup.cs) — fully MegaCrit-free at both interface and implementation. The popup holds `List<Control>` for slot references (Godot type), not `List<NCreatureVisuals>`. Setting `slot.ProcessMode = ProcessModeEnum.Disabled` on occlusion cascades to NCreatureVisuals children via Inherit, freezing Spine playback without ever calling into Spine APIs.
-- The factory's body (in `BossVotePatch`) is the only place that touches `MonsterModel` / `EncounterModel` / `NCreatureVisuals`.
-- TI extraction viability is preserved without compromise.
+- [`src/Game/Ui/BossVotePopup.cs`](../../../src/Game/Ui/BossVotePopup.cs):
+  - **Public interface** (constructor signature, public methods, field signatures of fields accessible by other classes): fully MegaCrit-free.
+  - **Internal state**: holds `List<Control>` for slot references (Godot type, not MegaCrit), populated alongside the existing `_tallyLabels` list.
+  - **Private static helpers** (`GetVisualBounds`, `ApplyScaleAndHue`): cast `Node2D → NCreatureVisuals` and call typed methods. These are private, static, and never escape the class. A future TI-extraction fork would replace these helpers' bodies with equivalents for the new host game.
+  - **Occlusion handler** (`_Process`): toggles `slot.ProcessMode` on Godot `Control` instances. Zero MegaCrit references in this code path; the freeze cascades naturally to NCreatureVisuals children via Godot's `ProcessMode.Inherit` semantics.
+- The factory's body (in `BossVotePatch`) does the heavy lifting — `MonsterModel.CreateVisuals()` + animator wiring.
+- TI extraction cost: replace two ~3-line private static helpers in `BossVotePopup.cs`. Trivial.
 
 ### Vanilla API surface
 
@@ -62,7 +67,9 @@ Verified against the stable `sts2.dll` (`src/sts2.dll`, `LastWriteTime: 2026-05-
   *Note: this ordering is a decompile-verified observation, not a documented API contract. If MegaCrit ever reorders the list, pre-warm silently degrades to cold-load at factory time (no crash, no incorrect rendering — `CreateVisuals` reads `VisualsPath` directly).*
 - **`MonsterModel.GenerateAnimator(MegaSprite)`** — sets up the creature's animation state machine. Initial state is always `AnimState("idle_loop", isLooping: true)`. Writes to the `MegaSprite` parameter only; does NOT mutate `MonsterModel` itself (decompile-verified, factory closure capture is safe).
 - **`MonsterModel.SetUpSkin(NCreatureVisuals)`** — applies any per-monster skin variants. Writes to the visuals parameter only.
-- **`PreloadManager.Cache.GetScene(string)`** — returns a `PackedScene`. Discarding the return value primes the cache. Idempotent (Godot resource cache is ref-counted).
+- **`PreloadManager.Cache.GetScene(string)`** — returns a `PackedScene`. **Verified synchronous** ([`AssetCache.cs:30-40`](../../../decompiled/sts2/MegaCrit/sts2/Core/Assets/AssetCache.cs#L30-L40)): on cache miss, calls `ResourceLoader.Load<Resource>(path, null, CacheMode.Reuse)` synchronously and logs `Log.Warn("Asset not cached: <path>")`. Discarding the return value primes the cache. Idempotent (cache is a `ConcurrentDictionary` keyed by path).
+  - <!-- CHANGED: applied Optional #11 — verified via decompile grep --> **Practical implication for our pre-warm**: if `PreloadManager.LoadActAssets(runState.Act)` has already loaded the act's monster scenes (it does — `ActModel.AssetPaths` includes monster `AssetPaths` for all `AllPossibleMonsters`), our pre-warm hits the cache and is a no-op (no log noise). If it hasn't (rare race, e.g., player rushes the chest room before act-start preload completes), our pre-warm fires the vanilla `Log.Warn` lines and synchronously loads. Either path is correct; the no-op case is the common one.
+  - **For escalation later**: `PreloadManager.LoadActAssets(ActModel)` is the vanilla async preload entry-point that uses `AssetLoadingSession` and doesn't fire the missed-cache warning. If telemetry shows our synchronous pre-warm is offensive, the Variant C escalation (postfix on `NTreasureRoom._Ready`) would call this method instead of our own helper.
 - **`NCreatureVisuals.HasSpineAnimation`** — gate for the animator/skin wiring.
 - **`NCreatureVisuals.SpineBody`** — `MegaSprite` wrapping the underlying Spine sprite.
 - **`NCreatureVisuals.SetScaleAndHue(float scale, float hue)`** — applies scale uniformly; `hue = 0f` means no hue shift.
@@ -200,7 +207,9 @@ if (opt.VisualsFactory is not null) {
 }
 ```
 
-Where `ApplyPortraitFit` is a small async helper on the same class:
+<!-- CHANGED: applied Optional #1 — typed private helpers replace duck-typing -->
+<!-- CHANGED: applied Optional #5 — Bounds=0 diagnostic log after deferred measurement -->
+Where `ApplyPortraitFit` is a small async helper on the same class. **Typed private static helpers** keep the public surface MegaCrit-free while making the implementation readable:
 
 ```csharp
 private async Task ApplyPortraitFit(Control slot, Node2D visuals) {
@@ -208,35 +217,36 @@ private async Task ApplyPortraitFit(Control slot, Node2D visuals) {
     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
     if (!GodotObject.IsInstanceValid(visuals) || !GodotObject.IsInstanceValid(slot)) return;
 
-    // Note: visuals is typed as Node2D here (DTO-clean). NCreatureVisuals members are
-    // accessed via reflection-free pattern matching, keeping this file MegaCrit-free.
-    // The cast happens locally within the helper and never escapes the popup's surface.
-    var fit = PortraitFit.ComputeFitScale(GetVisualBounds(visuals), slot.Size);
-    InvokeScaleAndHue(visuals, fit);
+    var boundsSize = GetVisualBounds(visuals);
+    if (boundsSize == Vector2.Zero) {
+        // Spine atlas measurement may take >1 frame on some hardware. PortraitFit's
+        // Mathf.Max floor returns fit=1.0 here, ClipContents=true on the slot belts
+        // the overflow rendering. Log it so we have observability if this triggers.
+        TiLog.Warn($"[SlayTheStreamer2][boss-vote] Bounds.Size is zero after ProcessFrame yield; falling back to native scale + clip");
+    }
+    var fit = PortraitFit.ComputeFitScale(boundsSize, slot.Size);
+    ApplyScaleAndHue(visuals, fit);
     // Initial placement: provisional. Operator validation must check per-boss centering;
     // if misaligned, switch to Bestiary's (0, Size.Y * 0.5f) model or compute a
     // bounds-aware offset.
     visuals.Position = slot.Size * 0.5f;
 }
 
-// These helpers exist to keep the BossVotePopup file free of literal NCreatureVisuals
-// type references at compile time, while still leveraging the runtime type. The Factory
-// constructs an actual NCreatureVisuals via BossVotePatch; we just don't name the type
-// in this file's surface.
+// Private static helpers: cast Node2D → NCreatureVisuals locally. The cast never
+// escapes the popup's public API (no method/field signature exposes the type), so
+// the TI/Game seam is preserved at the interface level. A TI-extraction fork would
+// replace these two helpers' bodies with the new host game's equivalents.
 private static Vector2 GetVisualBounds(Node2D visuals) {
-    // Duck-typed access through Godot's Call() API to read the Bounds Control.
-    var bounds = visuals.Call("get", "Bounds").AsGodotObject() as Control;
-    return bounds?.Size ?? Vector2.Zero;
+    if (visuals is NCreatureVisuals cv && cv.Bounds is not null) return cv.Bounds.Size;
+    return Vector2.Zero;
 }
 
-private static void InvokeScaleAndHue(Node2D visuals, float scale) {
-    visuals.Call("SetScaleAndHue", scale, 0f);
+private static void ApplyScaleAndHue(Node2D visuals, float scale) {
+    if (visuals is NCreatureVisuals cv) cv.SetScaleAndHue(scale, 0f);
 }
 ```
 
-**Design note on duck-typed access**: The popup never names `NCreatureVisuals` as a type. Method invocation uses Godot's `Call()` (string-based dispatch over the C# binding). This is slower than direct method calls but only fires once per column at popup show; the cost is unmeasurable in practice. Trade-off: ~10 extra LOC for absolute seam preservation.
-
-**Alternative considered**: drop the duck-typing and accept the type reference in private helpers (still MegaCrit-free at the *public* surface). This is the v1 framing, walked back per the v2 seam decision. If duck-typing feels excessive in implementation review, this alternative is one Edit away. See Optional Enhancements for the explicit pick.
+**Design note**: The helpers use pattern-match-and-cast (`is NCreatureVisuals cv`) so a future factory variant returning a different `Node2D` subclass degrades gracefully (silent no-op for fit; sprite renders at native scale with `ClipContents` clipping it). The cast never panics.
 
 **(c) Occlusion handler in `_Process`.** Extend the existing block to toggle `ProcessMode` on slot Controls (no Spine API contact, no typed references).
 
@@ -248,11 +258,15 @@ if (_canvasLayer is not null) {
     catch { /* probe must never crash _Process */ }
     if (_canvasLayer.Visible == occluded) {
         _canvasLayer.Visible = !occluded;
-        // ProcessMode.Disabled on the slot Control cascades to NCreatureVisuals children
-        // via Inherit. This freezes Spine playback without reaching into MegaSpine APIs
-        // and without typed references. Per CLAUDE.md Tier 4: SceneTree.Paused is never
-        // toggled by StS2's pause menu, so the freeze is driven by _isOccludingOverlayVisible
-        // (which already detects pause via SubmenuStack.SubmenusOpen).
+        // REUSABLE PATTERN — Spine freeze via Godot's ProcessMode cascade:
+        //   ProcessMode.Disabled on a parent Control halts _Process on all children
+        //   whose ProcessMode is Inherit (the default). For Spine-rendered children,
+        //   this freezes playback without touching MegaSpine's animation state.
+        //   Per CLAUDE.md Tier 4: SceneTree.Paused is never toggled by StS2's pause
+        //   menu, so Godot's native Pausable/WhenPaused modes don't help — drive the
+        //   freeze from our occlusion probe instead.
+        //   Any future mod UI that renders MegaCrit creatures + needs pause-aware
+        //   freeze can reuse this pattern. Logged in notes/06-followups-and-deferred.md.
         foreach (var slot in _portraitSlots) {
             slot.ProcessMode = occluded ? ProcessModeEnum.Disabled : ProcessModeEnum.Inherit;
         }
@@ -402,16 +416,17 @@ All must pass before tagging `plan-b-3-1-complete`.
 15. ☐ Validated on Act 3 boss vote.
 16. ☐ Golden Compass re-vote produces consistent visuals (idempotency unchanged from B.3).
 
-**Hardware envelope:**
+**Hardware / resolution envelope:**
 17. ☐ **Pre-warm Stopwatch log under normal flow:** `[boss-vote] pre-warm: N/M candidates in Xms`. Record X for the project notes.
 18. ☐ <!-- CHANGED: cold-load simulation — Reviewer 9 --> **Cold-load simulation on dev machine:** temporarily insert `Thread.Sleep(500)` after each `PreloadManager.Cache.GetScene` call. Validate that simulated 1.5s aggregate hitch is acceptable UX (click → ~1.5s pause → popup). If unacceptable, document escalation to Variant C (chest-room-enter pre-warm) as v0.2 polish. Revert the sleep.
 19. ☐ <!-- CHANGED: reworked stretch gate — Reviewers 6, 7 --> **If a second machine is accessible** (Steam Deck, older laptop, spinning HDD): validate first-vote-of-run does not stutter visibly after popup appears. If inaccessible, the cold-load simulation (gate 18) is the substitute data point — no separate validation required.
+20. ☐ <!-- CHANGED: applied Optional #3 — resolution coverage during normal testing flow --> **Resolution coverage during normal testing flow.** The author's primary dev posture is a small window for testing + 1440p ultrawide for fullscreen play, and StS2 supports smooth aspect-ratio / resolution changes during a session. No dedicated test pass is required; instead, *during the act 1/2/3 validation gates 13–15*, exercise at least: (a) the small testing window, (b) 1440p ultrawide fullscreen, (c) at least one intermediate window size encountered during normal resize. Confirm the popup layout, column slot sizing, and animated portrait centering remain visually correct across these. Flag any case where a sprite extends past its column or anchoring breaks.
 
 **Build pipeline (per CLAUDE.md Tier 1):**
-20. ☐ `pwsh -File build.ps1` clean.
-21. ☐ `pwsh -File install.ps1` clean.
-22. ☐ `godot.log` version hash matches `git log -1 --format=%H`.
-23. ☐ No unexpected `[boss-vote]` Warn lines in `godot.log` under normal flow (multi-monster Warn is OK if it surfaces; otherwise only Info-level Stopwatch logs should appear).
+21. ☐ `pwsh -File build.ps1` clean.
+22. ☐ `pwsh -File install.ps1` clean.
+23. ☐ `godot.log` version hash matches `git log -1 --format=%H`.
+24. ☐ No unexpected `[boss-vote]` Warn lines in `godot.log` under normal flow. Acceptable warns: multi-monster (only if a multi-monster encounter exists in tested build), Bounds=0 (only if Spine atlas measurement takes >1 frame). Vanilla `Asset not cached` Warns from `PreloadManager.Cache` are NOT our warnings — they're MegaCrit's signal that an asset wasn't pre-cached, harmless if rare.
 
 ## Commit conventions
 
@@ -427,34 +442,22 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 2. **Pre-warm latency on cold disk** — Stopwatch logging gives field data. If gate 18 (cold-load simulation) reveals offensive UX, escalate to chest-room-enter pre-warm in a follow-up slice. The synchronous-load-on-main-thread choice is bounded (≤3 scenes per vote, finite size), but observable on potato hardware.
 
-3. **Duck-typed access via `visuals.Call("get", "Bounds")`** is slower than direct typed access and depends on Godot's string-based dispatch. Cost: unmeasurable in practice (one call per column at popup show). Failure mode: if MegaCrit renames `Bounds` or `SetScaleAndHue`, the Call fails silently (caught by popup's per-column try/catch). Trade-off accepted for absolute seam preservation; the alternative (typed private helpers) is one Edit away — see Optional Enhancements.
+3. **MegaCrit may rename `NCreatureVisuals.Bounds` or `SetScaleAndHue`** in a future game update. Failure mode: the typed private static helpers (`GetVisualBounds` / `ApplyScaleAndHue`) fail to compile against the new `sts2.dll`, surfacing as a build error rather than silent runtime failure — which is the right failure mode. Mitigation: rebuild against the new DLL, update helpers if needed. Lower risk than the alternative (duck-typed `Call("Bounds")`) which would fail silently at runtime.
 
 ---
 
-## Optional Enhancements (pick what you want)
+## Optional Enhancements — disposition
 
-These are reviewer suggestions that are valid but not auto-applied. Pick by number to incorporate.
+User applied **1, 3, 5, 6, 11** (2026-05-16). The remaining items are deferred:
 
-1. **Drop the duck-typing in `BossVotePopup`** and accept typed `NCreatureVisuals` references in *private static helpers* (still MegaCrit-free at the *public* surface). Trade: ~10 LOC simpler implementation, slightly leakier seam, faster method dispatch (negligible). (R5, R9 implicitly defended this; the duck-typing is a v2 over-correction.) **Effort: trivial. Recommendation: lean yes — duck-typing for this slice is probably over-engineering; the seam at the public-API level is what matters most for TI extraction.**
-
-2. **Add UX-impact operator gate**: "Animated portrait is the dominant visual element of its column (UX judgment, not just rendering)." (R3) **Effort: trivial. Recommendation: neutral — gate 6 already implies this; this would be a more explicit phrasing.**
-
-3. **Add resolution/UI-scale validation gates**: 1920×1080 default, one non-default UI scale, windowed mode at smaller resolution. (R1) **Effort: small. Recommendation: lean yes — animated portraits are more layout-sensitive than static PNGs.**
-
-4. **Implement bounds-aware centering** by default rather than waiting on operator validation: read `bounds.Position` (the Control's offset within its parent) and compute `slotCenter - boundsCenter * fit` as the position. (R1) **Effort: small. Recommendation: lean no — defer until observed; geometric center is a reasonable starting point and the validation gate catches misalignment.**
-
-5. **Add `Bounds.Size = (0,0)` diagnostic log** in `ApplyPortraitFit` if measurement returns zero after the yield. (R9) **Effort: trivial. Recommendation: lean yes — observability for the one residual race condition.**
-
-6. **Add inline comment documenting the ProcessMode.Disabled cascade pattern** in `BossVotePopup.cs` and a note in `notes/06-followups-and-deferred.md` so future mod UI surfaces can reuse the pattern. (R9 in spirit, for SetTimeScale; applies now to ProcessMode.) **Effort: trivial. Recommendation: lean yes — propagates the lesson.**
-
-7. **Increase column slot to 400×400 or 448×448** instead of 384×384 if the popup layout has the horizontal room. (R1, R2 wanted bigger.) **Effort: trivial. Recommendation: neutral — 384 is a reasonable midpoint; tune visually during operator validation.**
-
-8. **Pre-warm helper detects multi-monster encounters** and pre-loads all monsters (not just the first), so a future multi-monster encounter doesn't cold-load the secondary monsters on factory invocation. (Not in any review; logical extension of multi-monster Warn.) **Effort: small. Recommendation: lean no — YAGNI for current bosses; revisit when a multi-monster encounter actually exists.**
-
-9. **Remove the `_portraitSlots` field** and iterate `columns.GetChildren()` to find slots on occlusion. (Not in any review; minor structural choice.) **Effort: trivial. Recommendation: lean no — explicit list is clearer than tree-walking.**
-
-10. **Add an integration smoke** that runs `pwsh -File build.ps1` against the v2 code on a non-author machine before tagging complete. (Not in any review; defensive.) **Effort: medium. Recommendation: lean no — solo dev project, gate 19's simulation is the substitute.**
-
-11. **Validate `PreloadManager.Cache.GetScene` is genuinely synchronous** by checking the decompile, not just assuming. (R6 raised; not yet done.) **Effort: trivial. Recommendation: lean yes — 5-minute decompile grep; verifies a foundational assumption.**
-
-Tell me which numbers to apply (or "none" if v2 is good as-is).
+1. ✅ **Applied** — typed private static helpers replace duck-typing.
+2. ⏸️ Deferred — UX-impact gate; gate 6 covers it implicitly.
+3. ✅ **Applied as gate 20** — resolution coverage absorbed into normal test flow given user's small-window-and-1440p-ultrawide testing posture.
+4. ⏸️ Deferred — bounds-aware centering; geometric center starts, operator validation catches misalignment.
+5. ✅ **Applied** — Bounds=0 diagnostic Warn in `ApplyPortraitFit`.
+6. ✅ **Applied** — `BossVotePopup` ProcessMode comment + **note added to `notes/06-followups-and-deferred.md` as part of implementation slice closure (one bullet under B.3.1 marking the reusable freeze pattern)**.
+7. ⏸️ Deferred — column size tuning during operator validation.
+8. ⏸️ Deferred — multi-monster eager preload; YAGNI.
+9. ⏸️ Deferred — explicit list preferred over tree-walking.
+10. ⏸️ Deferred — solo dev, gate 18 substitutes.
+11. ✅ **Applied** — `PreloadManager.Cache.GetScene` confirmed synchronous via decompile ([`AssetCache.cs:30-40`](../../../decompiled/sts2/MegaCrit/sts2/Core/Assets/AssetCache.cs#L30-L40)); finding folded into Vanilla API surface section. Bonus discovery: `PreloadManager.LoadActAssets` is the vanilla async preload path for any future Variant C escalation.

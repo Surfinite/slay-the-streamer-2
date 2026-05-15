@@ -161,6 +161,30 @@ internal static class BossVotePatch {
         }
     }
 
+    /// <summary>
+    /// Probe passed to BossVotePopup so it can detect mid-vote run death and
+    /// cancel the session promptly. Without this, the popup waits up to 30s
+    /// for the vote timer to expire — long enough that the streamer ends up
+    /// on the game-over screen (or main menu after save-quit) with the popup
+    /// still rendered on top, blocking the Continue / Main Menu buttons.
+    /// Triggers on: RunManager.Instance null, IsAbandoned, runState null,
+    /// or IsGameOver. Fail-safe defaults to false — a transient null/throw
+    /// during normal play shouldn't kill an active vote.
+    /// </summary>
+    private static bool IsRunDying() {
+        try {
+            var rm = RunManager.Instance;
+            if (rm is null) return true;
+            if (rm.IsAbandoned) return true;
+            var state = rm.DebugOnlyGetState();
+            if (state is null) return true;
+            if (state.IsGameOver) return true;
+            return false;
+        } catch {
+            return false;
+        }
+    }
+
     private static bool PrefixContinue(NTreasureRoom room, VoteCoordinator coordinator) {
         IRunState? runState = RunManager.Instance?.DebugOnlyGetState();
         if (runState is null) {
@@ -254,7 +278,8 @@ internal static class BossVotePatch {
                 dtos,
                 session,
                 coordinator.Dispatcher,
-                isOccludingOverlayVisible: IsOccludingOverlayVisible);
+                isOccludingOverlayVisible: IsOccludingOverlayVisible,
+                isRunDying: IsRunDying);
             coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] BossVotePopup construction threw; cancelling session", ex);

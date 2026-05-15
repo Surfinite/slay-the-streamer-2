@@ -35,6 +35,16 @@ internal sealed partial class BossVotePopup : Control {
     /// </summary>
     private readonly Func<bool>? _isOccludingOverlayVisible;
 
+    /// <summary>
+    /// Optional probe returning true when the active run has died mid-vote
+    /// (abandoned, game-over, save-quit-to-main-menu). When true, the popup
+    /// cancels the session so the Cancelled-event handler frees this popup
+    /// promptly — without it, the popup persists until the 30s vote timer
+    /// expires, blocking the game-over Continue button and overlaying the
+    /// main-menu screen. MegaCrit-free seam: probe supplied by BossVotePatch.
+    /// </summary>
+    private readonly Func<bool>? _isRunDying;
+
     private CanvasLayer? _canvasLayer;
     private RichTextLabel? _timerLabel;
     private readonly List<RichTextLabel> _tallyLabels = new();
@@ -49,11 +59,13 @@ internal sealed partial class BossVotePopup : Control {
         IReadOnlyList<BossVotePopupOption> options,
         VoteSession session,
         IMainThreadDispatcher dispatcher,
-        Func<bool>? isOccludingOverlayVisible = null) {
+        Func<bool>? isOccludingOverlayVisible = null,
+        Func<bool>? isRunDying = null) {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _isOccludingOverlayVisible = isOccludingOverlayVisible;
+        _isRunDying = isRunDying;
     }
 
     /// <summary>
@@ -180,6 +192,19 @@ internal sealed partial class BossVotePopup : Control {
                               or VoteSessionState.Cancelled
                               or VoteSessionState.Disposed) return;
         if (_timerLabel is null) return;
+
+        // Cancel the session immediately if the run died mid-vote. Without this,
+        // the popup hangs around through scene transitions to the game-over
+        // screen and main menu until the 30s vote timer fires naturally.
+        // session.Cancel triggers the Cancelled event → _cancelledHandler →
+        // dispatcher.Post(SafeQueueFree) → popup is freed at next frame end.
+        bool runDying = false;
+        try { runDying = _isRunDying?.Invoke() ?? false; }
+        catch { /* probe must never crash _Process */ }
+        if (runDying) {
+            try { _session.Cancel(); } catch { /* swallow — session may already be closing */ }
+            return;
+        }
 
         // Yield the screen to an occluding overlay (e.g., the dev console) so it
         // isn't dimmed by our backdrop. Vote machinery keeps running.

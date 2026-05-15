@@ -26,6 +26,14 @@ internal sealed partial class BossVotePopup : Control {
     private readonly IReadOnlyList<BossVotePopupOption> _options;
     private readonly VoteSession _session;
     private readonly IMainThreadDispatcher _dispatcher;
+    /// <summary>
+    /// Optional probe returning true when an in-game debug console (or any other
+    /// vanilla overlay we don't want to occlude) is visible. When true, the popup
+    /// hides its entire CanvasLayer so the streamer can see/use the console. The
+    /// vote keeps running in the background — vote timer is real-time, not paused.
+    /// MegaCrit-free seam: BossVotePatch supplies the probe, popup stays game-agnostic.
+    /// </summary>
+    private readonly Func<bool>? _isOccludingOverlayVisible;
 
     private CanvasLayer? _canvasLayer;
     private RichTextLabel? _timerLabel;
@@ -40,10 +48,12 @@ internal sealed partial class BossVotePopup : Control {
     public BossVotePopup(
         IReadOnlyList<BossVotePopupOption> options,
         VoteSession session,
-        IMainThreadDispatcher dispatcher) {
+        IMainThreadDispatcher dispatcher,
+        Func<bool>? isOccludingOverlayVisible = null) {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _isOccludingOverlayVisible = isOccludingOverlayVisible;
     }
 
     /// <summary>
@@ -170,6 +180,18 @@ internal sealed partial class BossVotePopup : Control {
                               or VoteSessionState.Cancelled
                               or VoteSessionState.Disposed) return;
         if (_timerLabel is null) return;
+
+        // Yield the screen to an occluding overlay (e.g., the dev console) so it
+        // isn't dimmed by our backdrop. Vote machinery keeps running.
+        if (_canvasLayer is not null) {
+            bool occluded = false;
+            try { occluded = _isOccludingOverlayVisible?.Invoke() ?? false; }
+            catch { /* probe must never crash _Process */ }
+            if (_canvasLayer.Visible == occluded) {
+                _canvasLayer.Visible = !occluded;
+            }
+            if (occluded) return;   // skip rebuilding label text while hidden
+        }
 
         int secondsLeft = Math.Max(0, (int)_session.TimeRemaining.TotalSeconds);
         int tallyVersion = _session.TallyVersion;

@@ -8,6 +8,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
@@ -132,6 +133,20 @@ internal static class BossVotePatch {
         }
     }
 
+    /// <summary>
+    /// Probe passed to BossVotePopup so it hides its CanvasLayer while the
+    /// vanilla dev console is open (otherwise the console renders behind our
+    /// 60%-opaque backdrop). Kept here, not in BossVotePopup, so the popup
+    /// stays MegaCrit-free. Returns false safely if NDevConsole isn't available.
+    /// </summary>
+    private static bool IsDevConsoleVisible() {
+        try {
+            return NDevConsole.Instance?.Visible ?? false;
+        } catch {
+            return false;
+        }
+    }
+
     private static bool PrefixContinue(NTreasureRoom room, VoteCoordinator coordinator) {
         IRunState? runState = RunManager.Instance?.DebugOnlyGetState();
         if (runState is null) {
@@ -221,7 +236,11 @@ internal static class BossVotePatch {
 
         // Construct popup; cancel session and bail on construction failure.
         try {
-            var popup = new BossVotePopup(dtos, session, coordinator.Dispatcher);
+            var popup = new BossVotePopup(
+                dtos,
+                session,
+                coordinator.Dispatcher,
+                isOccludingOverlayVisible: IsDevConsoleVisible);
             coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] BossVotePopup construction threw; cancelling session", ex);

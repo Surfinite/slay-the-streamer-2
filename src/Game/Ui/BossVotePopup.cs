@@ -212,7 +212,13 @@ internal sealed partial class BossVotePopup : Control {
     }
 
     public override void _UnhandledInput(InputEvent @event) {
-        if (@event.IsActionPressed("ui_accept") || @event.IsActionPressed("ui_cancel")) {
+        // Swallow ui_accept (Enter / Space / gamepad-A) to prevent accidental
+        // confirmation of the chest room's Proceed button while the vote runs.
+        // ui_cancel (ESC) is deliberately NOT swallowed — the streamer must
+        // remain able to open the pause menu (Give Up, Save & Quit, settings).
+        // When the pause menu opens, SceneTree.Paused goes true and the
+        // isOccludingOverlayVisible probe hides this popup so the menu is usable.
+        if (@event.IsActionPressed("ui_accept")) {
             GetViewport().SetInputAsHandled();
         }
     }

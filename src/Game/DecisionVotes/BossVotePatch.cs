@@ -134,14 +134,22 @@ internal static class BossVotePatch {
     }
 
     /// <summary>
-    /// Probe passed to BossVotePopup so it hides its CanvasLayer while the
-    /// vanilla dev console is open (otherwise the console renders behind our
-    /// 60%-opaque backdrop). Kept here, not in BossVotePopup, so the popup
-    /// stays MegaCrit-free. Returns false safely if NDevConsole isn't available.
+    /// Probe passed to BossVotePopup so it hides its CanvasLayer while any
+    /// vanilla overlay we don't want to occlude is visible. Currently covers:
+    ///   - Dev console (NDevConsole.Instance.Visible) — debug overlay, doesn't
+    ///     pause the game.
+    ///   - Pause menu / settings / abandon-confirm modal / any other vanilla
+    ///     pausing UI — detected via SceneTree.Paused going true. Our popup
+    ///     uses ProcessMode.Always so the vote keeps running during pause;
+    ///     hiding visually lets the streamer see and use the pause-menu UI.
+    /// Kept here (not in BossVotePopup) so the popup stays MegaCrit-free.
+    /// Defensive: any exception in either probe is swallowed and returns false.
     /// </summary>
-    private static bool IsDevConsoleVisible() {
+    private static bool IsOccludingOverlayVisible() {
         try {
-            return NDevConsole.Instance?.Visible ?? false;
+            if (NDevConsole.Instance?.Visible ?? false) return true;
+            if ((Engine.GetMainLoop() as SceneTree)?.Paused ?? false) return true;
+            return false;
         } catch {
             return false;
         }
@@ -240,7 +248,7 @@ internal static class BossVotePatch {
                 dtos,
                 session,
                 coordinator.Dispatcher,
-                isOccludingOverlayVisible: IsDevConsoleVisible);
+                isOccludingOverlayVisible: IsOccludingOverlayVisible);
             coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] BossVotePopup construction threw; cancelling session", ex);

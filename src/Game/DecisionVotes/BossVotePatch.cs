@@ -8,6 +8,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
@@ -136,19 +137,24 @@ internal static class BossVotePatch {
     /// <summary>
     /// Probe passed to BossVotePopup so it hides its CanvasLayer while any
     /// vanilla overlay we don't want to occlude is visible. Currently covers:
-    ///   - Dev console (NDevConsole.Instance.Visible) — debug overlay, doesn't
-    ///     pause the game.
+    ///   - Dev console (NDevConsole.Instance.Visible).
     ///   - Pause menu / settings / abandon-confirm modal / any other vanilla
-    ///     pausing UI — detected via SceneTree.Paused going true. Our popup
-    ///     uses ProcessMode.Always so the vote keeps running during pause;
-    ///     hiding visually lets the streamer see and use the pause-menu UI.
-    /// Kept here (not in BossVotePopup) so the popup stays MegaCrit-free.
+    ///     submenu — detected via NRun.Instance.GlobalUi.SubmenuStack.Stack.SubmenusOpen.
+    ///     GlobalUi.SubmenuStack is an NCapstoneSubmenuStack which wraps the
+    ///     actual NRunSubmenuStack at .Stack; NRunSubmenuStack inherits
+    ///     NSubmenuStack which exposes the count-based SubmenusOpen bool.
+    ///     Pause menu opens via NRun.Instance.GlobalUi.SubmenuStack.ShowScreen
+    ///     per NTopBarPauseButton.cs:75 — same code path through this stack.
+    /// Note: SceneTree.Paused is NOT a viable probe here — StS2 uses
+    /// RunManager.ActionExecutor.Pause() for combat pausing, not Godot's
+    /// SceneTree.Paused, so the latter never goes true via the pause menu.
+    /// Kept in the patch (not the popup) so BossVotePopup stays MegaCrit-free.
     /// Defensive: any exception in either probe is swallowed and returns false.
     /// </summary>
     private static bool IsOccludingOverlayVisible() {
         try {
             if (NDevConsole.Instance?.Visible ?? false) return true;
-            if ((Engine.GetMainLoop() as SceneTree)?.Paused ?? false) return true;
+            if (NRun.Instance?.GlobalUi?.SubmenuStack?.Stack?.SubmenusOpen ?? false) return true;
             return false;
         } catch {
             return false;

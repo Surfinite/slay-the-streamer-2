@@ -37,10 +37,17 @@ internal static class BossVotePatch {
     //     chest rooms (GoldenPathActMap).
     //   - Map-screen back-arrow: after a chest exit, the streamer can navigate back
     //     to re-pick the relic; clicking Proceed again would otherwise re-trigger.
-    // Process-local; lost on game restart. A save+quit+reload+back-arrow combination
-    // can therefore re-trigger the vote once after reload — accepted as a v1 limitation.
+    // Process-local; lost on game restart.
+    //
+    // _lastSwappedBossId tracks WHICH boss was applied (null = no swap, i.e., no-winner
+    // fallback or ApplyBossSwap throw). The idempotency check verifies the swap is still
+    // present in runState.Act.BossEncounter — if not, StS2 save-quit rolled back the
+    // run state to a pre-swap snapshot and we need to re-fire the vote. Without this
+    // verification, the streamer would save-quit-and-Continue, fight vanilla's pre-rolled
+    // boss, AND the popup would never re-prompt because the marker still matched.
     private static string? _lastSwapRunId;
     private static int _lastSwapActIndex = -1;
+    private static ModelId? _lastSwappedBossId;
 
     internal static bool RunIdGuardEnabled { get; private set; } = true;
 
@@ -168,28 +175,21 @@ internal static class BossVotePatch {
     /// on the game-over screen (or main menu after save-quit) with the popup
     /// still rendered on top, blocking the Continue / Main Menu buttons.
     /// Triggers on: RunManager.Instance null, IsAbandoned, runState null,
-    /// or IsGameOver. Side-effect: also clears the (run, act) idempotency
-    /// marker so that a save-quit-and-Continue scenario re-fires the vote
-    /// (StS2's save-quit snapshot can predate the boss-swap commit, leaving
-    /// the run state without a swap; without clearing the marker, the
-    /// idempotency check would skip the re-vote and the streamer would
-    /// fight vanilla's pre-rolled boss).
+    /// or IsGameOver. Pure probe — the save-quit-Continue marker-staleness
+    /// fix lives in PrefixContinue's idempotency check (compares the marker
+    /// against current Act.BossEncounter.Id to detect rolled-back swaps).
     /// Fail-safe defaults to false — a transient null/throw during normal
     /// play shouldn't kill an active vote.
     /// </summary>
     private static bool IsRunDying() {
         try {
             var rm = RunManager.Instance;
-            bool dying =
-                rm is null
-                || rm.IsAbandoned
-                || rm.DebugOnlyGetState() is null
-                || (rm.DebugOnlyGetState()?.IsGameOver ?? false);
-            if (dying) {
-                _lastSwapRunId = null;
-                _lastSwapActIndex = -1;
-            }
-            return dying;
+            if (rm is null) return true;
+            if (rm.IsAbandoned) return true;
+            var state = rm.DebugOnlyGetState();
+            if (state is null) return true;
+            if (state.IsGameOver) return true;
+            return false;
         } catch {
             return false;
         }
@@ -208,13 +208,49 @@ internal static class BossVotePatch {
         // Without this guard, the second Proceed click would re-fire the vote with
         // identical candidates (seed is per-run-per-act). Marker is set in
         // ResumeOnMainThread after the synthetic re-call completes.
+        //
+        // BUT: also verify the swap survived. StS2's save-quit snapshot can
+        // predate our mid-room swap (the save was made before the runState
+        // mutation committed to disk), so after save-quit-and-Continue the
+        // runState.Act.BossEncounter is the original pre-swap value. In that
+        // case, clear the marker and let the vote fire fresh.
         string? currentRunId = runState.Rng?.StringSeed;
         if (currentRunId is not null
                 && currentRunId == _lastSwapRunId
                 && runState.CurrentActIndex == _lastSwapActIndex) {
-            TiLog.Info($"[SlayTheStreamer2][boss-vote] Act {runState.CurrentActIndex + 1} already had a boss vote this run; skipping subsequent chest click (Golden Compass or map back-arrow)");
-            Interlocked.Exchange(ref _voteInProgress, 0);
-            return true;
+            var currentBossId = runState.Act.BossEncounter?.Id;
+            bool swapStillInPlace = _lastSwappedBossId is null
+                || (currentBossId is not null && currentBossId == _lastSwappedBossId);
+            if (swapStillInPlace) {
+                TiLog.Info($"[SlayTheStreamer2][boss-vote] Act {runState.CurrentActIndex + 1} already had a boss vote this run; skipping subsequent chest click (Golden Compass or map back-arrow)");
+                Interlocked.Exchange(ref _voteInProgress, 0);
+                return true;
+            }
+            // Marker matched + swap is gone: StS2 save-quit-and-Continue rolled
+            // back the runState to pre-swap. We remember which boss chat picked,
+            // so silently re-apply it rather than forcing a redundant re-vote.
+            // Streamer transitions to the map with the original chat-picked boss
+            // restored; chat sees no new messages.
+            if (_lastSwappedBossId is not null) {
+                try {
+                    var restoredBoss = runState.Act.AllBossEncounters
+                        .FirstOrDefault(e => e.Id == _lastSwappedBossId);
+                    if (restoredBoss is not null) {
+                        TiLog.Info($"[SlayTheStreamer2][boss-vote] Act {runState.CurrentActIndex + 1} marker matched but Act.BossEncounter is {currentBossId}; save-quit rolled back the swap — silently restoring {_lastSwappedBossId} (chat already voted)");
+                        ApplyBossSwap(runState, restoredBoss);
+                        Interlocked.Exchange(ref _voteInProgress, 0);
+                        return true;
+                    }
+                    TiLog.Warn($"[SlayTheStreamer2][boss-vote] _lastSwappedBossId {_lastSwappedBossId} not found in current pool; clearing marker and re-firing vote");
+                } catch (Exception ex) {
+                    TiLog.Error($"[SlayTheStreamer2][boss-vote] silent restore of {_lastSwappedBossId} threw; clearing marker and re-firing vote", ex);
+                }
+            }
+            // Couldn't restore (no-winner marker, boss not in pool, or restore
+            // threw). Clear marker and fall through to fresh vote.
+            _lastSwapRunId = null;
+            _lastSwapActIndex = -1;
+            _lastSwappedBossId = null;
         }
 
         // Materialize pool once; exclude SecondBossEncounter if A10+ DoubleBoss.
@@ -405,11 +441,16 @@ internal static class BossVotePatch {
             }
 
             // Apply boss swap if we have a valid winner.
+            // Track the actually-applied boss ID so the idempotency check in
+            // PrefixContinue can verify the swap survived save-quit (StS2's save
+            // snapshot may predate our mid-room mutation).
+            ModelId? swappedBossId = null;
             if (winnerIndex.HasValue) {
                 try {
                     var winnerEncounter = BossVoteResolver.ResolveWinner(sample, winnerIndex.Value);
                     TiLog.Info($"[SlayTheStreamer2][boss-vote] resume: applying boss swap to {winnerEncounter.Id}");
                     ApplyBossSwap(currentState, winnerEncounter);
+                    swappedBossId = winnerEncounter.Id;
                 } catch (Exception ex) {
                     TiLog.Error("[SlayTheStreamer2][boss-vote] ApplyBossSwap threw; preserving vanilla boss", ex);
                 }
@@ -435,8 +476,12 @@ internal static class BossVotePatch {
             // clicks within the same run+act (Golden Compass second chest, map back-arrow)
             // are skipped by the idempotency check at the top of PrefixContinue. Set
             // regardless of swap outcome — chat had its opportunity even on no-winner.
+            // swappedBossId is null when no swap applied (no-winner or ApplyBossSwap
+            // threw); the idempotency check treats null as "skip re-vote" since chat
+            // had its chance.
             _lastSwapRunId = currentState.Rng?.StringSeed;
             _lastSwapActIndex = currentState.CurrentActIndex;
+            _lastSwappedBossId = swappedBossId;
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] resume threw", ex);
         } finally {

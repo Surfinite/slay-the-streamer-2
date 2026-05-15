@@ -216,6 +216,74 @@ Those are Task 18's responsibility; this spike (Task 1) only commits the two top
 
 ---
 
+## Plan B.3 boss vote (resolved 2026-05-15)
+
+Plan B.3's spec is at [`docs/superpowers/specs/2026-05-13-plan-b-3-boss-vote-design-v3.md`](../docs/superpowers/specs/2026-05-13-plan-b-3-boss-vote-design-v3.md); the implementation plan at [`docs/superpowers/plans/2026-05-13-plan-b-3-boss-vote.md`](../docs/superpowers/plans/2026-05-13-plan-b-3-boss-vote.md). Slice tagged `plan-b-3-complete`. Implementation done subagent-driven across the original 7 tasks (`plan-b-3/1.1` through `7.1`), then four operator-validation-found bugfixes (`6.2` portrait-load spam, `6.3` dev-console occlusion, `6.4` `ui_cancel` swallow + pause-menu probe, `6.5` corrected submenu-stack probe, `6.6` cancel session on run-dying, `7.2` Golden Compass / back-arrow idempotency, `7.3` marker-clear on run-dying (later reverted), `7.4` silent-restore of swap on save-quit-rollback). Initial Stop-hook chaos from a stale `claude-mem` v10 also surfaced and forced an upgrade to v13.2.0 mid-slice; documented separately in the dev-tools memory.
+
+### Acceptance gate — 7 green, 2 deferred
+
+- [x] **Smoke A** — Act 1 happy path. Standard run, chest exit, popup with 3 candidates, chat votes via `!vote #N`, top-bar boss icon updates, walked to Act 1 boss → expected fight.
+- [x] **Smoke B** — Acts 2 + 3 non-DoubleBoss coverage. Same flow on both acts.
+- [x] **Smoke C** — A10+ DoubleBoss exclusion. Log line `HasSecondBoss=true; excluding {id}` fires, popup's 3 candidates omit the pre-rolled second boss, primary ≠ second after the swap. **Highest-risk smoke per the holistic review; passing this confirms `ModelId` value-equality + `HasSecondBoss` timing are correct.**
+- [x] **Smoke D** — run abandoned mid-vote. Pause menu reachable via ESC (after `6.4` unblocked `ui_cancel` and `6.5` corrected the submenu probe), Give Up → confirm → run abandons. `[boss-vote] resume aborted: run is over (player dead)` fires, `Vote result ignored — run abandoned during boss vote` queued (subject to Twitch rate-limit, see below). Popup vanishes (after `6.6` cancels session on run-dying), Continue / Main Menu buttons clickable normally.
+- [x] **Smoke E** — chat disabled. With `chatService.State` not in {`ConnectedReadOnly`, `ConnectedReadWrite`}, prefix bails to vanilla, Proceed click flows normally, no popup.
+- [ ] **Smoke F** — multiplayer bail. **Deferred** — Surfinite has no MP test environment available at acceptance-gate time. Code path is independently verified by reading `TryGetPlayerCount` + the early-bail guard; matches `CardRewardVotePatch` shape which has been MP-validated.
+- [ ] **Smoke G** — first-defeat achievement check. **Deferred** — target audience are unlocked-everything streamers per the spec (notes/10), and modded saves are separate save files from regular saves, so first-defeat-loss risk doesn't realistically apply. If a first-discovery streamer ever runs the mod and reports a missed achievement, revisit; otherwise this gap is irrelevant.
+- [x] **Smoke H** — save-reload determinism + popup persistence. Seed-determinism confirmed (same `seed=-1302187658`, same 3 candidates in same order on re-vote within one run). Save-quit-and-Continue scenario also validated after `7.4`'s silent-restore fix: the saved runState rolls back the boss swap, but `_lastSwappedBossId` lets us re-apply the chat-picked boss silently without re-voting. Streamer transitions to map with the original chat-picked boss restored; chat sees no new messages.
+- [x] **Smoke I** — relic-collection overlay mid-vote. Mouse clicks no-op as intended (backdrop's `MouseFilter = Stop`); pressing `D` opens the deck overlay behind the popup which is fine (overlay visible but un-actionable while the modal is up).
+
+### Architecture-defining outcomes
+
+**Modal CanvasLayer popup is a viable mod-UI pattern with three load-bearing rules.** B.3 is the first slice to ship a modal overlay (prior slices used the non-modal corner `VoteTallyLabel`). The three rules the operator-validation smokes hammered out:
+1. **Be ready to yield the screen.** Any vanilla overlay we don't want to occlude — dev console, pause menu, settings, submenu modals — needs an explicit probe. The seam is `Func<bool>? isOccludingOverlayVisible` on the popup; the patch supplies `NDevConsole.Instance?.Visible || NRun.Instance?.GlobalUi?.SubmenuStack?.Stack?.SubmenusOpen ?? false`. **`SceneTree.Paused` is NOT viable** as a pause-detection probe — StS2 uses `RunManager.ActionExecutor.Pause()` for its pause concept, never toggling Godot's `SceneTree.Paused`.
+2. **Be ready to bail when the run dies.** Mid-vote abandon / game-over / save-quit need to cancel the session promptly, otherwise the popup persists through scene transitions for up to 30s waiting for the vote timer. The probe is `Func<bool>? isRunDying`; patch supplies `RunManager.IsAbandoned || runState.IsGameOver || nulls`. Triggers `session.Cancel()` which the existing `Cancelled` handler converts into `SafeQueueFree`.
+3. **Be careful about input swallow scope.** `ui_accept` (Enter/Space/gamepad-A) is the intended swallow target — prevents accidental confirmation of the underlying button. `ui_cancel` (ESC) MUST be left alone — it's the pause-menu shortcut and blocking it makes the streamer unable to abandon the run for the vote's full 30s window. The v3 spec specified both swallows; operator validation showed `ui_cancel` was over-zealous.
+
+**Idempotency-with-verification handles all known re-entry paths.** The patch tracks `(_lastSwapRunId, _lastSwapActIndex, _lastSwappedBossId)` after each successful resume. On subsequent Prefix calls within the same run+act, the idempotency check compares against current `Act.BossEncounter.Id`:
+- Match → skip vote (Golden Compass second chest, map back-arrow).
+- Mismatch → save-quit rolled back the swap; silently re-apply the recorded swap via `ApplyBossSwap(runState, lastSwappedBoss)` and let vanilla Proceed run. Chat doesn't re-vote.
+- Marker null (no-winner from prior vote, or boss not in pool, or restore throws) → fall through to a fresh vote.
+
+This pattern would generalize to any future vote slice that suspends-and-resumes on a vanilla mutation: tracking what was applied + verifying it survived is the right shape, not just tracking that "a vote happened."
+
+**Spike-as-Task-1 caught two plan errors before they bit the build.** Task 1 spike (decompile verification of 10 open questions) was structured to produce a notes file BEFORE any code shipped. It corrected two load-bearing wrong-assumptions in the plan: `NTreasureRoom.OnProceedButtonPressed` is private with an `NButton` parameter (plan assumed parameterless public — Task 7 ended up needing reflective invoke), and `NButton` lives in `MegaCrit.Sts2.Core.Nodes.GodotExtensions` not `MegaCrit.Sts2.Core.Nodes`. Also caught later by Task 7's implementer agent: `EncounterModel.Id` is a `ModelId` record not a `string`, so the SecondBoss exclusion uses value-equality (matching `ActModel.cs:289`'s vanilla pattern). The spike-first discipline is keeping its weight every time we use it.
+
+### Findings worth preserving
+
+- **Spine-only bosses ship no PNG fallback.** Ceremonial Beast's empty popup column wasn't a bug — `EncounterModel.MapNodeAssetPaths` returns either the Spine `.tres` OR two PNGs, never both. Bosses with full Spine animations (Ceremonial Beast) explicitly don't override `BossNodeSpineResource`; bosses still using placeholder art (Soul Fysh / Vantom / The Kin / Waterfall Giant / Lagavulin / Doormaker / Kaiser Crab / Knowledge Demon / Test Subject) DO override it to return null + point `BossNodePath` at `res://images/map/placeholder/<id>_icon`. Identical logic in both `sts2/` and `sts2-beta-snapshot/` decompiles — MegaCrit's Spine migration is content-side, not code-side. As they ship more Spine art, more bosses will lose the placeholder PNG fallback, so the popup's empty-box surface area will grow over time unless we add Spine support. Listed as a polish slice in v0.2+.
+- **Map button bypass surfaced as a chat-vs-streamer asymmetry hole.** The top-right map button in the chest room lets the streamer advance to map without clicking Proceed — bypassing the boss-vote patch entirely. The streamer can pick the next room from the map and the chat-vote never fires. By design (the patch targets `OnProceedButtonPressed`), but listed as polish-worthy in v0.2+.
+- **Twitch's 20/30s account-level rate limit is real and reproducible.** A normal 30s boss vote produces open + ~4 periodic tallies + close + (sometimes) ignored-result — 5-7 messages. Bursts close to the cap, and the ignored-result receipt is the one most likely to be dropped (it fires last). The existing `TwitchIrcChatService` warning `Your message was not sent because you are sending messages too quickly` is the silent-drop signal. Already a tracked v0.2 polish item per CLAUDE.md.
+- **Save-quit can predate mid-room mutations.** StS2's save snapshot point appears to be earlier than `MapCmd.SetBossEncounter`'s call site — save-quit-Continue rolls back the swap. This is why `7.4`'s silent-restore mechanism exists. **Generalizes**: any future patch that mutates `runState` mid-room needs a similar "remember what we did + verify on next prefix call" pattern, OR needs to find a way to commit at a save-checkpoint boundary.
+- **Multi-version claude-mem misadventure consumed half a session.** Stale `claude-mem` v10.0.7 had a Stop-hook bug that flooded the chat with "Transcript path missing" errors for hundreds of consecutive turns. Forced an upgrade to v13.2.0 mid-slice (12.7.3 changelog fixes the exact bug). Surfaced an unrelated gap: third-party marketplaces in Claude Code don't auto-refresh, and `thedotmack/claude-mem`'s `main` branch is also stale relative to tags. Worth flagging upstream to both.
+
+### Follow-ups + observations
+
+Per-task code-quality nits surfaced in subagent reviews during implementation, plus operator-validation findings. **None blocked the slice tag; all are explicit followups for a future polish slice.**
+
+Production-side polish:
+- **BossVoteSeed** plan's known-value test had the wrong expected value (`-1424385571`) — actual canonical FNV-1a-32 result for `("abc", 0)` is `1781783633`. Implementer caught it during Task 2 and corrected the test, not the implementation. Plan v3 should be amended if anyone re-reads it.
+- **BossCandidateSampler** silently clamps negative `count` to empty instead of throwing `ArgumentOutOfRangeException`. Inconsistent with the null-arg guards in the same method.
+- **BossVoteResolver** could use a one-line comment on the `(uint)winnerIndex >= (uint)options.Count` idiom; `[Theory]+[InlineData]` would tighten the three valid-index tests.
+- **BossVotePopup.LAYER_INDEX** is `public const` on an `internal sealed` type — should be `internal const`. Cosmetic.
+- **BossVotePopup._Process** allocates a new `Dictionary` snapshot per dirty frame because it calls `_session.Tallies` inside the per-option loop. Hoist outside the loop (matches `VoteTallyLabel.cs`'s pattern).
+- **BossVotePopup.Show** doesn't log success. Other UI attach methods do; useful for operator-validation grep.
+- **BossVotePopup._Process** uses `new StringBuilder()` for ≤20 char-appends per option. `new string('▮', count)` is one-line and lower-allocation.
+- **BossVotePatch.PreparedSuccessfully** property doesn't exist; siblings (`CardRewardVotePatch`) have it for sibling-patch cross-checks. Latent gap if a B.3-adjacent gate is ever added.
+- **BossVotePatch** log message spacing inconsistency (`"degraded: RunManager..."` vs sibling patches' `"degraded:RunManager..."`). Cosmetic.
+- **BossVotePatch.Prefix → PrefixContinue split** has no rationale comment. A reader from `AncientVotePatch` will wonder why this slice diverges.
+- **Plan said `BossVotePopup.cs` compiles into tests** — wrong, the popup has Godot dependencies. Implementation correctly excludes by leaving `src/Game/Ui/` out of the test csproj's `Compile Include` list. Spec note worth fixing.
+
+Cross-slice / pre-existing:
+- **`YouTubeChatServiceTests.Escalation_*` flake** in `FakeTimerScheduler.Advance` (List.Remove ArgumentOutOfRangeException). Reproduces intermittently; ran clean on retry every time during B.3 work. Not introduced by B.3.
+
+UX / feature followups (eventual polish slice candidates):
+- **Map button bypass** (above) — streamer can advance via map button without firing the boss vote. To fix, also patch the map-navigation entry point.
+- **Spine portrait support** (above) — gradually-growing visual gap as MegaCrit ships more Spine bosses. Renderer is `NSpineAutoPlayer` per the decompile; `EncounterModel.BossNodeSpineResource` exposes the `MegaSkeletonDataResource` already.
+- **Save-quit-and-fully-exit** (process restart) loses the in-memory `_lastSwappedBossId` marker, so post-restart Continue fires a fresh vote instead of silent-restore. Less common path; accepted degradation.
+- **Vote-control dev commands** (`addtime N`, `pausevote`, `resumevote`) — already documented in the v0.2+ section below.
+
+---
+
 ## Plan B.2.2 ancient vote (resolved 2026-05-14)
 
 Plan B.2.2's spec is at [`docs/superpowers/specs/2026-05-13-plan-b-2-2-ancient-vote-design.md`](../docs/superpowers/specs/2026-05-13-plan-b-2-2-ancient-vote-design.md); the implementation plan at [`docs/superpowers/plans/2026-05-13-plan-b-2-2-ancient-vote.md`](../docs/superpowers/plans/2026-05-13-plan-b-2-2-ancient-vote.md). Slice tagged `plan-b-2-2-complete`.

@@ -28,6 +28,18 @@ internal static class BossVotePatch {
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;
 
+    // Per-(run, act) marker set after each completed boss-vote resume.
+    // Prevents the vote from re-triggering on subsequent NTreasureRoom.OnProceedButtonPressed
+    // clicks within the same run+act, which can happen via:
+    //   - Golden Compass relic (Ancient, Act 2+): produces a fixed linear map with TWO
+    //     chest rooms (GoldenPathActMap).
+    //   - Map-screen back-arrow: after a chest exit, the streamer can navigate back
+    //     to re-pick the relic; clicking Proceed again would otherwise re-trigger.
+    // Process-local; lost on game restart. A save+quit+reload+back-arrow combination
+    // can therefore re-trigger the vote once after reload — accepted as a v1 limitation.
+    private static string? _lastSwapRunId;
+    private static int _lastSwapActIndex = -1;
+
     internal static bool RunIdGuardEnabled { get; private set; } = true;
 
     /// <summary>
@@ -123,6 +135,21 @@ internal static class BossVotePatch {
     private static bool PrefixContinue(NTreasureRoom room, VoteCoordinator coordinator) {
         IRunState? runState = RunManager.Instance?.DebugOnlyGetState();
         if (runState is null) {
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+
+        // Idempotency: skip if we've already voted for this run+act. Covers:
+        //   - Golden Compass (Ancient relic): linear map with 2 chest rooms.
+        //   - Map-screen back-arrow: returns the streamer to the chest after exit.
+        // Without this guard, the second Proceed click would re-fire the vote with
+        // identical candidates (seed is per-run-per-act). Marker is set in
+        // ResumeOnMainThread after the synthetic re-call completes.
+        string? currentRunId = runState.Rng?.StringSeed;
+        if (currentRunId is not null
+                && currentRunId == _lastSwapRunId
+                && runState.CurrentActIndex == _lastSwapActIndex) {
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] Act {runState.CurrentActIndex + 1} already had a boss vote this run; skipping subsequent chest click (Golden Compass or map back-arrow)");
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
@@ -335,6 +362,13 @@ internal static class BossVotePatch {
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][boss-vote] synthetic OnProceedButtonPressed threw", ex);
             }
+
+            // Mark this run+act as having completed its boss vote. Subsequent chest-room
+            // clicks within the same run+act (Golden Compass second chest, map back-arrow)
+            // are skipped by the idempotency check at the top of PrefixContinue. Set
+            // regardless of swap outcome — chat had its opportunity even on no-winner.
+            _lastSwapRunId = currentState.Rng?.StringSeed;
+            _lastSwapActIndex = currentState.CurrentActIndex;
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] resume threw", ex);
         } finally {

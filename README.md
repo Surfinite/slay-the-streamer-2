@@ -61,25 +61,23 @@ Not in the repo — gitignored, created locally by the "Setting up a fresh works
 
 ## Scope (v0.1 MVP)
 
-Chat votes on the **core decisions** the original StS1 mod (or its
-underlying Twitch Integration base mod) covered:
+Chat votes on the **core decisions**:
 
 - Neow blessings (✅ shipped in B.1, 2026-05-10)
 - Card rewards (✅ shipped in B.2.1, 2026-05-11)
 - Start-of-act Ancient-rarity relic picks via Pael / Tezcatara / etc. (StS2's replacement for StS1's boss relics)
-- Map path selection
 - Act boss (custom screen — likely needs its own sub-plan, B.3)
 
 Works via vanilla Custom Mode with no mod-side code:
 - **Sealed-deck draft start** — vanilla StS2 already ships a `SealedDeck` modifier in Custom Mode. Streamer ticks it on the Custom Run screen, picks the character, embarks. The Neow event becomes a single "Sealed Deck" option that opens a 30-card grid; the streamer drafts 10 from 30 (vanilla numbers, hardcoded). Run continues from there with our existing B.2.1 card-reward / Ancients / etc. voting intact. Tempus's StS1 mod had a streamer-drafted sealed deck and then chat antagonised via subsequent voting; vanilla StS2's Custom Mode produces the same experience without any mod-side draft screen of our own. See [`notes/08`](notes/08-sealed-deck-custom-mode-investigation.md) for the full investigation. Note: vanilla Custom Mode is locked behind 3 standard-mode wins.
 - **Chat-controlled deck construction** — the sibling `Draft` modifier (mutually exclusive with `SealedDeck`) opens 10 sequential pick-1-of-3 reward screens for the streamer to build the run's deck. Because those screens are exactly the surface our B.2.1 card-reward voting hooks, ticking `Draft` in Custom Mode produces a fully chat-controlled deck construction with zero new code from us.
 
-Deferred to v0.2 as new-design problems (not in the original mod or its
-base-mod dependency, so each is a fresh design pass rather than a port):
+Deferred to v0.2 as new-design problems:
 - Event choice voting
 - Shop purchase voting
 - Chat bubbles on monsters
 - Custom monster names
+- Map path selection
 
 Out of scope entirely:
 - Twitch Extension overlays

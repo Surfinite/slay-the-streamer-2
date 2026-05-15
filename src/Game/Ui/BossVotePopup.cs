@@ -117,11 +117,20 @@ internal sealed partial class BossVotePopup : Control {
                 CustomMinimumSize = new Vector2(256, 256),
             };
             if (!string.IsNullOrEmpty(opt.PortraitPath)) {
-                try {
-                    var tex = ResourceLoader.Load<Texture2D>(opt.PortraitPath);
-                    if (tex is not null) portrait.Texture = tex;
-                } catch (Exception ex) {
-                    TiLog.Warn($"[SlayTheStreamer2][boss-vote] portrait load failed for {opt.PortraitPath}: {ex.Message}");
+                // Pre-check existence so missing assets (e.g., Spine-only bosses
+                // like Ceremonial Beast that ship no PNG fallback) don't trigger
+                // engine-level "No loader found" / "Error loading resource"
+                // spam in godot.log. ResourceLoader.Load returns null on miss
+                // but Godot still prints the errors before returning.
+                if (ResourceLoader.Exists(opt.PortraitPath)) {
+                    try {
+                        var tex = ResourceLoader.Load<Texture2D>(opt.PortraitPath);
+                        if (tex is not null) portrait.Texture = tex;
+                    } catch (Exception ex) {
+                        TiLog.Warn($"[SlayTheStreamer2][boss-vote] portrait load failed for {opt.PortraitPath}: {ex.Message}");
+                    }
+                } else {
+                    TiLog.Info($"[SlayTheStreamer2][boss-vote] no PNG portrait available for {opt.Title} (path: {opt.PortraitPath}); showing empty");
                 }
             }
             col.AddChild(portrait);

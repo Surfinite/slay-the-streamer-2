@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
 using Godot;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
 
@@ -22,6 +24,14 @@ internal sealed partial class BossVotePopup : Control {
     /// a collision.
     /// </summary>
     public const int LAYER_INDEX = 100;
+
+    /// <summary>
+    /// Slot size for each per-column animated portrait. 384×384 was chosen
+    /// to give combat-idle sprites (~500–800px native) reasonable visual
+    /// impact at fit-scale ≈ 0.5–0.77. Bumped from 256×256 (B.3 era PNG
+    /// portraits) after 9-reviewer consensus that 256² felt cramped.
+    /// </summary>
+    private static readonly Vector2 PortraitSlotSize = new(384, 384);
 
     private readonly IReadOnlyList<BossVotePopupOption> _options;
     private readonly VoteSession _session;
@@ -48,6 +58,23 @@ internal sealed partial class BossVotePopup : Control {
     private CanvasLayer? _canvasLayer;
     private RichTextLabel? _timerLabel;
     private readonly List<RichTextLabel> _tallyLabels = new();
+
+    /// <summary>
+    /// Slot Controls (one per column) — Godot type only, no MegaCrit refs.
+    /// Iterated by the _Process occlusion handler to toggle ProcessMode
+    /// (Disabled when occluded; Inherit otherwise). Setting Disabled on
+    /// the slot cascades to NCreatureVisuals children via Godot's
+    /// ProcessMode.Inherit semantics, freezing Spine playback.
+    /// </summary>
+    private readonly List<Control> _portraitSlots = new();
+
+    /// <summary>
+    /// Pairs of (slot, factory-produced visuals) queued during column build.
+    /// Dispatched as fire-and-forget ApplyPortraitFit tasks AFTER the canvas
+    /// layer is added to the scene tree, so GetTree() is non-null inside the
+    /// async helper. Cleared after dispatch.
+    /// </summary>
+    private readonly List<(Control Slot, Node2D Visuals)> _pendingFits = new();
 
     private EventHandler<VoteSession>? _closedHandler;
     private EventHandler<VoteSession>? _cancelledHandler;
@@ -131,31 +158,30 @@ internal sealed partial class BossVotePopup : Control {
             };
             columns.AddChild(col);
 
-            // Portrait — defensive load.
-            var portrait = new TextureRect {
-                Name = "Portrait",
-                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-                CustomMinimumSize = new Vector2(256, 256),
+            // Portrait slot: sized Control parents the factory-produced Node2D.
+            // ClipContents = true belts any sprite that draws beyond Bounds.
+            // ProcessMode is Inherit by default; the occlusion handler toggles
+            // Inherit↔Disabled to drive the Spine-playback freeze via cascade.
+            var slot = new Control {
+                Name = "PortraitSlot",
+                CustomMinimumSize = PortraitSlotSize,
+                ClipContents = true,
             };
-            if (!string.IsNullOrEmpty(opt.PortraitPath)) {
-                // Pre-check existence so missing assets (e.g., Spine-only bosses
-                // like Ceremonial Beast that ship no PNG fallback) don't trigger
-                // engine-level "No loader found" / "Error loading resource"
-                // spam in godot.log. ResourceLoader.Load returns null on miss
-                // but Godot still prints the errors before returning.
-                if (ResourceLoader.Exists(opt.PortraitPath)) {
-                    try {
-                        var tex = ResourceLoader.Load<Texture2D>(opt.PortraitPath);
-                        if (tex is not null) portrait.Texture = tex;
-                    } catch (Exception ex) {
-                        TiLog.Warn($"[SlayTheStreamer2][boss-vote] portrait load failed for {opt.PortraitPath}: {ex.Message}");
-                    }
-                } else {
-                    TiLog.Info($"[SlayTheStreamer2][boss-vote] no PNG portrait available for {opt.Title} (path: {opt.PortraitPath}); showing empty");
+            col.AddChild(slot);
+            _portraitSlots.Add(slot);
+
+            if (opt.VisualsFactory is not null) {
+                try {
+                    var visuals = opt.VisualsFactory.Invoke();
+                    slot.AddChild(visuals);
+                    // Queue — actual measurement/fit happens after the canvas is
+                    // added to SceneTree.Root (see end of Show()), so GetTree()
+                    // is non-null when ApplyPortraitFit's await fires.
+                    _pendingFits.Add((slot, visuals));
+                } catch (Exception ex) {
+                    TiLog.Warn($"[SlayTheStreamer2][boss-vote] visuals factory threw for column {opt.Index}: {ex.Message}");
                 }
             }
-            col.AddChild(portrait);
 
             var nameLabel = new RichTextLabel {
                 Name = "Name",
@@ -185,6 +211,75 @@ internal sealed partial class BossVotePopup : Control {
 
         tree.Root.AddChild(_canvasLayer);
         _canvasLayer.AddChild(this);   // popup Control is parented under the layer
+
+        // Now that the popup is in the tree, GetTree() returns non-null.
+        // Dispatch queued fits as fire-and-forget tasks; each has its own
+        // try/catch so unobserved exceptions don't surface unpredictably.
+        foreach (var (slot, visuals) in _pendingFits) {
+            _ = ApplyPortraitFit(slot, visuals);
+        }
+        _pendingFits.Clear();
+    }
+
+    /// <summary>
+    /// Defers Bounds.Size measurement by one process frame (Spine atlas
+    /// measurement is typically lazy) and applies a fit-scale + center
+    /// position to the visuals inside the slot. Fire-and-forget; wraps the
+    /// body in try/catch so exceptions are logged, not unobserved.
+    /// </summary>
+    private async Task ApplyPortraitFit(Control slot, Node2D visuals) {
+        try {
+            // Safe: this runs only AFTER Show() added the canvas to the tree.
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (!GodotObject.IsInstanceValid(visuals) || !GodotObject.IsInstanceValid(slot)) return;
+
+            var boundsSize = GetVisualBounds(visuals);
+            if (boundsSize == Vector2.Zero) {
+                // Spine atlas measurement may take >1 frame on some hardware. PortraitFit's
+                // Mathf.Max floor returns fit=1.0 here, ClipContents=true on the slot belts
+                // the overflow rendering. Log it so we have observability if this triggers.
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Bounds.Size is zero after ProcessFrame yield; falling back to native scale + clip");
+            }
+
+            // slot.Size may also be (0,0) if layout hasn't completed. Fall back to the
+            // intended slot size rather than letting fit=0 produce an invisible sprite.
+            var slotSize = slot.Size;
+            if (slotSize.X <= 0f || slotSize.Y <= 0f) {
+                slotSize = PortraitSlotSize;
+            }
+
+            // PortraitFit uses System.Numerics.Vector2 (the test csproj is non-Godot,
+            // so the helper had to be BCL-typed to be unit-testable). Tiny conversion
+            // here keeps the helper testable without forcing the popup to be too.
+            var fit = PortraitFit.ComputeFitScale(
+                new System.Numerics.Vector2(boundsSize.X, boundsSize.Y),
+                new System.Numerics.Vector2(slotSize.X, slotSize.Y));
+            ApplyScaleAndHue(visuals, fit);
+            // Initial placement: provisional. Operator validation must check per-boss centering;
+            // if misaligned, switch to Bestiary's (0, Size.Y * 0.5f) model or compute a
+            // bounds-aware offset.
+            visuals.Position = slotSize * 0.5f;
+        } catch (Exception ex) {
+            // Fire-and-forget exception observability — matches the slice's "degrade
+            // silently, log, never crash" principle. The popup remains valid; just this
+            // column's fit pass failed.
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] ApplyPortraitFit failed: {ex.Message}");
+        }
+    }
+
+    // Private static helpers: pattern-match-and-cast Node2D → NCreatureVisuals locally.
+    // The cast never escapes the popup's public API. A TI-extraction fork would replace
+    // these two helper bodies with the new host game's equivalents. Verified APIs:
+    // NCreatureVisuals.Bounds (Control) — populated in _Ready, NCreatureVisuals.cs:140.
+    // NCreatureVisuals.SetUpSkin(MonsterModel) — at NCreatureVisuals.cs:178.
+    // NCreatureVisuals.SetScaleAndHue(float scale, float hue) — at NCreatureVisuals.cs:190.
+    private static Vector2 GetVisualBounds(Node2D visuals) {
+        if (visuals is NCreatureVisuals cv && cv.Bounds is not null) return cv.Bounds.Size;
+        return Vector2.Zero;
+    }
+
+    private static void ApplyScaleAndHue(Node2D visuals, float scale) {
+        if (visuals is NCreatureVisuals cv) cv.SetScaleAndHue(scale, 0f);
     }
 
     public override void _Process(double delta) {
@@ -214,6 +309,19 @@ internal sealed partial class BossVotePopup : Control {
             catch { /* probe must never crash _Process */ }
             if (_canvasLayer.Visible == occluded) {
                 _canvasLayer.Visible = !occluded;
+                // REUSABLE PATTERN — Spine freeze via Godot's ProcessMode cascade:
+                //   ProcessMode.Disabled on a parent Control halts _Process on all
+                //   children whose ProcessMode is Inherit (the default). For
+                //   Spine-rendered children, this freezes playback without touching
+                //   MegaSpine's animation state.
+                //   Per CLAUDE.md Tier 4: SceneTree.Paused is never toggled by
+                //   StS2's pause menu, so Godot's native Pausable/WhenPaused modes
+                //   don't help — drive the freeze from our occlusion probe instead.
+                //   See Plan B in v3 spec Open Risks if gate 7 reveals this cascade
+                //   doesn't freeze MegaSpine playback.
+                foreach (var slot in _portraitSlots) {
+                    slot.ProcessMode = occluded ? ProcessModeEnum.Disabled : ProcessModeEnum.Inherit;
+                }
             }
             if (occluded) return;   // skip rebuilding label text while hidden
         }

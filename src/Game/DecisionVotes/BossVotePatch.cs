@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
@@ -301,11 +303,17 @@ internal static class BossVotePatch {
             }
         }
 
+        // IMPORTANT: PreWarmBossVisuals + factory construction + popup construction + popup.Show()
+        // must all run synchronously on the Godot main thread BEFORE the first `await` in this
+        // method. Godot resource loading and scene instantiation are main-thread-only. Do not
+        // move any of these below an `await` without marshalling via IMainThreadDispatcher.
+        PreWarmBossVisuals(sample);
+
         // Map EncounterModel → BossVotePopupOption DTOs (keeps popup MegaCrit-free).
         var dtos = sample.Select((e, i) => new BossVotePopupOption(
             Index: i,
             Title: e.Title.GetFormattedText(),
-            PortraitPath: ResolvePortraitPath(e))).ToList();
+            VisualsFactory: BuildVisualsFactory(e))).ToList();
         var labels = dtos.Select(d => d.Title).ToList();
 
         // Start session.
@@ -338,17 +346,70 @@ internal static class BossVotePatch {
         return false;
     }
 
-    private static string? ResolvePortraitPath(EncounterModel boss) {
-        try {
-            var basePath = boss.BossNodePath;
-            if (string.IsNullOrEmpty(basePath)) return null;
-            return basePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
-                ? basePath
-                : basePath + ".png";
-        } catch (Exception ex) {
-            TiLog.Warn($"[SlayTheStreamer2][boss-vote] BossNodePath access threw: {ex.Message}");
+    /// <summary>
+    /// Synchronously primes the asset cache for each candidate boss's combat scene.
+    /// Called on the Godot main thread between candidate sampling and session start
+    /// so the cold-load hitch (if any) lands BEFORE the popup appears, not during
+    /// the visible 30s vote timer.
+    ///
+    /// PreloadManager.Cache.GetScene is verified synchronous (AssetCache.cs:30-40).
+    /// Per-candidate try/catch ensures one missing scene doesn't block the others;
+    /// CreateVisuals falls back to creature_visuals/fallback if a scene is missing.
+    /// </summary>
+    private static void PreWarmBossVisuals(IReadOnlyList<EncounterModel> candidates) {
+        var sw = Stopwatch.StartNew();
+        int succeeded = 0;
+        foreach (var encounter in candidates) {
+            try {
+                var monster = encounter.AllPossibleMonsters.FirstOrDefault();
+                if (monster is null) continue;
+                // AssetPaths.First() == VisualsPath (decompile-verified observation).
+                // CreateVisuals reads VisualsPath directly anyway, so this prime is
+                // best-effort — if ordering ever changes, factory time picks up the slack.
+                var scenePath = monster.AssetPaths.FirstOrDefault();
+                if (string.IsNullOrEmpty(scenePath)) continue;
+                _ = PreloadManager.Cache.GetScene(scenePath);
+                succeeded++;
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] preload failed for {encounter.Id?.Entry}: {ex.Message}");
+            }
+        }
+        sw.Stop();
+        TiLog.Info($"[SlayTheStreamer2][boss-vote] pre-warm: {succeeded}/{candidates.Count} candidates in {sw.ElapsedMilliseconds}ms");
+    }
+
+    /// <summary>
+    /// Builds a closure that lazily produces an animated combat-idle NCreatureVisuals
+    /// for the encounter's primary monster. Invoked once per column at popup.Show()
+    /// time on the Godot main thread. Returns null if the encounter has no monsters
+    /// (defensive: shouldn't happen for canonical boss encounters).
+    ///
+    /// idle_loop is canonical across all monsters (MonsterModel.cs:387 +
+    /// per-monster GenerateAnimator overrides). For non-Spine creatures
+    /// (HasSpineAnimation == false), skips animator wiring; static pose renders.
+    /// </summary>
+    private static Func<Node2D>? BuildVisualsFactory(EncounterModel encounter) {
+        var monsters = encounter.AllPossibleMonsters.ToList();
+        if (monsters.Count == 0) {
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] encounter {encounter.Id?.Entry} has no monsters; column will render empty");
             return null;
         }
+        if (monsters.Count > 1) {
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] encounter {encounter.Id?.Entry} has {monsters.Count} monsters; rendering first ({monsters[0].Id?.Entry}) only");
+        }
+        var monster = monsters[0];
+        return () => {
+            var visuals = monster.CreateVisuals();
+            if (visuals.HasSpineAnimation) {
+                monster.GenerateAnimator(visuals.SpineBody);
+                visuals.SetUpSkin(monster);
+                // Verified shape: NCreatureVisuals.SetUpSkin(MonsterModel) at NCreatureVisuals.cs:178.
+                // Defensive ?. on GetAnimationState() — should be non-null when HasSpineAnimation is true,
+                // but guard for potatoes.
+                visuals.SpineBody.GetAnimationState()?.SetAnimation("idle_loop");
+            }
+            return visuals;
+        };
     }
 
     private static async Task HandleVoteAsync(

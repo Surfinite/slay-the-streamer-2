@@ -26,12 +26,15 @@ internal sealed partial class BossVotePopup : Control {
     public const int LAYER_INDEX = 100;
 
     /// <summary>
-    /// Slot size for each per-column animated portrait. 384×384 was chosen
-    /// to give combat-idle sprites (~500–800px native) reasonable visual
-    /// impact at fit-scale ≈ 0.5–0.77. Bumped from 256×256 (B.3 era PNG
-    /// portraits) after 9-reviewer consensus that 256² felt cramped.
+    /// Slot size for each per-column animated portrait. Bumped twice during B.3.1:
+    ///   - 256×256 (B.3 PNG era, static portraits)
+    ///   - 384×384 (B.3.1 Round 1 — 9-reviewer consensus that 256 felt cramped)
+    ///   - 448×448 (B.3.1 gate-1 follow-up — operator validation confirmed plenty
+    ///     of horizontal room on standard widescreen, 3 × 448 = 1344 px with
+    ///     ~580 px breathing room at 1920 wide; only 4:3 test windows feel tight
+    ///     and nobody plays at 4:3).
     /// </summary>
-    private static readonly Vector2 PortraitSlotSize = new(384, 384);
+    private static readonly Vector2 PortraitSlotSize = new(448, 448);
 
     private readonly IReadOnlyList<BossVotePopupOption> _options;
     private readonly VoteSession _session;
@@ -268,10 +271,11 @@ internal sealed partial class BossVotePopup : Control {
 
             // Safety margin: idle animations can oscillate beyond the rest-pose Bounds
             // measurement (Soul Fysh is the observed case in B.3.1 operator validation).
-            // 0.92 inset (4% per side) eliminates the rare animation clip without a
-            // visible size change on bosses whose motion is contained within Bounds.
-            // Tuned during gate 1; revisit if a future boss's motion exceeds 8%.
-            fit *= 0.92f;
+            // 0.88 inset (6% per side) eliminates the animation clip — bumped from 0.92
+            // after gate-1 follow-up showed Soul Fysh still grazed the slot edge at 4%.
+            // Combined with the PortraitSlotSize bump to 448, gives ~27 px absolute
+            // margin per side (vs ~15 px at the original 384 × 0.92).
+            fit *= 0.88f;
 
             ApplyScaleAndHue(visuals, fit);
 

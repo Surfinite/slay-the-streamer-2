@@ -428,7 +428,12 @@ internal static class BossVotePatch {
     /// [KinFollower, KinPriest] but the visual "leader" is the priest.
     ///
     /// Multi-monster boss list (current build):
-    ///   - KAISER_CRAB_BOSS: [CRUSHER, ROCKET] → Crusher (index 0) ✓
+    ///   - KAISER_CRAB_BOSS: [CRUSHER, ROCKET] → Crusher (index 0); CURRENTLY
+    ///     RENDERS BLANK in operator validation — Crusher's combat scene
+    ///     (creature_visuals/crusher.tscn) doesn't appear to ship in early
+    ///     access yet (not in bestiary either). CreateVisuals falls back to
+    ///     creature_visuals/fallback. Nothing the mod can do without
+    ///     re-implementing scene-existence probing; revisit on game update.
     ///   - QUEEN_BOSS: [QUEEN, TORCH_HEAD_AMALGAM] → Queen (index 0) ✓
     ///   - THE_KIN_BOSS: [KIN_FOLLOWER, KIN_PRIEST] → KIN_PRIEST (special-case)
     ///

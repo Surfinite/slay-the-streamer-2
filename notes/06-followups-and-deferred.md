@@ -4,6 +4,58 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Plan B.3.1 combat-idle boss portraits (resolved 2026-05-16)
+
+Replaced B.3's static PNG portraits with animated combat-idle sprites rendered via `MonsterModel.CreateVisuals()`, fixing the empty-column bug for Spine-only bosses (Ceremonial Beast pre-fix; future Spine-only bosses post-fix).
+
+### Acceptance gate — 21 green, 2 skipped with rationale
+
+All B.3.1 gates passed:
+
+- **Visual correctness (gates 1–6)**: ☑ all bosses render animated combat sprites, Ceremonial Beast renders (the headline bug fix), all 9 placeholder bosses render correctly. Bounds-aware centering keeps each sprite vertically anchored regardless of native-origin convention. Soul Fysh's idle oscillation no longer clips with the 6%-per-side fit margin (0.88).
+- **Lifecycle correctness (gates 7–12)**: ☑ ProcessMode.Disabled cascade freezes Spine playback during pause-menu / dev-console occlusion (gate 7 visual-smoothness check passed). Run abandonment, save-quit-and-Continue, and PhobiaMode toggle all degrade gracefully without crash. Multi-monster encounters log primary-monster pick at Info level for observability.
+- **Coverage (gates 13–16)**: ☑ Act 1 Overgrowth, Act 2 Hive, Act 3 Glory all validated. Golden Compass two-chest scenario correctly hits B.3's idempotency guard and skips the second vote; the `_lastSwappedBossId` triad is unchanged from B.3.
+- **Hardware envelope (gates 17–20)**: ☑ Pre-warm Stopwatch baseline `pre-warm: 3/3 candidates in 76–82ms` across runs — well under any "harmless" threshold. Resolution coverage validated at 4:3 small testing window, 1080p widescreen, 1440p ultrawide fullscreen (with the post-fix 448×448 slot size).
+- **Build pipeline (gates 21–24)**: ☑ `build.ps1` + `install.ps1` clean; godot.log version hash matches HEAD on every cycle; only `[boss-vote]` log lines under normal flow are Info-level (Stopwatch + multi-monster picker observations).
+- **Gate 18 (cold-load Thread.Sleep simulation)**: skipped — pre-warm baseline of 76–82ms is consistently low across multiple runs, and gate 17's organic measurement makes the synthetic latency exercise low-value. Documented as accepted skip.
+- **Gate 19 (second-hardware envelope)**: skipped — no accessible second machine. Gate 17's organic timing is the substitute data point.
+
+Tag `plan-b-3-1-complete` applied at HEAD on slice closure.
+
+### Architecture-defining outcomes
+
+- **ProcessMode.Disabled cascade pattern (reusable)**: setting `ProcessMode.Disabled` on a parent Control halts `_Process` on all children whose ProcessMode is `Inherit` (the default). For Spine-rendered NCreatureVisuals children, this freezes playback without reaching into MegaSpine's animation state — no `SetTimeScale(0)` API call, no typed reference exposure. Driver: the popup's occlusion probe (`_isOccludingOverlayVisible`), since per CLAUDE.md Tier 4 `SceneTree.Paused` is never toggled by StS2's pause menu. **Any future mod UI rendering MegaCrit creatures + needing pause-aware freeze can reuse this pattern.** Reference implementation: `BossVotePopup._Process` occlusion block.
+- **Bounds-aware centering pattern**: `NCreatureVisuals` origins are typically at the creature's feet, not the visual center, so naive `visuals.Position = slot.Size * 0.5f` floats the body upward. The correct formula is `visuals.Position = slotSize * 0.5f - boundsCenter * fit` where `boundsCenter = Bounds.Position + Bounds.Size * 0.5f`. Read via the typed private static `GetVisualBoundsRect(Node2D)` helper.
+- **TI/Game seam framing**: public-interface MegaCrit-free, with localized typed private static helpers (`GetVisualBounds`, `ApplyScaleAndHue`) for the cast-and-call sites. Honest version of "absolute seam" — TI extraction would touch ~6 lines of helper bodies, not the public popup API.
+- **Variant B pre-warm timing (vote-start, synchronous main-thread)**: load hitch lands between Proceed-click and popup-appearance rather than during the visible vote timer. Stopwatch telemetry confirms 76–82ms across runs — well below any "feels broken" threshold. Variant C (chest-room-enter postfix) remains on the table for a follow-up if community reports surface hitch on slower hardware.
+- **`PortraitFit.ComputeFitScale` carve-out**: pure-math fit-scale calculation extracted into a Godot-free, MegaCrit-free static helper for unit-testability. 6 `[Theory]` cases including zero/negative bounds. Surgical `Compile Include` in test csproj (one line) avoids pulling other `src/Game/Ui/*` files into the test project.
+- **rerollvote dev console command**: re-opens current boss vote with a fresh sample. Generation-tracking via static `_voteGeneration` + `_rerollSalt` so the cancelled session's stale resume bails cleanly without applying a swap or firing the synthetic Proceed re-click. Pre-flight pool check leaves the existing vote intact on degenerate-pool failure.
+
+### Findings worth preserving (spec/spike corrections discovered during operator validation)
+
+The v3 spec was internally consistent but several assumptions about vanilla didn't survive contact with `godot.log`. Captured here so the next slice doesn't repeat them:
+
+- **Multi-monster bosses exist in the current build**: three of them (`KAISER_CRAB_BOSS`, `QUEEN_BOSS`, `THE_KIN_BOSS`). The Round-1 spike's "all current act bosses are single-monster" finding was wrong — the spike checked Spine availability, not encounter monster count. PickPrimaryMonster's special-case branch handles `THE_KIN_BOSS → KIN_PRIEST`; `QUEEN_BOSS` and `KAISER_CRAB_BOSS` happen to have the visual primary at index 0 by luck.
+- **`ModelId.Entry` is UPPER_SNAKE_CASE, not PascalCase**: e.g., `THE_KIN_BOSS` not `TheKinBoss`, `KIN_PRIEST` not `KinPriest`. The v3 spec used PascalCase in code samples; first implementation pass used PascalCase too; operator validation log capture (`[boss-vote] encounter THE_KIN_BOSS has 2 monsters; rendering primary KIN_FOLLOWER`) was what revealed the format mismatch. Always verify identifier formats against actual runtime logs, not class names.
+- **`ActModel.AssetPaths` does NOT include monster combat scenes**: it includes act-level paths (background, map nodes, ancient assets) but not `creature_visuals/<id>.tscn`. So our pre-warm IS the cold load — not a redundant cache prime as the v3 spec implied. The vanilla `Asset not cached:` warns in `godot.log` for monster scenes are MegaCrit's signal that vanilla didn't pre-load them, harmless if rare. Our pre-warm Stopwatch numbers (76–82ms) are the real cold-load cost.
+- **`MonsterModel.AssetPaths` access throws `"Canonical model ... used in incorrect place"`** for bosses with mutable internal state inside their `GenerateMoveStateMachine()` (Ceremonial Beast's `BeastCryState` assignment is the canary). Don't iterate `AssetPaths` for pre-warm — build the scene path directly via `SceneHelper.GetScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant())`. The pure `VisualsPath` accessor is `protected`, hence the manual reconstruction.
+- **Act-variant pool size = sample size for Act 1**: each Act 1 variant ships exactly 3 bosses (Underdocks: Waterfall Giant / Soul Fysh / Lagavulin Matriarch; Overgrowth: Vantom / Ceremonial Beast / The Kin). `BossCandidateSampler.SampleDistinct(pool, count: 3, rng)` from a 3-pool is a reshuffle — `rerollvote` only changes column ORDER for Act 1 in a given run, not the set. See deferred follow-up section above for the two paths to address this.
+- **Kaiser Crab is composite, not blank**: Crusher's combat scene loads correctly; it just renders as a single claw (Crusher is one of two claws flanking the player in combat, with the Kaiser Crab "face" being the background). The popup shows the claw alone, which reads as small/unrecognizable. Not a code bug — would need cross-scene compositing or boss-specific background pull to resolve. Documented as deferred.
+- **Test csproj `src/Game/Ui/*` is excluded by default** — only `src/Ti/Internal/`, `src/Ti/Chat/`, `src/Ti/Voting/`, `src/Game/Bootstrap/`, `src/Game/DecisionVotes/` are auto-included. Unit-testable helpers in `src/Game/Ui/` need explicit `<Compile Include="..\src\Game\Ui\X.cs" />`. PortraitFit had to be `System.Numerics.Vector2`-typed (not `Godot.Vector2`) because the test project has no Godot reference.
+
+### Follow-ups + observations (deferred to v0.2+)
+
+- **Cross-act-variant boss pool OR pre-act variant vote** — already documented in the deferred section above (this same file, just below). Surfinite's current lean: Option 2 (pre-act variant vote). Defer until B.3.1 ships; can start as B.3.2 or similar.
+- **Kaiser Crab composite rendering**: would need to render both Crusher and Rocket side-by-side OR pull in the boss-specific background. Significant work for a single boss; revisit if MegaCrit ships a unified Kaiser Crab bestiary image.
+- **Font swap across all vote popups (B.1 Neow, B.2.1 card reward, B.2.2 ancient, B.3 / B.3.1 boss)**: Surfinite wants the default game font instead of the current RichTextLabel default. Cross-vote concern — belongs in a dedicated polish slice that touches all popups uniformly, not B.3.1.
+- **Text alignment polish across B.1 / B.2.1 / B.2.2 popups**: same dedicated polish slice as the font swap.
+- **Bigger ultrawide column packing**: Surfinite noted "ultrawide is 95% good ... I'd squish them together a little" — but specifically said "no point introducing a case for a resolution no one is going to stream at." Accept as known-shippable.
+- **Lagavulin "asleep" idle**: Lagavulin's idle animation starts in a sleep pose in combat; the popup shows the same sleep pose. Vanilla behavior — keep consistent with bestiary. Revisit if MegaCrit changes the default bestiary animation.
+- **Test isolation `[Collection("TiLog.Sink")]` gap (pre-existing)**: operator validation rebuilds occasionally surfaced the `Collection was modified during enumeration` flake in `VoteSessionTests.Closed_WithoutAwait_LogsWarn`. Not caused by B.3.1; documented in CLAUDE.md Tier 1 as a known parallel-test-collection issue. Adding the missing collection markers to the affected test classes is a separate small slice.
+- **Pre-warm escalation to Variant C (chest-room-enter postfix)**: documented above as a fallback if hitch ever becomes user-visible. Use `PreloadManager.LoadActAssets` (the vanilla async preload entry-point that doesn't fire missed-cache warns) as the implementation path. Currently no observable need.
+
+---
+
 ## Plan B.3.1 boss-vote pool / act-variant expansion (deferred; identified 2026-05-16)
 
 During B.3.1 operator validation, Surfinite observed that `rerollvote` always returns the same 3 bosses because the act's `AllBossEncounters` pool size equals the sample size (3 of 3). Each Act 1 variant ships a fixed 3-boss roster:

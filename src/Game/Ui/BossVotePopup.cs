@@ -265,6 +265,14 @@ internal sealed partial class BossVotePopup : Control {
             var fit = PortraitFit.ComputeFitScale(
                 new System.Numerics.Vector2(boundsRect.Size.X, boundsRect.Size.Y),
                 new System.Numerics.Vector2(fitSlot.X, fitSlot.Y));
+
+            // Safety margin: idle animations can oscillate beyond the rest-pose Bounds
+            // measurement (Soul Fysh is the observed case in B.3.1 operator validation).
+            // 0.92 inset (4% per side) eliminates the rare animation clip without a
+            // visible size change on bosses whose motion is contained within Bounds.
+            // Tuned during gate 1; revisit if a future boss's motion exceeds 8%.
+            fit *= 0.92f;
+
             ApplyScaleAndHue(visuals, fit);
 
             // Bounds-aware centering: place sprite's local origin so the *visible body*

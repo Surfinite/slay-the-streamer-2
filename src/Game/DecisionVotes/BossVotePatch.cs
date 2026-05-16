@@ -51,6 +51,32 @@ internal static class BossVotePatch {
     private static int _lastSwapActIndex = -1;
     private static ModelId? _lastSwappedBossId;
 
+    /// <summary>
+    /// Last NTreasureRoom captured in PrefixContinue. The rerollvote dev command
+    /// reads this to re-open a fresh vote on the same chest without needing the
+    /// streamer to abandon + start a new run. Cleared on resume; never read while
+    /// _voteInProgress == 0.
+    /// </summary>
+    private static NTreasureRoom? _activeRoom;
+
+    /// <summary>
+    /// Monotonic counter incremented each time a vote (fresh or rerolled) goes
+    /// "live". HandleVoteAsync captures the generation at start; ResumeOnMainThread
+    /// compares its captured generation against the current value and bails if
+    /// stale (i.e., a reroll superseded this resume). Prevents the cancelled-old-
+    /// session's resume from applying a swap or firing the synthetic Proceed
+    /// re-click on top of the fresh popup.
+    /// </summary>
+    private static int _voteGeneration;
+
+    /// <summary>
+    /// Dev-only salt mixed into the BossVoteSeed seed when rerollvote fires.
+    /// Reset to 0 in PrefixContinue when a fresh vote starts. Each rerollvote
+    /// call increments it, producing a different sample from the same (run, act)
+    /// without changing the underlying determinism for production.
+    /// </summary>
+    private static int _rerollSalt;
+
     internal static bool RunIdGuardEnabled { get; private set; } = true;
 
     /// <summary>
@@ -197,6 +223,68 @@ internal static class BossVotePatch {
         }
     }
 
+    /// <summary>
+    /// Builds and starts a boss vote: samples candidates, pre-warms visuals,
+    /// creates the session + popup, and spins up HandleVoteAsync. Used by both
+    /// the fresh-vote path (PrefixContinue) and the rerollvote dev command
+    /// (RerollCurrent). Throws on failure; caller is responsible for flag cleanup.
+    /// Returns the sampled list for log messages.
+    /// </summary>
+    private static IReadOnlyList<EncounterModel> BuildAndStartVote(
+            VoteCoordinator coordinator,
+            NTreasureRoom room,
+            IRunState runState,
+            string? runIdAtStart,
+            int salt,
+            int gen) {
+        // Materialize pool once; exclude SecondBossEncounter if A10+ DoubleBoss.
+        var pool = runState.Act.AllBossEncounters.ToList();
+        if (runState.Act.HasSecondBoss) {
+            var secondId = runState.Act.SecondBossEncounter?.Id;
+            if (secondId is not null) pool.RemoveAll(e => e.Id == secondId);
+        }
+        if (pool.Count <= 1) {
+            throw new InvalidOperationException($"degenerate pool (count={pool.Count}); cannot start vote");
+        }
+
+        // Stable deterministic seed + per-reroll salt for dev re-rolls.
+        int seed = BossVoteSeed.Stable(runState.Rng?.StringSeed, runState.CurrentActIndex) + salt;
+        var rng = new Random(seed);
+        var sample = BossCandidateSampler.SampleDistinct(pool, count: 3, rng);
+
+        var sampledIds = string.Join(", ", sample.Select((e, i) => $"#{i}={e.Title.GetFormattedText()}({e.Id})"));
+        TiLog.Info($"[SlayTheStreamer2][boss-vote] opening vote for {sample.Count} options; seed={seed} (salt={salt}); gen={gen}; sampled: {sampledIds}");
+
+        PreWarmBossVisuals(sample);
+
+        var dtos = sample.Select((e, i) => new BossVotePopupOption(
+            Index: i,
+            Title: e.Title.GetFormattedText(),
+            VisualsFactory: BuildVisualsFactory(e))).ToList();
+        var labels = dtos.Select(d => d.Title).ToList();
+
+        var label = salt == 0
+            ? $"Act {runState.CurrentActIndex + 1} boss vote"
+            : $"Act {runState.CurrentActIndex + 1} boss vote (reroll #{salt})";
+        var session = coordinator.Start(label, labels, TimeSpan.FromSeconds(30));
+
+        try {
+            var popup = new BossVotePopup(
+                dtos,
+                session,
+                coordinator.Dispatcher,
+                isOccludingOverlayVisible: IsOccludingOverlayVisible,
+                isRunDying: IsRunDying);
+            coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
+        } catch {
+            try { session.Cancel(); } catch { /* swallow */ }
+            throw;
+        }
+
+        _ = HandleVoteAsync(coordinator, room, session, sample, runIdAtStart, gen);
+        return sample;
+    }
+
     private static bool PrefixContinue(NTreasureRoom room, VoteCoordinator coordinator) {
         IRunState? runState = RunManager.Instance?.DebugOnlyGetState();
         if (runState is null) {
@@ -255,42 +343,12 @@ internal static class BossVotePatch {
             _lastSwappedBossId = null;
         }
 
-        // Materialize pool once; exclude SecondBossEncounter if A10+ DoubleBoss.
-        List<EncounterModel> pool;
-        try {
-            pool = runState.Act.AllBossEncounters.ToList();
-        } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][boss-vote] AllBossEncounters threw", ex);
-            Interlocked.Exchange(ref _voteInProgress, 0);
-            return true;
-        }
-
-        if (runState.Act.HasSecondBoss) {
-            var secondId = runState.Act.SecondBossEncounter?.Id;
-            if (secondId is not null) {
-                pool.RemoveAll(e => e.Id == secondId);
-                TiLog.Info($"[SlayTheStreamer2][boss-vote] HasSecondBoss=true; excluding {secondId} from sample");
-            } else {
-                TiLog.Warn("[SlayTheStreamer2][boss-vote] HasSecondBoss true but SecondBossEncounter missing");
-            }
-        }
-
-        if (pool.Count < 3) {
-            TiLog.Warn($"[SlayTheStreamer2][boss-vote] only {pool.Count} bosses available for Act {runState.CurrentActIndex + 1} — possible content change?");
-        }
-        if (pool.Count <= 1) {
-            TiLog.Info($"[SlayTheStreamer2][boss-vote] degenerate pool (count={pool.Count}); skipping vote");
-            Interlocked.Exchange(ref _voteInProgress, 0);
-            return true;
-        }
-
-        // Stable deterministic seed; same run + same act → same candidates across processes.
-        int seed = BossVoteSeed.Stable(runState.Rng?.StringSeed, runState.CurrentActIndex);
-        var rng = new Random(seed);
-        var sample = BossCandidateSampler.SampleDistinct(pool, count: 3, rng);
-
-        var sampledIds = string.Join(", ", sample.Select((e, i) => $"#{i}={e.Title.GetFormattedText()}({e.Id})"));
-        TiLog.Info($"[SlayTheStreamer2][boss-vote] opening vote for {sample.Count} options; seed={seed}; sampled: {sampledIds}");
+        // Capture room + reset reroll salt + bump generation BEFORE BuildAndStartVote
+        // so the rerollvote dev command has the state it needs and the new vote's
+        // generation is captured by HandleVoteAsync.
+        _activeRoom = room;
+        _rerollSalt = 0;
+        int newGen = Interlocked.Increment(ref _voteGeneration);
 
         // Run-id capture (soft guard).
         string? runIdAtStart = null;
@@ -303,46 +361,20 @@ internal static class BossVotePatch {
             }
         }
 
-        // IMPORTANT: PreWarmBossVisuals + factory construction + popup construction + popup.Show()
-        // must all run synchronously on the Godot main thread BEFORE the first `await` in this
-        // method. Godot resource loading and scene instantiation are main-thread-only. Do not
-        // move any of these below an `await` without marshalling via IMainThreadDispatcher.
-        PreWarmBossVisuals(sample);
-
-        // Map EncounterModel → BossVotePopupOption DTOs (keeps popup MegaCrit-free).
-        var dtos = sample.Select((e, i) => new BossVotePopupOption(
-            Index: i,
-            Title: e.Title.GetFormattedText(),
-            VisualsFactory: BuildVisualsFactory(e))).ToList();
-        var labels = dtos.Select(d => d.Title).ToList();
-
-        // Start session.
-        VoteSession session;
         try {
-            session = coordinator.Start($"Act {runState.CurrentActIndex + 1} boss vote", labels, TimeSpan.FromSeconds(30));
+            BuildAndStartVote(coordinator, room, runState, runIdAtStart, salt: 0, gen: newGen);
+        } catch (InvalidOperationException ex) {
+            // Degenerate pool — log Info (not Error) and bail to vanilla.
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] {ex.Message}; bailing to vanilla");
+            _activeRoom = null;
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
         } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][boss-vote] Voter.Default.Start threw; falling back to vanilla", ex);
+            TiLog.Error("[SlayTheStreamer2][boss-vote] BuildAndStartVote threw; bailing to vanilla", ex);
+            _activeRoom = null;
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
-
-        // Construct popup; cancel session and bail on construction failure.
-        try {
-            var popup = new BossVotePopup(
-                dtos,
-                session,
-                coordinator.Dispatcher,
-                isOccludingOverlayVisible: IsOccludingOverlayVisible,
-                isRunDying: IsRunDying);
-            coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
-        } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][boss-vote] BossVotePopup construction threw; cancelling session", ex);
-            try { session.Cancel(); } catch { /* swallow */ }
-            Interlocked.Exchange(ref _voteInProgress, 0);
-            return true;
-        }
-
-        _ = HandleVoteAsync(coordinator, room, session, sample, runIdAtStart);
         return false;
     }
 
@@ -449,7 +481,8 @@ internal static class BossVotePatch {
         NTreasureRoom room,
         VoteSession session,
         IReadOnlyList<EncounterModel> sample,
-        string? runIdAtStart) {
+        string? runIdAtStart,
+        int gen) {
         try {
             coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
 
@@ -468,11 +501,11 @@ internal static class BossVotePatch {
             }
 
             TiLog.Info($"[SlayTheStreamer2][boss-vote] resume: dispatching with winnerIndex={(winnerIndex?.ToString() ?? "null")}");
-            coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, sample, winnerIndex, runIdAtStart));
+            coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, sample, winnerIndex, runIdAtStart, gen));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] HandleVoteAsync threw; attempting no-winner fallback resume", ex);
             try {
-                coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, sample, winnerIndex: null, runIdAtStart));
+                coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, sample, winnerIndex: null, runIdAtStart, gen));
             } catch (Exception postEx) {
                 TiLog.Error("[SlayTheStreamer2][boss-vote] fallback resume Post itself threw; resetting flags", postEx);
                 Interlocked.Exchange(ref _resumeInProgress, 0);
@@ -482,10 +515,18 @@ internal static class BossVotePatch {
     }
 
     private static void ResumeOnMainThread(
-        NTreasureRoom room,
-        IReadOnlyList<EncounterModel> sample,
-        int? winnerIndex,
-        string? runIdAtStart) {
+            NTreasureRoom room,
+            IReadOnlyList<EncounterModel> sample,
+            int? winnerIndex,
+            string? runIdAtStart,
+            int gen) {
+        // Generation guard: if this resume is from a session that was superseded by
+        // a rerollvote, bail without applying any swap or firing the synthetic
+        // Proceed re-click. _voteInProgress stays acquired (the fresh vote owns it).
+        if (gen != _voteGeneration) {
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] resume from stale generation {gen} (current={_voteGeneration}); rerollvote superseded — discarding");
+            return;
+        }
         Interlocked.Exchange(ref _resumeInProgress, 1);
         try {
             if (!GodotObject.IsInstanceValid(room)) {
@@ -579,6 +620,7 @@ internal static class BossVotePatch {
             TiLog.Error("[SlayTheStreamer2][boss-vote] resume threw", ex);
         } finally {
             // Order matters: clear _resumeInProgress first, then _voteInProgress.
+            _activeRoom = null;
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
         }
@@ -595,5 +637,65 @@ internal static class BossVotePatch {
             "Vote result ignored — run abandoned during boss vote",
             OutgoingMessagePriority.Normal);
         TiLog.Info("[SlayTheStreamer2][boss-vote] ignored-result receipt queued");
+    }
+
+    /// <summary>
+    /// Dev-only: re-open the current boss vote with a fresh sample from the
+    /// same (run, act) but a different seed (via _rerollSalt). The stale
+    /// HandleVoteAsync from the cancelled old session will see its resume
+    /// land on a stale generation and bail cleanly via the guard in
+    /// ResumeOnMainThread — no swap, no synthetic Proceed click.
+    /// Used by RerollVoteConsoleCmd. Returns (success, message) for the
+    /// console to format.
+    /// </summary>
+    internal static (bool ok, string message) RerollCurrent() {
+        if (_voteInProgress != 1) return (false, "No active boss vote to reroll.");
+
+        var coordinator = Voter.Default;
+        if (coordinator is null) return (false, "Voter.Default is null.");
+
+        var room = _activeRoom;
+        if (room is null || !GodotObject.IsInstanceValid(room)) return (false, "Active chest room is invalid.");
+
+        var runState = RunManager.Instance?.DebugOnlyGetState();
+        if (runState is null) return (false, "RunState is null.");
+
+        var oldSession = coordinator.CurrentSession;
+        if (oldSession is null) return (false, "No active vote session.");
+
+        // Pre-flight: verify the pool will still produce a usable sample BEFORE
+        // tearing down the existing session. If reroll would degenerate, leave
+        // the old vote intact.
+        try {
+            var preflightPool = runState.Act.AllBossEncounters.ToList();
+            if (runState.Act.HasSecondBoss) {
+                var secondId = runState.Act.SecondBossEncounter?.Id;
+                if (secondId is not null) preflightPool.RemoveAll(e => e.Id == secondId);
+            }
+            if (preflightPool.Count <= 1) {
+                return (false, $"Pre-flight: degenerate pool (count={preflightPool.Count}); cannot reroll.");
+            }
+        } catch (Exception ex) {
+            return (false, $"Pre-flight pool inspection threw: {ex.Message}");
+        }
+
+        // Tear down: bump generation FIRST so the cancelled session's resume
+        // sees a stale gen. Then cancel.
+        _rerollSalt++;
+        int newGen = Interlocked.Increment(ref _voteGeneration);
+        try { oldSession.Cancel(); } catch { /* swallow */ }
+
+        // Build fresh vote with bumped salt.
+        try {
+            string? runIdAtStart = null;
+            if (RunIdGuardEnabled) {
+                try { runIdAtStart = runState.Rng?.StringSeed; } catch { /* swallow */ }
+            }
+            var sample = BuildAndStartVote(coordinator, room, runState, runIdAtStart, salt: _rerollSalt, gen: newGen);
+            return (true, $"Rerolled boss vote (salt #{_rerollSalt}); options: {string.Join(", ", sample.Select((e, i) => $"#{i} {e.Title.GetFormattedText()}"))}");
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][boss-vote] reroll BuildAndStartVote threw; vote is now in degraded state", ex);
+            return (false, $"Reroll failed: {ex.Message}. Vote may be in degraded state; consider votenow + abandon.");
+        }
     }
 }

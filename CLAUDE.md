@@ -31,7 +31,10 @@ Without this, the class runs in parallel with `TiLogTests` (which captures the s
 Per-task commits to `main` with a slice-specific prefix:
 - B.1: `plan-b-1/N.M:`
 - B.2.1: `plan-b-2-1/N.M:`
+- B.2.2: `plan-b-2-2/N.M:`
 - v0.2 yt-chat: `yt-chat/N.M:`
+- B.3: `plan-b-3/N.M:`
+- B.3.1: `plan-b-3-1/N.M:`
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 
@@ -50,6 +53,19 @@ Pass the message via a single-quoted HEREDOC to `git commit -m` so the trailer r
 ### `*.sln` is intentionally gitignored
 
 `dotnet build` auto-generates a `.sln` that references gitignored paths (build output, copied DLLs). Committing it would break fresh clones. If you open the repo in Rider/VS expecting a solution file, generate one locally with `dotnet sln` — don't commit the result.
+
+### Test csproj source-include globs are explicit — `src/Game/Ui/*` is NOT included by default
+
+`tests/slay_the_streamer_2.tests.csproj` source-references mod project files via these `<Compile Include>` globs:
+- `..\src\Ti\Internal\**\*.cs`
+- `..\src\Ti\Chat\**\*.cs`
+- `..\src\Ti\Voting\**\*.cs`
+- `..\src\Game\Bootstrap\**\*.cs`
+- `..\src\Game\DecisionVotes\**\*.cs` (with per-file `Compile Remove` for the Harmony-patch classes)
+
+Anything outside those paths needs an **explicit** `<Compile Include="..\src\<path>\<file>.cs" />`. If you add a unit-testable helper in `src/Game/Ui/*` (the pattern B.3.1's `PortraitFit.cs` established), add the surgical include yourself — don't broaden to a glob, because the rest of `src/Game/Ui/*` references Godot types not visible to the test project's `Microsoft.NET.Sdk`.
+
+Also: the test project is `Microsoft.NET.Sdk` (not `Godot.NET.Sdk`), so `Godot.*` types are unavailable. Unit-testable helpers must use `System.Numerics` instead of `Godot.Vector2`. Callers (which are typically Godot-side) do the conversion at the call site — cheap and one-directional.
 
 ---
 
@@ -142,3 +158,7 @@ Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the
 - **StS2 doesn't use `SceneTree.Paused`.** Pause-menu / settings / modals go through `RunManager.ActionExecutor.Pause()` for combat-time pausing; Godot's `SceneTree.Paused` is never toggled by the pause menu. Anyone trying to detect "is any vanilla submenu open" via `SceneTree.Paused` will always read `false` and waste a debug cycle (B.3 burned `plan-b-3/6.4` on this). The real probe is `NRun.Instance.GlobalUi.SubmenuStack.Stack.SubmenusOpen` — and **note the `.Stack` indirection**: the outer `SubmenuStack` returns an `NCapstoneSubmenuStack` wrapper, not the `NSubmenuStack` with the `SubmenusOpen` bool. Reference: `BossVotePatch.IsOccludingOverlayVisible`.
 - **Vanilla bosses ship Spine `.tres` OR PNG fallback, never both.** `EncounterModel.MapNodeAssetPaths` returns one OR the other based on `BossNodeSpineResource`. Bosses with full Spine art (e.g., Ceremonial Beast) have no PNG sibling; "placeholder" bosses that explicitly override `BossNodeSpineResource => null` (e.g., Soul Fysh, Vantom, The Kin, Waterfall Giant, Lagavulin, Doormaker, Kaiser Crab, Knowledge Demon, Test Subject) point `BossNodePath` at `res://images/map/placeholder/<id>_icon` and DO ship a `.png`. As MegaCrit ships more Spine art, fewer bosses will have PNG fallbacks. Any code loading boss icons as `Texture2D` from `BossNodePath + ".png"` will hit empty boxes for Spine-only bosses unless `ResourceLoader.Exists(path)` is pre-checked (`BossVotePopup` defensive load pattern, `plan-b-3/6.2`). Full Spine rendering requires the `NSpineAutoPlayer` node + `MegaSkeletonDataResource` from `BossNodeSpineResource` — not currently used by any mod-side code.
 - **StS2 save-quit can snapshot pre-mutation state.** Mid-room mutations of `runState` (verified for `MapCmd.SetBossEncounter`; likely applies to other mid-room writes) may be lost on save-quit-and-Continue — the save was taken at an earlier checkpoint. Any patch that mutates `runState` mid-room needs a "remember-what-we-did + verify-on-next-prefix + silently-re-apply" pattern (B.3's `_lastSwappedBossId` + idempotency check in `BossVotePatch.PrefixContinue`), OR needs to commit at a save-checkpoint boundary. The user-visible failure mode without this: chat votes, runs the swap, save-quit + Continue, swap is gone AND idempotency check would block a re-vote — fight goes to vanilla's pre-rolled boss instead. Process-restart-after-save-quit is a separate path (in-memory marker is lost, fresh vote fires).
+- **`ModelId.Entry` is UPPER_SNAKE_CASE, NOT PascalCase.** `TheKinBoss` (the C# class name) has `Id.Entry == "THE_KIN_BOSS"`; the monster `KinPriest` has `Id.Entry == "KIN_PRIEST"`. Any code that string-compares `Id.Entry` against a literal needs the snake-case form. B.3.1 first shipped with `"TheKinBoss"` PascalCase comparisons that silently never matched until the godot.log line `[boss-vote] encounter THE_KIN_BOSS has 2 monsters; rendering primary KIN_FOLLOWER` made it obvious (`plan-b-3-1/7.3`). Always verify identifier formats against runtime `godot.log`, not C# class names.
+- **`MonsterModel.AssetPaths` throws `"Canonical model ... used in incorrect place"` for bosses with mutable internal state inside their `GenerateMoveStateMachine()`.** The throw originates from `AssertMutable` checks that fire when a canonical (non-`ToMutable()`) instance's move-state-machine construction tries to write to an internal field. Ceremonial Beast's `BeastCryState` assignment is the observed canary; other stateful bosses likely behave the same. **Don't iterate `AssetPaths` on canonical instances** — build the combat scene path directly via `SceneHelper.GetScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant())`, matching `MonsterModel.VisualsPath`'s own construction. Surfaced in `plan-b-3-1/7.3` after pre-warm Warns showed up in operator validation.
+- **`ActModel.AssetPaths` does NOT include monster combat scenes.** It covers act-level paths (background, map nodes, ancient assets, second-boss icon) but transitively lists ZERO `creature_visuals/<id>.tscn`. So `PreloadManager.LoadActAssets` does not pre-cache monster scenes — anyone using the act-asset cache as a substitute for monster-scene caching is wrong. Monster scenes cold-load at `MonsterModel.CreateVisuals()` time on first access (vanilla logs `Asset not cached:` warns — those are MegaCrit's signal that pre-load skipped them, not a mod bug to silence). Surfaced in B.3.1 spike + operator validation.
+- **`ProcessMode.Disabled` on a parent Control cascades to `Inherit`-mode Spine children for a clean freeze** — useful pattern when you need pause-aware freeze for MegaCrit creature scenes and can't use `SceneTree.Paused` (which StS2 never toggles per the entry above). Setting `slot.ProcessMode = ProcessModeEnum.Disabled` on the slot Control halts `_Process` on all children whose ProcessMode is `Inherit` (the default), which is what freezes the MegaSpine animation advance. No `SetTimeScale(0)` API contact required, no typed-NCreatureVisuals reference needed at the toggle site. Reference implementation: `BossVotePopup._Process` occlusion block (`plan-b-3-1/7.1`).

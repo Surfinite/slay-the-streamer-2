@@ -4,6 +4,27 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Plan B.3.1 boss-vote pool / act-variant expansion (deferred; identified 2026-05-16)
+
+During B.3.1 operator validation, Surfinite observed that `rerollvote` always returns the same 3 bosses because the act's `AllBossEncounters` pool size equals the sample size (3 of 3). Each Act 1 variant ships a fixed 3-boss roster:
+
+| Act variant | Bosses |
+|---|---|
+| Act 1 Underdocks | Waterfall Giant, Soul Fysh, Lagavulin Matriarch |
+| Act 1 Overgrowth | Vantom, Ceremonial Beast, The Kin |
+| Act 2 Hive | The Insatiable, Knowledge Demon, Kaiser Crab |
+| Act 3 Glory | Queen, Test Subject, Doormaker |
+
+The vote is functionally a reordering exercise rather than a multiple-choice draw. Two follow-up options were considered:
+
+**Option 1 — Cross-variant pool at boss-vote time** (~1 day if cross-variant boss swap works cleanly; ~2–3 days if it doesn't): union Underdocks + Overgrowth bosses when on Act 1, so the chest-room vote draws from a pool of 6. Spike needed: confirm `MapCmd.SetBossEncounter` of a cross-variant boss doesn't break `HasScene` boss-specific scenes (TheKin/Queen/KaiserCrab) or `LoadActAssets` preloading. The data layer is permissive — `_rooms.Boss` doesn't validate variant binding — so the risk is downstream (cold-load hitch, custom BGM/background transition).
+
+**Option 2 — Pre-act variant vote** (~3–5 days; B.1-sized slice): new vote at run start where chat picks Underdocks or Overgrowth. New Harmony target (find vanilla's variant-selection point in `RunManager`/`ActModel.Generate`), new vote orchestration, possibly new 2-column popup or reuse `BossVotePopup` with different title. Vanilla-ish UX — chat picks the variant, in-act content stays normal.
+
+**Surfinite's current lean (2026-05-16)**: **Option 2**. More vanilla-feeling, sets up a generalisable pattern for any future "act-flavor" votes. Defer until B.3.1 ships.
+
+---
+
 ## YouTube chat parallel integration — acceptance gate results (partial, 2026-05-12)
 
 Operator-validation run against `yt-chat-v0.2` work. Both currently-runnable steps **PASSED**; remaining steps deferred pending FrostPrime contact or alternative live YT broadcast access.

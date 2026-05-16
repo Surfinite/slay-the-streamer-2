@@ -100,6 +100,13 @@ internal sealed partial class BossVotePopup : Control {
     /// Subscribe to session lifecycle events. Must be called on the main thread.
     /// </summary>
     public void Show(int actNumberOneBased) {
+        // Idempotency: Show() must be called at most once per instance.
+        // The patch's _voteInProgress flag already guards against double-fire,
+        // but this explicit guard makes the invariant locally visible and
+        // prevents silent leaks (slot accumulation, double-subscribe of
+        // session handlers) if the upstream guard ever weakens.
+        if (_canvasLayer is not null) return;
+
         var tree = Engine.GetMainLoop() as SceneTree;
         if (tree?.Root is null) {
             TiLog.Warn("[SlayTheStreamer2][boss-vote] no SceneTree.Root available; popup not shown");
@@ -235,10 +242,14 @@ internal sealed partial class BossVotePopup : Control {
 
             var boundsSize = GetVisualBounds(visuals);
             if (boundsSize == Vector2.Zero) {
-                // Spine atlas measurement may take >1 frame on some hardware. PortraitFit's
-                // Mathf.Max floor returns fit=1.0 here, ClipContents=true on the slot belts
-                // the overflow rendering. Log it so we have observability if this triggers.
-                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Bounds.Size is zero after ProcessFrame yield; falling back to native scale + clip");
+                // Spine atlas measurement may take >1 frame on some hardware; non-Spine
+                // creatures (HasSpineAnimation = false) also return zero bounds from our
+                // GetVisualBounds helper. PortraitFit's Mathf.Max floor returns fit=1.0
+                // here, ClipContents=true on the slot belts overflow rendering. Logged
+                // at Info (not Warn) because the non-Spine path is expected for any
+                // future static-pose boss; surfaces in godot.log for observability
+                // without crying wolf.
+                TiLog.Info($"[SlayTheStreamer2][boss-vote] Bounds.Size zero (Spine measurement pending or non-Spine creature); fit=1.0 + clip applied");
             }
 
             // slot.Size may also be (0,0) if layout hasn't completed. Fall back to the

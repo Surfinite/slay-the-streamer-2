@@ -240,11 +240,11 @@ internal sealed partial class BossVotePopup : Control {
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             if (!GodotObject.IsInstanceValid(visuals) || !GodotObject.IsInstanceValid(slot)) return;
 
-            var boundsSize = GetVisualBounds(visuals);
-            if (boundsSize == Vector2.Zero) {
+            var boundsRect = GetVisualBoundsRect(visuals);
+            if (boundsRect.Size == Vector2.Zero) {
                 // Spine atlas measurement may take >1 frame on some hardware; non-Spine
                 // creatures (HasSpineAnimation = false) also return zero bounds from our
-                // GetVisualBounds helper. PortraitFit's Mathf.Max floor returns fit=1.0
+                // GetVisualBoundsRect helper. PortraitFit's Mathf.Max floor returns fit=1.0
                 // here, ClipContents=true on the slot belts overflow rendering. Logged
                 // at Info (not Warn) because the non-Spine path is expected for any
                 // future static-pose boss; surfaces in godot.log for observability
@@ -252,24 +252,28 @@ internal sealed partial class BossVotePopup : Control {
                 TiLog.Info($"[SlayTheStreamer2][boss-vote] Bounds.Size zero (Spine measurement pending or non-Spine creature); fit=1.0 + clip applied");
             }
 
-            // slot.Size may also be (0,0) if layout hasn't completed. Fall back to the
-            // intended slot size rather than letting fit=0 produce an invisible sprite.
-            var slotSize = slot.Size;
-            if (slotSize.X <= 0f || slotSize.Y <= 0f) {
-                slotSize = PortraitSlotSize;
-            }
+            // Use the design-intent slot size (PortraitSlotSize) rather than slot.Size for
+            // fit + centering math. The slot Control's actual .Size grows past CustomMinimumSize
+            // when its parent VBoxContainer expands to fill the popup's column area, which
+            // would inflate the fit-scale and push the sprite far above where it belongs.
+            // PortraitSlotSize is the consistent reference frame for both calculations.
+            var fitSlot = PortraitSlotSize;
 
             // PortraitFit uses System.Numerics.Vector2 (the test csproj is non-Godot,
             // so the helper had to be BCL-typed to be unit-testable). Tiny conversion
             // here keeps the helper testable without forcing the popup to be too.
             var fit = PortraitFit.ComputeFitScale(
-                new System.Numerics.Vector2(boundsSize.X, boundsSize.Y),
-                new System.Numerics.Vector2(slotSize.X, slotSize.Y));
+                new System.Numerics.Vector2(boundsRect.Size.X, boundsRect.Size.Y),
+                new System.Numerics.Vector2(fitSlot.X, fitSlot.Y));
             ApplyScaleAndHue(visuals, fit);
-            // Initial placement: provisional. Operator validation must check per-boss centering;
-            // if misaligned, switch to Bestiary's (0, Size.Y * 0.5f) model or compute a
-            // bounds-aware offset.
-            visuals.Position = slotSize * 0.5f;
+
+            // Bounds-aware centering: place sprite's local origin so the *visible body*
+            // (Bounds.Position to Bounds.Position + Bounds.Size, scaled by fit) is centered
+            // in the slot. Without this, the origin (typically at the creature's feet)
+            // would land at the slot center and the body would float upward into the
+            // column header or out of the slot entirely.
+            var boundsCenter = boundsRect.Position + boundsRect.Size * 0.5f;
+            visuals.Position = fitSlot * 0.5f - boundsCenter * fit;
         } catch (Exception ex) {
             // Fire-and-forget exception observability — matches the slice's "degrade
             // silently, log, never crash" principle. The popup remains valid; just this
@@ -284,9 +288,11 @@ internal sealed partial class BossVotePopup : Control {
     // NCreatureVisuals.Bounds (Control) — populated in _Ready, NCreatureVisuals.cs:140.
     // NCreatureVisuals.SetUpSkin(MonsterModel) — at NCreatureVisuals.cs:178.
     // NCreatureVisuals.SetScaleAndHue(float scale, float hue) — at NCreatureVisuals.cs:190.
-    private static Vector2 GetVisualBounds(Node2D visuals) {
-        if (visuals is NCreatureVisuals cv && cv.Bounds is not null) return cv.Bounds.Size;
-        return Vector2.Zero;
+    private static Rect2 GetVisualBoundsRect(Node2D visuals) {
+        if (visuals is NCreatureVisuals cv && cv.Bounds is not null) {
+            return new Rect2(cv.Bounds.Position, cv.Bounds.Size);
+        }
+        return new Rect2(Vector2.Zero, Vector2.Zero);
     }
 
     private static void ApplyScaleAndHue(Node2D visuals, float scale) {

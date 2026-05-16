@@ -379,6 +379,35 @@ internal static class BossVotePatch {
     }
 
     /// <summary>
+    /// Picks the monster to render in the boss-vote popup column for a (potentially
+    /// multi-monster) encounter. For single-monster encounters this is trivially the
+    /// only monster. For multi-monster encounters, AllPossibleMonsters[0] is the
+    /// correct primary for most cases (Queen, Crusher / Kaiser Crab) — only TheKinBoss
+    /// is the exception in the current build: its AllPossibleMonsters is
+    /// [KinFollower, KinPriest] but the visual "leader" is the priest.
+    ///
+    /// Multi-monster boss list (current build):
+    ///   - KaiserCrabBoss: [Crusher, Rocket] → Crusher (index 0) ✓
+    ///   - QueenBoss: [Queen, TorchHeadAmalgam] → Queen (index 0) ✓
+    ///   - TheKinBoss: [KinFollower, KinPriest] → KinPriest (special-case)
+    ///
+    /// If MegaCrit ships more multi-monster bosses where the first monster isn't the
+    /// visual primary, add entries to the special-case branch below.
+    /// </summary>
+    private static MonsterModel? PickPrimaryMonster(EncounterModel encounter, IReadOnlyList<MonsterModel> monsters) {
+        if (monsters.Count == 0) return null;
+        if (monsters.Count == 1) return monsters[0];
+
+        // Known exception: TheKinBoss's leader is the priest, not the follower.
+        if (encounter.Id?.Entry == "TheKinBoss") {
+            var priest = monsters.FirstOrDefault(m => m.Id?.Entry == "KinPriest");
+            if (priest is not null) return priest;
+        }
+
+        return monsters[0];
+    }
+
+    /// <summary>
     /// Builds a closure that lazily produces an animated combat-idle NCreatureVisuals
     /// for the encounter's primary monster. Invoked once per column at popup.Show()
     /// time on the Godot main thread. Returns null if the encounter has no monsters
@@ -390,14 +419,17 @@ internal static class BossVotePatch {
     /// </summary>
     private static Func<Node2D>? BuildVisualsFactory(EncounterModel encounter) {
         var monsters = encounter.AllPossibleMonsters.ToList();
-        if (monsters.Count == 0) {
+        var monster = PickPrimaryMonster(encounter, monsters);
+        if (monster is null) {
             TiLog.Warn($"[SlayTheStreamer2][boss-vote] encounter {encounter.Id?.Entry} has no monsters; column will render empty");
             return null;
         }
         if (monsters.Count > 1) {
-            TiLog.Warn($"[SlayTheStreamer2][boss-vote] encounter {encounter.Id?.Entry} has {monsters.Count} monsters; rendering first ({monsters[0].Id?.Entry}) only");
+            // Multi-monster Info (not Warn) — known cases (TheKin, Queen, KaiserCrab)
+            // are handled by PickPrimaryMonster's heuristic. Log for observability
+            // so any future multi-monster boss surfaces in godot.log.
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] encounter {encounter.Id?.Entry} has {monsters.Count} monsters; rendering primary {monster.Id?.Entry}");
         }
-        var monster = monsters[0];
         return () => {
             var visuals = monster.CreateVisuals();
             if (visuals.HasSpineAnimation) {

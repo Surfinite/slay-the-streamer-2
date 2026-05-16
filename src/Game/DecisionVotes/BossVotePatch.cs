@@ -9,6 +9,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Commands;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Debug;
@@ -395,11 +396,19 @@ internal static class BossVotePatch {
             try {
                 var monster = encounter.AllPossibleMonsters.FirstOrDefault();
                 if (monster is null) continue;
-                // AssetPaths.First() == VisualsPath (decompile-verified observation).
-                // CreateVisuals reads VisualsPath directly anyway, so this prime is
-                // best-effort — if ordering ever changes, factory time picks up the slack.
-                var scenePath = monster.AssetPaths.FirstOrDefault();
-                if (string.IsNullOrEmpty(scenePath)) continue;
+                // Construct the combat scene path directly from the monster's Id.Entry
+                // rather than going through monster.AssetPaths.First(): AssetPaths
+                // transitively calls GenerateMoveStateMachine(), which throws
+                // "Canonical model ... used in incorrect place" for bosses with
+                // mutable internal state (Ceremonial Beast is the observed case
+                // — its GenerateMoveStateMachine assigns BeastCryState, which
+                // AssertMutable-fails on canonical instances). VisualsPath itself
+                // is pure — it's just SceneHelper.GetScenePath of the lowered entry —
+                // so we replicate that convention here. Verified vs the path
+                // strings in godot.log warns (e.g. res://scenes/creature_visuals/kin_follower.tscn).
+                var entry = monster.Id?.Entry;
+                if (string.IsNullOrEmpty(entry)) continue;
+                var scenePath = SceneHelper.GetScenePath("creature_visuals/" + entry.ToLowerInvariant());
                 _ = PreloadManager.Cache.GetScene(scenePath);
                 succeeded++;
             } catch (Exception ex) {
@@ -419,10 +428,13 @@ internal static class BossVotePatch {
     /// [KinFollower, KinPriest] but the visual "leader" is the priest.
     ///
     /// Multi-monster boss list (current build):
-    ///   - KaiserCrabBoss: [Crusher, Rocket] → Crusher (index 0) ✓
-    ///   - QueenBoss: [Queen, TorchHeadAmalgam] → Queen (index 0) ✓
-    ///   - TheKinBoss: [KinFollower, KinPriest] → KinPriest (special-case)
+    ///   - KAISER_CRAB_BOSS: [CRUSHER, ROCKET] → Crusher (index 0) ✓
+    ///   - QUEEN_BOSS: [QUEEN, TORCH_HEAD_AMALGAM] → Queen (index 0) ✓
+    ///   - THE_KIN_BOSS: [KIN_FOLLOWER, KIN_PRIEST] → KIN_PRIEST (special-case)
     ///
+    /// Note: Id.Entry uses UPPER_SNAKE_CASE in the runtime, NOT the PascalCase class
+    /// name — verified via godot.log gate-1 capture (e.g.,
+    /// "encounter THE_KIN_BOSS has 2 monsters; rendering primary KIN_FOLLOWER").
     /// If MegaCrit ships more multi-monster bosses where the first monster isn't the
     /// visual primary, add entries to the special-case branch below.
     /// </summary>
@@ -430,9 +442,9 @@ internal static class BossVotePatch {
         if (monsters.Count == 0) return null;
         if (monsters.Count == 1) return monsters[0];
 
-        // Known exception: TheKinBoss's leader is the priest, not the follower.
-        if (encounter.Id?.Entry == "TheKinBoss") {
-            var priest = monsters.FirstOrDefault(m => m.Id?.Entry == "KinPriest");
+        // Known exception: THE_KIN_BOSS's leader is the priest, not the follower.
+        if (encounter.Id?.Entry == "THE_KIN_BOSS") {
+            var priest = monsters.FirstOrDefault(m => m.Id?.Entry == "KIN_PRIEST");
             if (priest is not null) return priest;
         }
 

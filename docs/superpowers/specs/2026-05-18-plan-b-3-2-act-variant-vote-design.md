@@ -11,7 +11,7 @@ Vanilla picks the Act 1 variant via a coin-flip inside [`ActModel.GetRandomList`
 
 **Mechanism.** Harmony prefix on `BeginRunLocally`, returns `false` to suspend. We start a 30s chat vote with two options (`#0 Overgrowth` / `#1 Underdocks`), `await session.AwaitWinnerAsync()`, then on the Godot main thread write `__instance.Act1 = winnerKey` and reflectively re-invoke `BeginRunLocally(seed, modifiers)`. Vanilla's existing line 412 picks up the chat winner via the same code path the dropdown would have used. No reimplementation of `GetRandomList` / seed / RNG.
 
-**Net change**: ~450 LOC across 4 new files + 2 edits (settings + receipts). One new Harmony patch class, one new popup `Control`, one pure helper (`ActVariantVoteResolver`), one DTO (`ActVariantOption`).
+**Net change**: ~450 LOC across 4 new files + 1 edit (settings). One new Harmony patch class, one new popup `Control`, one pure helper (`ActVariantVoteResolver`), one DTO (`ActVariantOption`). No `src/Ti/*` edits — existing generic receipt formatters work as-is.
 
 **Risk surface**: smaller than B.3 (1 Harmony target, 1 popup, no idempotency-on-re-entry complexity since each Embark click is a fresh run-start). Two flagged uncertainties for reviewers: (1) `Act1` write-then-reinvoke pattern is unverified end-to-end, (2) combat-background and entry-banner asset paths not yet located in the decompile — research-spike during implementation with a text-only L3 fallback.
 
@@ -55,8 +55,11 @@ src/Game/Ui/
 src/Game/Bootstrap/Settings/
   ModSettings.cs               — EDIT. Add VoteOnActVariant : bool (default true).
 
-src/Ti/Chat/
-  EnglishReceipts.cs           — EDIT. Add 6 act-variant-vote receipt strings.
+(no changes to src/Ti/* — existing EnglishReceipts.FormatOpen / FormatPeriodicTally
+                  / FormatClose are generic over VoteSnapshot; the slice label
+                  "Act 1 variant vote" is passed at coordinator.Start time.
+                  Cancellation receipt is a raw chat send, matching B.3's
+                  BossVotePatch.SendIgnoredResultReceipt pattern.)
 ```
 
 No changes to `src/Ti/Internal/`, `src/Ti/Voting/`, or any other voting-layer file. No new abstractions in `Ti/*`.
@@ -400,13 +403,19 @@ No schema-version bump (optional field with default, matches B.2.2 / B.3 precede
 
 ## Receipts
 
-`EnglishReceipts.cs` additions:
-- **Open**: `"Act 1 variant vote opened (30s). Vote #0 Overgrowth or #1 Underdocks."`
-- **Periodic tally**: shared formatter — `"#0 Overgrowth: {n} — #1 Underdocks: {n} — {s}s left"`.
-- **Close (winner)**: `"Act 1 variant vote closed: {winner} wins ({n} vs {m})."`
-- **Close (tie)**: `"Act 1 variant vote closed: tie at {n} — picking #0 Overgrowth."` (existing `VoteSession` tie-break: lowest index wins).
-- **Close (no votes)**: `"Act 1 variant vote closed: no votes — keeping random pick."`
-- **Cancellation**: `"Act 1 variant vote cancelled — streamer navigated back."`
+**No `EnglishReceipts.cs` edits.** The existing `FormatOpen` / `FormatPeriodicTally` / `FormatClose` formatters are generic over `VoteSnapshot` — they derive all wording from `s.Label`, `s.Options`, `s.Tallies`, `s.WinnerIndex`, `s.NoVotesReceived`, `s.RandomTieAmong`, `s.TimeRemaining`. The slice label `"Act 1 variant vote"` is passed in at `coordinator.Start("Act 1 variant vote", labels, 30s)` and flows through to every receipt automatically.
+
+What chat sees, given the existing formatters:
+- **Open** (via `FormatOpen`): `"Vote [NN]: Act 1 variant vote! Type 0, 1 — 30s left."`
+- **Periodic tally** (via `FormatPeriodicTally`): `"Vote: 0=5 1=3, 22s left."`
+- **Close — winner** (via `FormatClose`): `"Chat chose 0: Overgrowth."`
+- **Close — tie** (via `FormatClose`): `"Tie between 0 Overgrowth and 1 Underdocks — chat chose 0: Overgrowth randomly."`
+- **Close — no votes** (via `FormatClose`): `"No votes received — chat got 0: Overgrowth randomly."` (vanilla pick is unaffected — see ResumeOnMainThread; `"random"` means vote produced no override, vanilla pick stands; the receipt phrasing inherited from the generic formatter is slightly misleading here but is the existing convention).
+
+**Cancellation receipt** is a raw send via `coordinator.Chat.SendMessageAsync(...)`, matching `BossVotePatch.SendIgnoredResultReceipt`:
+- `"Act 1 variant vote cancelled — run-start abandoned."`
+
+Receipt-policy cadence reuses `VoteReceiptPolicy.Default`. Periodic-tally dedup is on structural tally state (not rendered text) — invariant from CLAUDE.md Tier 1 and untouched by this slice.
 
 ## Forward-compatibility notes (not built today)
 

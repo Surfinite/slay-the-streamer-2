@@ -16,8 +16,9 @@ namespace SlayTheStreamer2.Game.Ui;
 /// no-votes side-channel are Func/Action callbacks injected from the patch
 /// (mirroring BossVotePopup's isOccludingOverlayVisible/isRunDying pattern).
 ///
-/// Lifecycle (TallyChanged subscription, _Process polling, _Input ESC):
-/// landed in Task 11. This task wires Open() — construction + parent — only.
+/// Live tally via `_Process` polling of `_session.TallyVersion` — NOT
+/// subscribed to `TallyChanged` (which can fire on the chat parser's
+/// thread). Mirrors BossVotePopup's threading-safety pattern.
 /// </summary>
 internal sealed partial class ActVariantVotePopup : Control {
     private readonly IReadOnlyList<ActVariantOption> _options;
@@ -31,6 +32,7 @@ internal sealed partial class ActVariantVotePopup : Control {
     private CanvasLayer? _canvasLayer;
     private Label[] _tallyLabels = Array.Empty<Label>();
     private bool _userAbandoned;   // Task 11 will set this; declared here so the fields are stable
+    private int _cachedTallyVersion = -1;   // -1 sentinel — first poll always updates labels
 
     private const int CanvasLayerIndex = 100;
     private const float BackdropAlpha = 0.6f;
@@ -68,7 +70,6 @@ internal sealed partial class ActVariantVotePopup : Control {
                 return;
             }
             sceneTree.Root.AddChild(_canvasLayer);
-            _session.TallyChanged += OnTally;
             _session.Closed += OnClosed;
             TiLog.Debug($"[SlayTheStreamer2][act-variant-vote] popup opened (mode={_mode})");
         } catch (Exception ex) {
@@ -137,7 +138,7 @@ internal sealed partial class ActVariantVotePopup : Control {
             AddL3Fallback(free, option);
         }
 
-        // Tally label (Task 11 will subscribe to TallyChanged to update text).
+        // Tally label — text is updated by _Process tally-version polling.
         var tally = new Label {
             Text = $"#{option.Index} — 0 votes",
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -187,11 +188,13 @@ internal sealed partial class ActVariantVotePopup : Control {
         }
     }
 
-    // Lifecycle: TallyChanged subscription (Open), _Process cancellation
-    // polling, _Input ESC handling, OnClosed cleanup.
+    // Lifecycle: _Process polls TallyVersion + cancellation; _Input handles
+    // ESC; OnClosed cleans up the CanvasLayer.
 
     public override void _Process(double delta) {
         if (_userAbandoned) return;
+
+        // Cancel polling.
         bool shouldCancel = false;
         try { shouldCancel = _shouldCancel(); }
         catch (Exception ex) {
@@ -199,6 +202,24 @@ internal sealed partial class ActVariantVotePopup : Control {
         }
         if (shouldCancel) {
             TryFireCancellation();
+            return;  // don't read tally if cancelling
+        }
+
+        // Tally version polling — TallyChanged fires from chat-parser thread,
+        // so we poll from _Process (main thread) instead of subscribing.
+        // Mirrors BossVotePopup's pattern (see BossVotePopup.cs:17-18 class doc).
+        int tallyVersion = _session.TallyVersion;
+        if (tallyVersion != _cachedTallyVersion) {
+            _cachedTallyVersion = tallyVersion;
+            try {
+                var tallies = _session.Tallies;
+                for (int i = 0; i < _options.Count && i < _tallyLabels.Length; i++) {
+                    int count = tallies.TryGetValue(_options[i].Index, out var c) ? c : 0;
+                    _tallyLabels[i].Text = $"#{_options[i].Index} — {count} votes";
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] tally update threw: {ex.Message}");
+            }
         }
     }
 
@@ -224,22 +245,8 @@ internal sealed partial class ActVariantVotePopup : Control {
         }
     }
 
-    private void OnTally(object? sender, VoteSession session) {
-        if (_userAbandoned) return;
-        try {
-            var tallies = session.Tallies;
-            for (int i = 0; i < _options.Count && i < _tallyLabels.Length; i++) {
-                int count = tallies.TryGetValue(_options[i].Index, out var c) ? c : 0;
-                _tallyLabels[i].Text = $"#{_options[i].Index} — {count} votes";
-            }
-        } catch (Exception ex) {
-            TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] OnTally threw: {ex.Message}");
-        }
-    }
-
     private void OnClosed(object? sender, VoteSession session) {
         try {
-            _session.TallyChanged -= OnTally;
             _session.Closed -= OnClosed;
         } catch { /* swallow */ }
         if (_canvasLayer is not null && GodotObject.IsInstanceValid(_canvasLayer)) {

@@ -11,22 +11,17 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 internal static class ActVariantVoteResolver {
 
     /// <summary>
-    /// Asset paths discovered during the Task 1 spike. Background paths use
-    /// each variant's MapMidBgPath (per-variant PNG) - the spec's original
-    /// "combat-bg PNG" target doesn't exist in vanilla as a single texture.
-    /// Banner constants stay null because per-variant banner textures don't
-    /// exist; the popup renders title text instead (sourced from
-    /// ActModel.Title.GetFormattedText() at runtime, OR the static Title
-    /// field on each ActVariantOption).
+    /// Asset paths discovered during the Task 1 spike and refined after the user's
+    /// full asset-extraction pass (2026-05-18). Background paths use each variant's
+    /// back/sky combat-layer PNG (images/rooms/&lt;variant&gt;/&lt;variant&gt;_00.png) — this
+    /// is the canonical "small-preview" thumbnail per notes/asset-extraction.md.
+    /// (An earlier pick of MapMidBgPath was wrong: that's the map-screen strip,
+    /// not the combat backdrop. Real combat backdrops are layered Control scenes
+    /// at scenes/backgrounds/&lt;variant&gt;/&lt;variant&gt;_background.tscn with 5 parallax
+    /// layers driven by NCombatBackground.cs — too heavy for a popup thumbnail.)
     ///
-    /// FilePathIdentifier verification (B.3.2 Task 3):
-    ///   ActModel.FilePathIdentifier => Id.Entry.ToLowerInvariant()
-    ///   Id.Entry is StringHelper.Slugify(type.Name) per ModelDb.GetEntry.
-    ///   Slugify inserts '_' at camel-case boundaries then uppercases;
-    ///   single-word class names ("Overgrowth", "Underdocks") have no
-    ///   internal boundaries, so Slugify("Overgrowth") = "OVERGROWTH" and
-    ///   FilePathIdentifier = "overgrowth". Same shape for "Underdocks".
-    ///   Neither Overgrowth.cs nor Underdocks.cs overrides FilePathIdentifier.
+    /// Banner constants stay null because per-variant banner textures don't
+    /// exist; the popup renders title text via ActVariantOption.Title at runtime.
     ///
     /// FallbackColorHex values come from each ActModel.MapBgColor:
     ///   Overgrowth.MapBgColor = new Color("A78A67");
@@ -34,9 +29,9 @@ internal static class ActVariantVoteResolver {
     /// </summary>
     internal static class ActVariantAssetPaths {
         internal const string? OvergrowthCombatBackground =
-            "res://images/packed/map/map_bgs/overgrowth/map_middle_overgrowth.png";
+            "res://images/rooms/overgrowth/overgrowth_00.png";
         internal const string? UnderdocksCombatBackground =
-            "res://images/packed/map/map_bgs/underdocks/map_middle_underdocks.png";
+            "res://images/rooms/underdocks/underdocks_00.png";
         internal const string? OvergrowthEntryBanner = null;
         internal const string? UnderdocksEntryBanner = null;
 

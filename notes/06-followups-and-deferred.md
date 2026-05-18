@@ -4,6 +4,57 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Plan B.3.2 act-variant vote (resolved 2026-05-18)
+
+Adds a pre-act-1 chat vote between the two Act 1 variants (Underdocks vs Overgrowth), suspending the Embark click until chat picks. Closes the cross-act-variant-boss-pool gap deferred from B.3.1 by giving the streamer's chat a way to steer the variant choice. Covers both Standard runs (`NCharacterSelectScreen`) and Custom mode (`NCustomRunScreen`).
+
+### Acceptance gate — 15 green
+
+All 15 plan gates passed under both Standard and Custom modes:
+
+- **Gate 1 (vote fires on Embark)** ☑ popup appears; character-select frozen
+- **Gate 2 (winner applied)** ☑ chat pick lands as Lobby.Act1; first combat scene matches
+- **Gate 3 (no-winner fallback)** ☑ silent chat → custom no-votes receipt → vanilla random pick
+- **Gate 4 (settings toggle off)** ☑ `voteOnActVariant: false` short-circuits cleanly; log line reworded to "skipping vote — setting disabled"
+- **Gate 5 (pool degeneracy)** ☑ defensive guard active; not exercisable in vanilla 2-variant pool
+- **Gate 6 (ESC cancellation)** ☑ popup tears down, cancellation receipt fires, embark button stays clickable, ESC continues to back out to main menu (after the Option B patch-target migration)
+- **Gate 7 (spam-Embark guard)** ☑ second click during vote suppressed via atomic `_voteInProgress`
+- **Gate 8 (pre-warm telemetry)** ☑ `pre-warm: 14/14 assets in 19–69ms (mode=L1Textures)` consistently; envelope well under any "feels slow" threshold
+- **Gate 9 (Sealed Deck modifier coexistence)** ☑ vote runs alongside SealedDeck without crosstalk
+- **Gate 10 (receipt delivery)** ☑ open + ≥1 tally + close all reach chat under ConnectedReadWrite
+- **Gate 11 (save-quit preservation)** ☑ chat-picked variant survives Continue
+- **Gate 12 (Embark→ESC→Embark cycle)** ☑ flags release cleanly; second click runs a fresh vote
+- **Gate 13 (chat disconnect mid-vote)** ☑ cancellation propagates correctly
+- **Gate 14 (multi-resolution popup correctness)** ☑ validated at windowed-1/3, 1080p fullscreen, ultrawide 1440. After bgHolder fix, scenes fill columns at every resolution; banners read as one continuous horizontal bar across the screen seam.
+- **Gate 15 (Standard mode regression)** ☑ confirmed.
+
+Tag `plan-b-3-2-complete` applied at HEAD on slice closure.
+
+### Architecture-defining outcomes
+
+- **Patch surface: `OnEmbarkPressed`, not `BeginRunLocally` (Option B).** The original plan patched `StartRunLobby.BeginRunLocally`, but operator validation surfaced a stuck-UI bug on cancel: `NCharacterSelectScreen.OnEmbarkPressed` disables embark/back/character buttons and calls `_lobby.SetReady(true)` BEFORE the vanilla call chain reaches `BeginRunLocally`. Cancel-mid-vote left the lobby in a half-mutated state with no clean restoration path. Migrating the patch up to `OnEmbarkPressed` itself means: on suspend, vanilla never touched the UI, so cancel is a clean no-op. On confirm, we set `Lobby.Act1` and reflectively re-invoke the same method with `_resumeInProgress=1` set so our prefix passes through and vanilla's full body runs unmodified. This is the same pattern any future "vote on click" feature should follow — patch the click handler, not the downstream consumer.
+- **Multi-target Harmony pattern**: Custom mode has its own `NCustomRunScreen.OnEmbarkPressed(NButton)` parallel to `NCharacterSelectScreen.OnEmbarkPressed(NButton)`. Same signature, same shape (`Disable` UI → `SetReady(true)` → eventually `BeginRunLocally`). `TargetMethods()` returning both `MethodBase`s with shared `Prefix` + small type-dispatch (`GetLobby` / `GetOnEmbarkPressedMethod`) covers both with zero duplication. Future "intercept Embark click in any mode" feature should reuse this pattern; daily-run + multiplayer-load screens would slot in identically.
+- **`VoteSession.Cancel()` fires `Cancelled`, NOT `Closed`**: surfaced when the popup teardown didn't fire on ESC despite the patch-side flow logging "vote cancelled". Both events are independent terminal states; any popup needs to subscribe to both (and route both through a dispatcher-marshaled handler because `Cancelled` can fire from the chat-parser thread on disconnect). Now captured as CLAUDE.md Tier 4.
+- **`NCombatBackground` parent must be a Center-anchored zero-size Control**: mirrors vanilla `BgContainer` in `combat_room.tscn:41-50`. The visual's internal `Layer_NN` offsets are calibrated for a viewport-center origin frame, NOT top-left. Anchoring to `FullRect` shifts the texture's center off-screen by half a viewport and clips most of it. The fix is one Control: `bgHolder.SetAnchorsAndOffsetsPreset(LayoutPreset.Center)`. Documented as CLAUDE.md Tier 4 because anyone trying to embed a vanilla combat scene in a custom UI will hit this.
+- **Vanilla act-banner styling now reusable**: `ActVariantVotePopup.ApplyTitleTheme` / `ApplyActNumberTheme` mirror `act_banner.tscn`'s font choices (Spectral Bold gold for titles, Kreon Regular light blue for the smaller "Act N" / countdown text) with the source values centralized as const fields at the top of the popup class. Any future popup that wants the StS2-native look (vs RichTextLabel default) can reuse the constants + helpers directly. Closes the cross-vote font-swap follow-up flagged in B.3.1 for the act-variant popup specifically; the other vote popups (B.1 Neow / B.2.1 card / B.2.2 ancient / B.3 boss) still want the cross-cut polish slice noted in B.3.1.
+- **Centralized "skipping vote — <reason>" log phrasing**: replaces "bailing to vanilla" which collided with the chat-fully-disconnected log line and made log triage harder for the operator. New phrasing is unambiguously slice-local. Future per-slice bail logs should follow the same convention.
+- **`OperationCanceledException` cancel is Debug, not Error**: when the popup calls `_session.Cancel()`, the propagation through `await session.AwaitWinnerAsync()` is an `OperationCanceledException` — the expected user-abandon flow, not a bug. Log severity: Debug. Reserve Error for genuinely unexpected exceptions.
+
+### Findings worth preserving (spec/spike corrections discovered during operator validation)
+
+- **Asset paths for combat backdrops**: the original Task 1 spike picked `MapMidBgPath` (`images/packed/map/map_bgs/<v>/map_middle_<v>.png`) which is the **map screen strip**, not the combat backdrop. The actual combat scene path is `res://scenes/backgrounds/<key>/<key>_background.tscn` built up by `BackgroundAssets(key, rng) + NCombatBackground.Create(bg)`. The map-bg vs combat-bg distinction is now documented in `notes/asset-extraction.md`.
+- **Full asset extraction transformed asset-discovery accuracy**: `notes/asset-extraction.md` documents GDRE Tools extraction of the full `.pck`. Once the assets exist on disk, grep against actual paths replaces guessing `res://` URLs. This is now a permanent workflow tool, not B.3.2-specific.
+- **Custom mode is a separate Harmony surface**: `NCustomRunScreen` parallels `NCharacterSelectScreen` for every embark-related concern. Any future "do X on Embark in any mode" patch must `TargetMethods` both. Single-target patches that only hit `NCharacterSelectScreen` silently miss Custom runs.
+
+### Follow-ups / deferred items
+
+- **FTUE-cancel corner case**: on a profile that hasn't seen the accept-tutorials FTUE, vanilla's `OnEmbarkPressed` disables the embark button and shows a modal at line 472-480, returning early. If the user accepts the modal, `OnEmbarkPressed` recurses; our prefix fires fresh and the vote runs. If the user then cancels THAT vote, the embark button is left disabled from vanilla's pre-modal disable, same stuck-UI shape the cancel-under-BeginRunLocally bug had. Narrow (first run on fresh profile + voluntary cancel) and not a regression from vanilla's own behavior in that path. Accept-as-documented per CLAUDE.md's "design as if streamer has unlocked everything." Captured in the patch class doc and the `ActVariantVotePatch.cs` class header.
+- **Cross-vote font/text-alignment polish slice**: B.3.2 mirrors vanilla act-banner styling within its own popup, but the other vote popups (B.1 Neow / B.2.1 card / B.2.2 ancient / B.3 boss) still use RichTextLabel defaults. Surfinite's preference (carried over from B.3.1) is one dedicated polish slice that touches all popups uniformly. Tally label in the act-variant popup was deliberately left at default theme for this same reason — pending the cross-vote pass.
+- **Act-2+ variant vote**: when MegaCrit ships variant alternates for Act 2 / 3 / 4, the B.3.2 architecture generalizes by parameterizing the candidate-builder on act index. Right now `ActVariantVoteResolver.BuildCandidates()` is hard-coded for Act 1. Easy lift when needed.
+- **Test isolation `[Collection("TiLog.Sink")]` gap (still pre-existing)**: same `VoteSessionTests.Closed_WithoutAwait_LogsWarn` flake B.3.1 noted resurfaced once during this slice's commits. Re-runs always pass. Still not caused by B.3.2; still documented in CLAUDE.md Tier 1.
+
+---
+
 ## Plan B.3.1 combat-idle boss portraits (resolved 2026-05-16)
 
 Replaced B.3's static PNG portraits with animated combat-idle sprites rendered via `MonsterModel.CreateVisuals()`, fixing the empty-column bug for Spine-only bosses (Ceremonial Beast pre-fix; future Spine-only bosses post-fix).

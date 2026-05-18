@@ -68,8 +68,8 @@ internal sealed partial class ActVariantVotePopup : Control {
                 return;
             }
             sceneTree.Root.AddChild(_canvasLayer);
-            // Task 11: subscribe to _session.TallyChanged + _session.Closed,
-            // start _Process polling, install _Input ESC handler.
+            _session.TallyChanged += OnTally;
+            _session.Closed += OnClosed;
             TiLog.Debug($"[SlayTheStreamer2][act-variant-vote] popup opened (mode={_mode})");
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][act-variant-vote] popup Open threw", ex);
@@ -187,16 +187,64 @@ internal sealed partial class ActVariantVotePopup : Control {
         }
     }
 
-    // Lifecycle stubs — Task 11 wires TallyChanged subscription, _Process
-    // cancellation polling, _Input ESC handling.
+    // Lifecycle: TallyChanged subscription (Open), _Process cancellation
+    // polling, _Input ESC handling, OnClosed cleanup.
 
     public override void _Process(double delta) {
-        // TODO(task11): poll _shouldCancel each frame, fire _onUserAbandoned
-        // and _session.Cancel on detection.
+        if (_userAbandoned) return;
+        bool shouldCancel = false;
+        try { shouldCancel = _shouldCancel(); }
+        catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] shouldCancel probe threw: {ex.Message}");
+        }
+        if (shouldCancel) {
+            TryFireCancellation();
+        }
     }
 
     public override void _Input(InputEvent @event) {
-        // TODO(task11): intercept ESC, fire _onUserAbandoned + _session.Cancel,
-        // SetInputAsHandled.
+        // _Input fires BEFORE _UnhandledInput — guarantees popup gets ESC even
+        // if a parent control would have consumed it. Per v3 spec S5.
+        if (_userAbandoned) return;
+        if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape }) {
+            TryFireCancellation();
+            try { GetViewport().SetInputAsHandled(); } catch { /* swallow */ }
+        }
+    }
+
+    private void TryFireCancellation() {
+        _userAbandoned = true;
+        try { _onUserAbandoned(); }
+        catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] onUserAbandoned threw: {ex.Message}");
+        }
+        try { _session.Cancel(); }
+        catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] session.Cancel threw: {ex.Message}");
+        }
+    }
+
+    private void OnTally(object? sender, VoteSession session) {
+        if (_userAbandoned) return;
+        try {
+            var tallies = session.Tallies;
+            for (int i = 0; i < _options.Count && i < _tallyLabels.Length; i++) {
+                int count = tallies.TryGetValue(_options[i].Index, out var c) ? c : 0;
+                _tallyLabels[i].Text = $"#{_options[i].Index} — {count} votes";
+            }
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] OnTally threw: {ex.Message}");
+        }
+    }
+
+    private void OnClosed(object? sender, VoteSession session) {
+        try {
+            _session.TallyChanged -= OnTally;
+            _session.Closed -= OnClosed;
+        } catch { /* swallow */ }
+        if (_canvasLayer is not null && GodotObject.IsInstanceValid(_canvasLayer)) {
+            _canvasLayer.QueueFree();
+            _canvasLayer = null;
+        }
     }
 }

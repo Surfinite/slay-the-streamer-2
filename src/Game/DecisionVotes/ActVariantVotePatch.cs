@@ -204,17 +204,15 @@ internal static partial class ActVariantVotePatch {
                 parsing: null,
                 formatReceipt: formatReceipt);
 
-            // TODO(task10): popup wiring. The popup will be parented to
-            // (Engine.GetMainLoop() as SceneTree).Root and take:
-            //   - candidates: IReadOnlyList<ActVariantOption>
-            //   - factories: IReadOnlyList<Func<Godot.Node>?>  (parallel to candidates)
-            //   - mode: prewarm.Mode
-            //   - session: VoteSession
-            //   - dispatcher: coordinator.Dispatcher
-            //   - shouldCancel: Func<bool> ()=>IsRunStartAbandoned(instance)
-            //   - onUserAbandoned: ()=>Interlocked.Exchange(ref pending.Cancelled, 1)
-            // Until Task 10 lands, votes complete silently — chat sees receipts
-            // but no on-screen UI. Vote outcomes still apply correctly.
+            var popup = new ActVariantVotePopup(
+                candidates: candidates,
+                factories: factories,
+                mode: prewarm.Mode,
+                session: session,
+                dispatcher: coordinator.Dispatcher,
+                shouldCancel: () => IsRunStartAbandoned(instance),
+                onUserAbandoned: () => Interlocked.Exchange(ref pending.Cancelled, 1));
+            coordinator.Dispatcher.Post(() => popup.Open());
 
             _ = HandleVoteAsync(instance, seed, capturedModifiers, session, candidates, coordinator, pending);
         } catch (Exception ex) {
@@ -349,8 +347,12 @@ internal static partial class ActVariantVotePatch {
 
     private static void SendCancellationReceipt() {
         var coordinator = Voter.Default;
-        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
-        _ = coordinator.Chat.SendMessageAsync(
+        var state = coordinator?.Chat?.State;
+        if (state != ChatConnectionState.ConnectedReadWrite) {
+            TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] cancellation receipt skipped: chat state is {state?.ToString() ?? "null"}");
+            return;
+        }
+        _ = coordinator!.Chat.SendMessageAsync(
             "Act 1 variant vote cancelled — run-start abandoned.",
             OutgoingMessagePriority.Normal);
     }

@@ -84,3 +84,15 @@ internal static class ActVariantVoteResolver {
         return BailReason.None;
     }
 }
+
+/// <summary>
+/// Outcome of synchronous pre-warm. Mode flows into ActVariantVotePopup's
+/// constructor; Succeeded/Total/ElapsedMs feed the pre-warm telemetry log
+/// line. Pure-CLR — no Godot, no MegaCrit refs — so this type is reachable
+/// from the test project.
+/// </summary>
+internal readonly record struct ActVariantPrewarmResult(
+    SlayTheStreamer2.Game.Ui.ActVariantPopupMode Mode,
+    int Succeeded,
+    int Total,
+    long ElapsedMs);

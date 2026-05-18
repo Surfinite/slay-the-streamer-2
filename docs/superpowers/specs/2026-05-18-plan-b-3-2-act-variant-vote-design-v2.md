@@ -20,7 +20,8 @@ Vanilla picks the Act 1 variant via a coin-flip inside [`ActModel.GetRandomList`
 ## Goals
 
 - **Chat picks the Act 1 variant** when chat is connected and the streamer hasn't explicitly pinned a variant.
-- **Reuse existing voting infrastructure** verbatim — `VoteCoordinator`, `VoteSession`, `VoteTallyLabel`. <!-- CHANGED: removed stale "Only new voting-layer addition is the receipt-string set" line which contradicted commit 0b2131e — Reviewers 1, 8 -->
+- **Works in both Standard and Custom game modes.** <!-- CHANGED v3: explicit Standard-mode coverage — user clarification 2026-05-18 (Optional #10) --> The patch fires at `StartRunLobby.BeginRunLocally`, which is the shared run-launch path for Standard, Custom (Sealed Deck), and any modifier configuration. The vote is orthogonal to `GameMode` — `_settings.Modifiers` flow through unchanged.
+- **Reuse existing voting infrastructure** verbatim — `VoteCoordinator`, `VoteSession`, `VoteTallyLabel`.
 - **Forward-compatible internals** — `ActVariantVotePopup` is parameterized on `IReadOnlyList<ActVariantOption>`; the candidate-pool builder is a private static method per-act. Adding an Act 2 variant vote in the future means a new Harmony patch + new candidate-pool method, not a popup rewrite.
 - **Preserve TI/Game seam** — popup is MegaCrit-free at its public interface; all MegaCrit type contact lives in `ActVariantVotePatch`.
 - **No regression** to existing voting features (B.1 / B.2.1 / B.2.2 / B.3 / B.3.1).
@@ -210,7 +211,10 @@ private static bool PrefixContinue(
         PreWarmAssets(candidates);
 
         var labels = candidates.Select(c => c.Title).ToList();
-        session = coordinator.Start("Act 1 variant vote", labels, TimeSpan.FromSeconds(30));
+        // Slice label "Act 1 variant" (not "Act 1 variant vote") — generic
+        // FormatOpen prepends "Vote [NN]:" already, so "...variant vote!" reads
+        // double. <!-- CHANGED v3: Optional #1 — Reviewer 8 -->
+        session = coordinator.Start("Act 1 variant", labels, TimeSpan.FromSeconds(30));
 
         _pending = new PendingActVariantVote();
         var pending = _pending;  // capture local for closure
@@ -334,14 +338,21 @@ private static void ResumeOnMainThread(
         } catch (TargetInvocationException tie) {
             // Fallback re-invoke: reset Act1 to random, try once more so player
             // is not soft-locked at character-select. <!-- CHANGED: S10 — Reviewer 4 -->
+            // Log InnerException for cleaner diagnostics — reflection wraps
+            // the real exception in TargetInvocationException. <!-- CHANGED v3: Optional #8 — Reviewers 7, 8 -->
             TiLog.Error($"[SlayTheStreamer2][act-variant-vote] re-invoke threw; attempting fallback with Act1=random", tie.InnerException ?? tie);
             try {
                 instance.Act1 = "random";
                 method.Invoke(instance, new object?[] { seed, capturedModifiers });
+            } catch (TargetInvocationException fallbackTie) {
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke also threw; player may be stuck at character-select", fallbackTie.InnerException ?? fallbackTie);
             } catch (Exception fallbackEx) {
-                TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke also threw; player may be stuck at character-select", fallbackEx);
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke threw (non-reflection); player may be stuck at character-select", fallbackEx);
             }
         }
+    } catch (TargetInvocationException tie) {
+        // <!-- CHANGED v3: Optional #8 — unwrap consistently — Reviewers 7, 8 -->
+        TiLog.Error("[SlayTheStreamer2][act-variant-vote] resume threw (reflection)", tie.InnerException ?? tie);
     } catch (Exception ex) {
         TiLog.Error("[SlayTheStreamer2][act-variant-vote] resume threw", ex);
     } finally {
@@ -472,13 +483,16 @@ The popup needs four assets per variant pair (8 total: 2 backgrounds + 2 banners
 
 ### Spike deliverables
 
-<!-- CHANGED: M12 expanded — now 5 deliverables — meta-review consensus -->
+<!-- CHANGED: M12 expanded; v3 adds items 6, 7, 8 — meta-review consensus + user-requested Optional #6, #9, #10 -->
 
 1. **Asset paths**: 4 verified `res://...` paths (or `null` per asset if not located cleanly). Verified via `ResourceLoader.Exists(path) == true` AND `PreloadManager.Cache.GetTexture(path)` returns without warning.
-2. **Banner anchor convention**: verified before locking the `column_width / 2, screen_height / 3` overlay position. <!-- CHANGED: S1 typo fix — `half_width / 2` was wrong; column-relative is correct — Reviewers 3, 4 -->
+2. **Banner anchor convention**: verified before locking the `column_width / 2, gameplay_height / 3` overlay position. <!-- CHANGED: S1 typo fix — `half_width / 2` was wrong; column-relative is correct — Reviewers 3, 4 -->
 3. **`Cache.GetTexture` synchronicity**: explicit verification that it returns a fully-loaded texture (not a placeholder for async load). If async, `Gate 8`'s envelope claim is invalid and pre-warm needs redesign. <!-- CHANGED: M12c — Reviewer 8 -->
 4. **`BeginRunLocally` idempotency**: confirm the method is safe to call twice on the same instance with the same arguments. Audit pre-line-411 code for instance-state mutations that would affect a second call. <!-- CHANGED: M12b — Reviewers 4, 5, 9 -->
 5. **Cancellation probe**: identify the right run-start-abandonment signal to replace the broken `IsInstanceValid(StartRunLobby)` check. Candidates: `NCharacterSelectScreen.Instance == null`, `instance.GetParent() == null`, an explicit screen-visibility signal. Pick one that fires reliably on ESC/character-button-click. <!-- CHANGED: M12c — Reviewers 1, 2, 3, 4 -->
+6. **Runtime `Act1` read-site validation**: during a vanilla run (no mod intervention), attach a temporary postfix to `BeginRunLocally` that logs `instance.Act1` at method entry and at method exit, plus a getter-tracing harness. Confirm `Act1` is read exactly once (at line 412) during the run-start sequence. If a second read site is discovered, the override mechanism may silently drop the chat winner — design must pivot to `GetRandomList` postfix or transpiler alternative before proceeding. Remove the postfix after the spike. <!-- CHANGED v3: Optional #6 — Reviewer 5 -->
+7. **`BeginRunLocally` call-site audit**: grep the decompile for all callers of `BeginRunLocally` to confirm `NCharacterSelectScreen.Embark` is the only invocation path. If other callers exist (network message handlers, save-quit-resume paths, dev/debug commands), the patch may fire in contexts where chat voting isn't appropriate. Document each caller's context and confirm the bail conditions cover it (e.g., `Act1 != "random"` bail covers explicit programmatic sets). <!-- CHANGED v3: Optional #10 — Reviewer 8 ADD1 + user clarification re: Standard runs -->
+8. **Aspect-ratio + resolution surface**: identify the `Control` or `SubViewport` that bounds the 4:3 gameplay area inside StS2's window (the game letterboxes/pillarboxes around this on non-4:3 windows). The popup's `CanvasLayer` must anchor to this gameplay-area surface, NOT to the raw `SceneTree.Root` — otherwise the popup would cover the letterbox bars too, sit at wrong proportions, or get clipped on small windows. Probe target: how does `BossVotePopup` (B.3) handle this today? Mirror its pattern. Spike must verify popup renders correctly at 3 known-tested resolutions: **(a) windowed ~640px-ish (1/3 of a 1920 monitor), (b) 1920×1080 fullscreen, (c) ultrawide 1440 fullscreen** (the operator's tested configurations per 2026-05-18). <!-- CHANGED v3: Optional #9 — Reviewer 6, 8 + critical user clarification about 4:3 gameplay-area lock -->
 
 ### Path-building approach
 
@@ -548,10 +562,14 @@ CanvasLayer (layer = 100, owned by popup)
         └── (same shape)
 ```
 
-### Sizing
+### Sizing (gameplay-area-aware) <!-- CHANGED v3: Optional #9 — Reviewer 6, 8 + user clarification re 4:3 lock -->
 
-- `column_width / 2, screen_height / 3` (column-relative coordinates) is computed at `Show()` from the viewport size. <!-- CHANGED: S1 typo — was `half_width / 2`, which would center at quarter-width — Reviewers 3, 4 -->
-- `clip_contents = true` + `stretch_mode = KeepCenter` is the native-size center-crop.
+StS2 locks gameplay rendering to a **4:3 area** at whatever window width the user picks. Anchored content (cards, popups, etc.) sits inside this 4:3 area; the engine letterboxes/pillarboxes on non-4:3 windows. The popup MUST anchor to the same gameplay-area surface, NOT to the raw window viewport, or it will misalign on the operator's tested configurations (1/3-monitor windowed, 1920×1080, ultrawide 1440 fullscreen).
+
+- The `CanvasLayer` is attached to the same parent that `BossVotePopup` (B.3) uses — the gameplay-area `Control` identified during the spike (Spike deliverable #8). This guarantees the popup sits inside the 4:3 area, letterboxed/pillarboxed alongside the rest of the game UI.
+- `column_width / 2, gameplay_height / 3` (column-relative, gameplay-area-relative coordinates) is computed at `Show()` from the gameplay-area `Size`, NOT from `GetViewportRect().Size`. Recompute on `_Ready` after the `CanvasLayer` is parented.
+- `clip_contents = true` + `stretch_mode = KeepCenter` is the native-size center-crop. The 4:3 lock means the backgrounds (which are themselves authored for a 4:3 gameplay area) center-crop predictably on every window aspect.
+- The popup does NOT reflow on mid-vote window resize (per Optional #9 commentary: smooth mid-vote resizing is not required). Static-aspect support across the 3 tested resolutions IS required.
 - Tally label font matches B.3's `VoteTallyLabel` styling for cross-vote consistency.
 
 ### Lifecycle
@@ -606,11 +624,22 @@ B.3.1's `ProcessMode.Disabled` cascade is not applied to B.3.2's v1 — backgrou
 
 ```jsonc
 {
-  "voteOnActVariant": true   // default true; toggles the entire B.3.2 patch
+  "voteOnActVariant": true,        // default true; toggles the entire B.3.2 patch
+  "forceL3PopupFallback": false    // dev-ergonomics: force text-only popup
+                                   // even when assets resolve. Useful during
+                                   // asset spike + L3-regression smoke tests.
+                                   // <!-- CHANGED v3: Optional #2 — Reviewer 6 -->
 }
 ```
 
-`public bool VoteOnActVariant { get; init; } = true;` in `ModSettings.cs`. No schema-version bump (optional field with default).
+```csharp
+public bool VoteOnActVariant      { get; init; } = true;
+public bool ForceL3PopupFallback  { get; init; } = false;
+```
+
+in `ModSettings.cs`. No schema-version bump (both optional fields with defaults).
+
+When `ForceL3PopupFallback == true`, `PreWarmAssets` short-circuits at entry (logs `[act-variant-vote] pre-warm: forced L3 fallback`) and the popup renders in L3 mode regardless of asset-path validity. <!-- CHANGED v3: Optional #2 -->.
 
 ## Receipts
 
@@ -618,8 +647,8 @@ B.3.1's `ProcessMode.Disabled` cascade is not applied to B.3.2's v1 — backgrou
 
 **Exception**: the no-votes path is intercepted by B.3.2 to prevent the generic formatter from falsely naming a chat-chosen variant. `SendNoVotesReceipt` is called from `HandleVoteAsync` before `ResumeOnMainThread` runs. <!-- CHANGED: M1 — Reviewers 1, 3, 5, 7, 8, 9 -->
 
-What chat sees:
-- **Open** (via `FormatOpen`): `"Vote [NN]: Act 1 variant vote! Type 0, 1 — 30s left."`
+What chat sees (slice label is `"Act 1 variant"` per Optional #1):
+- **Open** (via `FormatOpen`): `"Vote [NN]: Act 1 variant! Type 0, 1 — 30s left."`
 - **Periodic tally** (via `FormatPeriodicTally`): `"Vote: 0=5 1=3, 22s left."`
 - **Close — winner** (via `FormatClose`): `"Chat chose 0: Overgrowth."`
 - **Close — tie** (via `FormatClose`): `"Tie between 0 Overgrowth and 1 Underdocks — chat chose 0: Overgrowth randomly."`
@@ -694,18 +723,26 @@ Reviewer 7 -->
 | 11 | Save-quit preservation | Start with chat-chosen variant. After entering first combat, save-quit + Continue. Verify variant preserved (combat-bg matches chat pick). |
 | 12 | Embark→ESC→Embark cycle | Click Embark, ESC during vote, click Embark again. Verify second Embark fires a fresh vote (atomic state reset correctly). <!-- CHANGED: S4 — Reviewer 7 --> |
 | 13 | Chat disconnect mid-vote | Click Embark, disconnect Twitch IRC during vote → vote times out or returns no-winner → vanilla pick stands. `godot.log` shows degraded state but no crash. <!-- CHANGED: S5 — Reviewer 9 --> |
+| 14 | Multi-resolution popup correctness | Run the slice at 3 known-tested resolutions: **(a) windowed at ~1/3 of a 1920-wide monitor**, **(b) 1920×1080 fullscreen**, **(c) ultrawide 1440 fullscreen**. At each: open the vote, confirm popup is centered in the 4:3 gameplay area (not the raw window), backgrounds center-crop predictably without distortion, banners overlay at `gameplay_height / 3` per column, tally labels render legibly. No mid-vote resize required. <!-- CHANGED v3: Optional #9 — operator's tested resolutions per 2026-05-18 --> |
+| 15 | Standard mode (no modifiers) | Start a Standard run with NO modifiers selected → vote fires identically to Custom-mode runs (Sealed Deck etc.). Verify Standard-mode flow is not gated against. <!-- CHANGED v3: Optional #10 — user clarified Standard+Custom equivalence 2026-05-18 --> |
 
 **Operator-validation gate for bail condition X (`Act1 != "random"`)** is un-testable in the current build (dropdown is UI-hidden). The bail path itself is now unit-testable via `ActVariantVoteResolver.ShouldBail` (M6). In-game validation deferred until MegaCrit surfaces the dropdown.
 
 ## Open items / risks
 
-1. **`Act1` write-then-reinvoke approach validated end-to-end by spike (M12d).** Post-line-412 read-site audit + runtime postfix logging during a vanilla run confirms no other reads.
+1. **`Act1` write-then-reinvoke approach validated end-to-end by spike (M12d + Optional #6).** Post-line-412 read-site audit + runtime postfix logging during a vanilla run confirms no other reads.
 2. **Asset paths not yet located in decompile.** Research-spike during implementation. L3 fallback is graceful.
 3. **Save-quit serialization stability** smoke-tested via Gate 11.
 4. **Banner anchor convention** verified during spike (M12).
 5. **`Cache.GetTexture` synchronicity** verified during spike (M12c).
 6. **`BeginRunLocally` idempotency** verified during spike (M12b).
 7. **Cancellation probe** identified during spike (M12c).
+8. **Multi-resolution popup correctness** verified during spike (Spike deliverable #8) and Gate 14. <!-- CHANGED v3: Optional #9 -->
+9. **`BeginRunLocally` other call sites audited** during spike (Spike deliverable #7). <!-- CHANGED v3: Optional #10 -->
+
+### Twitch rate-limit interaction (informational)
+
+B.3.2 adds approximately **3–5 chat messages per run** (1 open + 1–3 periodic tallies + 1 close, plus 1 cancellation receipt if the streamer abandons). Combined with the existing per-run receipt budget (Neow B.1 + Card reward B.2.1 multiples + Ancients B.2.2 + Boss B.3 = roughly 15–20 messages per full run), B.3.2 pushes the per-run total closer to the Twitch account-level rate limit (20 msgs/30s). The 30-second floor on the boss-vote popup keeps the per-window message density below the danger zone for a single slice, but the cumulative effect across a full run is not analyzed. Known v0.2 polish item (CLAUDE.md Tier 4) — B.3.2 does not regress the existing pressure; future global vote-receipt-policy work would address compositionally. <!-- CHANGED v3: Optional #5 — Reviewer 8 -->
 
 ## Cross-references
 
@@ -721,36 +758,28 @@ Reviewer 7 -->
 
 ---
 
-## Optional Enhancements (pick what you want)
+## Optional Enhancements — disposition
 
-These are the **Consider-tier** items from the meta-review — good ideas worth thinking about but not critical to ship. Tell me which numbers to incorporate.
+User-selected enhancements applied 2026-05-18; remaining items dispositioned below.
 
-1. **Receipt label `"Act 1 variant"` (drop "vote")** — Reviewer 8. Reads better when generic formatter interpolates: `"Vote [NN]: Act 1 variant! Type 0, 1 — 30s left."` vs the current `"Vote [NN]: Act 1 variant vote! ..."`. Effort: **trivial** (one-line change). My recommendation: **lean yes** — cleaner phrasing, no downside.
+| # | Item | Status |
+|---|------|--------|
+| 1 | Receipt label `"Act 1 variant"` (drop "vote") | ✅ **APPLIED** — `coordinator.Start("Act 1 variant", ...)`. Receipts examples updated. |
+| 2 | Debug `ModSetting` to force L3 fallback | ✅ **APPLIED** — `ForceL3PopupFallback : bool = false` added to `ModSettings`. Pre-warm short-circuits when set. |
+| 3 | Pre-warm timeout/degradation path | ❌ Not selected. YAGNI; B.3.1 baseline well under cap. |
+| 4 | Rename `VoteOnActVariant` → `VoteOnAct1Variant` | ❌ Not selected. Single-toggle preserved for v1. |
+| 5 | Twitch rate-limit interaction note | ✅ **APPLIED** — Open items / risks section now includes the rate-limit compositional impact. |
+| 6 | Postfix runtime `Act1`-read validation | ✅ **APPLIED** — added as Spike deliverable #6. Postfix logs `Act1` reads during a vanilla run to confirm no second read site exists. |
+| 7 | Subscribe to `TallyChanged` in popup constructor | ❌ Not selected. Race is essentially zero given dispatcher ordering. |
+| 8 | Log unwrap `TargetInvocationException` consistently | ✅ **APPLIED** — outer catch in `ResumeOnMainThread` and fallback-re-invoke catch both unwrap via `tie.InnerException ?? tie`. |
+| 9 | **Multi-resolution popup correctness** (originally framed as "ultrawide awareness") | ✅ **APPLIED** — user clarification 2026-05-18: StS2 locks gameplay to a 4:3 area at any window width; popup must anchor to that surface, not the raw viewport. Spike deliverable #8 identifies the gameplay-area `Control`; Gate 14 verifies popup at 3 tested resolutions (1/3-monitor windowed, 1920×1080, ultrawide 1440 fullscreen). No mid-vote resize support required. |
+| 10 | Verify `BeginRunLocally` call-site uniqueness | ✅ **APPLIED** — added as Spike deliverable #7. Verifies single-caller assumption; expanded to confirm Standard + Custom mode parity per user clarification 2026-05-18 (Goals section). New Gate 15 added: Standard-mode (no modifiers) vote works identically. |
+| 11 | `string.Equals(Act1, "random", StringComparison.Ordinal)` | ✅ **ALREADY APPLIED in v2** (Prefix bail condition #6). User confirmed. |
+| 12 | `readonly record struct` declaration for `ActVariantOption` | ✅ **ALREADY APPLIED in v2** (Candidate pool + bail logic section). |
+| 13 | `Voter.Default` documented in CONTEXT doc | ⏸ Pending — CONTEXT-doc update. Apply on next CONTEXT regeneration. |
 
-2. **Debug `ModSetting` to force L3 fallback** — Reviewer 6. Adds `forceL3Fallback: bool` to settings (default false) so the popup can be tested without locating actual textures. Useful during the asset spike. Effort: **trivial** (one field + one branch in pre-warm). My recommendation: **lean yes** — cheap dev-ergonomics win, and useful for ongoing L3 regression testing.
-
-3. **Pre-warm timeout/degradation path** — Reviewer 9. Hard 200ms wall-clock cap; if exceeded, stop loading remaining assets and proceed with whatever loaded (degrades to partial L3). Effort: **small** (~10 lines, refactor pre-warm loop with `break` on time check). My recommendation: **neutral** — defensive but B.3.1 baseline was 76–82ms; YAGNI today, easy to add if Gate 8 reports stalls.
-
-4. **Rename `VoteOnActVariant` to `VoteOnAct1Variant`** — Reviewer 8. Explicit about scope. Future Act-2 work introduces `VoteOnAct2Variant`. Effort: **trivial**. My recommendation: **lean no** — single toggle is simpler today and the rename forces a settings-schema decision when Act 2 ships; let future-us deal with future granularity.
-
-5. **Twitch rate-limit interaction note in "Open items / risks"** — Reviewer 8. ~5–6 messages per B.3.2 vote, compounding existing per-run receipt budget. Effort: **trivial** (one paragraph). My recommendation: **lean yes** — keeps the known debt visible.
-
-6. **Postfix on `BeginRunLocally` for runtime `Act1`-read validation** — Reviewer 5. During the spike, attach a postfix that logs `Act1` value after line 412 during a normal vanilla run, to confirm no other read sites. Effort: **small** (~15 lines, removed after spike). My recommendation: **lean yes** — closes the highest-risk open item with empirical evidence.
-
-7. **Subscribe to `session.TallyChanged` in popup constructor not `_Ready`** — Reviewer 8 (L3). Eliminates the (tiny) race window between construction and `_Ready`. Effort: **trivial**. My recommendation: **neutral** — race is essentially zero in practice given dispatcher ordering.
-
-8. **Log unwrap `TargetInvocationException` from `Method.Invoke`** — Reviewer 7, 8. The v2 spec already does this in the fallback re-invoke path (S10), but not in the outer catch. Make it consistent. Effort: **trivial**. My recommendation: **lean yes** — better diagnostics.
-
-9. **Aspect-ratio awareness for ultrawide monitors** — Reviewer 6, 8 (L1). Recompute popup positions based on actual viewport ratio. Effort: **small** (~20 lines + tuning). My recommendation: **lean no** — StS2 doesn't ship custom resolutions; revisit if reports come in.
-
-10. **Verify `BeginRunLocally` has no other call sites** — Reviewer 8 ADD1. One-line grep audit during spike, documented in spec. Effort: **trivial**. My recommendation: **lean yes** — cheap closure on the "what fires this patch" question.
-
-11. **`string.Equals(Act1, "random", StringComparison.Ordinal)`** — Reviewer 1. Already applied in v2's Prefix code (bail #6). **Already-applied; no action needed.**
-
-12. **Explicit `readonly record struct` declaration for `ActVariantOption`** — Reviewer 9. Already applied in v2. **Already-applied; no action needed.**
-
-13. **`Voter.Default` documented in CONTEXT doc** — Reviewer 3. Out-of-scope for the spec (it's a CONTEXT-doc update). Effort: **trivial**. My recommendation: **lean yes** — apply to CONTEXT doc when next regenerated.
+**Net delta from base v2**: 7 enhancements applied (1, 2, 5, 6, 8, 9, 10). Spike deliverables grew from 5 to 8 items. Operator-validation gates grew from 13 to 15.
 
 ---
 
-**v2 ready for review.** Reply with which Optional Enhancement numbers (if any) to apply, or confirm the v2 plan is good as-is and we'll move to implementation-plan writing.
+**v2 (with selected enhancements) ready.** Confirm v2 is good as-is and we'll move to implementation-plan writing via the writing-plans skill.

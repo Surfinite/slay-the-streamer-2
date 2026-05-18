@@ -643,12 +643,36 @@ Receipt-policy cadence reuses `VoteReceiptPolicy.Default`. Periodic-tally dedup 
 | 7 | Spam-Embark guard | Two quick Embark clicks → second click suppressed. Verifies `_voteInProgress` atomic-acquire (NOT covered by `ShouldBail` unit tests per M8). |
 | 8 | Pre-warm telemetry | `godot.log` shows `pre-warm: N/M assets in Tms (mode=L1|L3, reason=...)`. ≤ 100ms. |
 | 9 | Sealed Deck coexistence | Run with Sealed Deck modifier → vote still fires; run proceeds with chat pick + Sealed Deck. |
-| 10 | Receipt delivery | Open + ≥1 tally + close receipts all arrive (in `ConnectedReadWrite`; best-effort in `ConnectedReadOnly`). |
+| 10 | Receipt delivery | Open + ≥1 tally + close receipts all arrive. **Validated only in `ConnectedReadWrite`.** In `ConnectedReadOnly`, the vote counts chat input but receipt sends are skipped (per `SendCancellationReceipt`'s state gate at line 224); Gate 10 is N/A and the operator should confirm no exceptions in `godot.log`. <!-- CHANGED v3.1: Optional #4 — Reviewer R2-1 #14 --> |
 | 11 | Save-quit preservation | Mid-run save-quit + Continue → chat-picked variant preserved. |
 | 12 | Embark→ESC→Embark cycle | Verify atomic state resets correctly between abandoned + fresh votes. Also verifies `_voteInProgress` clearing (M8 coverage). |
 | 13 | Chat disconnect mid-vote | Disconnect Twitch IRC mid-vote → vote times out, vanilla pick stands, no crash. |
 | 14 | **Multi-resolution popup correctness** at 3 tested resolutions (1/3-monitor windowed, 1920×1080, ultrawide 1440 fullscreen). Verify: <!-- CHANGED v3: S2 — Reviewer R2-2 --> (a) popup centered in 4:3 gameplay area (not raw window); (b) backgrounds preserve aspect ratio (no horizontal/vertical squish); (c) banners stay inside column boundary (no bleed across divider); (d) `CanvasLayer` parent is the gameplay-area `Control` per Spike #8 (verify via scene-tree inspector). |
 | 15 | Standard mode (no modifiers) | Start a Standard run with NO modifiers → vote fires identically. Verifies no implicit gating on `_settings.GameMode == Custom`. |
+
+### Spike → Gate dependency appendix <!-- CHANGED v3.1: Optional #1 — Reviewer R2-2 ADD1 -->
+
+The operator-validation gates depend on different spike deliverables landing first. This table helps planning: some gates can be exercised before the spike completes, others are blocked on specific spike outputs.
+
+| Gate | Blocked on spike deliverable(s) | Notes |
+|---|---|---|
+| 1 — Vote fires on Embark | #5 (cancellation probe), #7 (call-site audit) | Probe wiring required to detect non-fire-when-it-should-have-fired regressions; call-site audit confirms the patch surface is correct. |
+| 2 — Winner applied | #1 (asset paths), #4 (idempotency), #6 (Act1 read-site), #7 (call-site audit) | Idempotency determines whether the re-invoke completes cleanly; Act1 read-site validation determines whether the override actually applies. |
+| 3 — No-winner fallback | #6 (Act1 read-site) | Validates that NOT overriding Act1 leaves vanilla's random pick intact. |
+| 4 — Settings toggle off | (none) | Pure-CLR bail path; unit-testable today. |
+| 5 — Pool degeneracy | (none) | Defensive only; not exercisable in vanilla. |
+| 6 — Cancellation | #5 (cancellation probe), #9 (`Cancel()` idempotency) | Probe must fire reliably; `Cancel()` safe under double-call. |
+| 7 — Spam-Embark guard | (none) | Atomic-acquire is in-Prefix; validates today. |
+| 8 — Pre-warm telemetry | #1 (asset paths), #3 (`GetTexture` sync) | If `GetTexture` is async, the envelope claim is meaningless. |
+| 9 — Sealed Deck coexistence | #7 (call-site audit) | Validates the patch doesn't gate on `GameMode`. |
+| 10 — Receipt delivery | (none) | Tests `formatReceipt` callback wiring; validatable as soon as bait-test connects to chat. |
+| 11 — Save-quit preservation | #4 (idempotency), #6 (Act1 read-site) | Save snapshot timing relative to Act1 write must be safe. |
+| 12 — Embark→ESC→Embark cycle | #5 (cancellation probe), #9 (`Cancel()` idempotency) | Same probe machinery as Gate 6. |
+| 13 — Chat disconnect mid-vote | (none) | Tests bail-condition behavior under existing chat infrastructure. |
+| 14 — Multi-resolution popup | #2 (banner anchor), #8 (gameplay-area surface) | Anchor convention must be locked before sub-checks make sense. |
+| 15 — Standard-mode coverage | #7 (call-site audit) | Same dependency as Gate 9. |
+
+**Gates with zero spike dependency** (validatable as soon as the patch class exists with default behavior): 4, 5, 7, 10, 13. These are the "early signal" gates — failing them means the patch infrastructure itself is broken before any spike-specific concern matters.
 
 ## Test architecture
 
@@ -700,20 +724,14 @@ B.3.2 adds ~3–5 chat messages per run (open + 1–3 tallies + close, plus opti
 
 ---
 
-## Optional Enhancements (round 2 — pick what you want)
+## Optional Enhancements — disposition
 
-Round-2 reviewer suggestions deferred from must-do/should-do. Tell me which numbers to apply.
+| # | Item | Status |
+|---|------|--------|
+| 1 | Spike → Gate dependency table appendix | ✅ **APPLIED** (v3.1) — added as a sub-section before Test architecture; 15-row table; identifies the 5 "early-signal" gates with zero spike dependency. |
+| 2 | Multiplayer regression gate (Gate 16) | ❌ Not selected. MP is out of scope; real-world test cost > value for hobby slice. |
+| 3 | Rename `ForceL3PopupFallback` | ❌ Not selected. Current naming consistent with internal vocabulary. |
+| 4 | Read-only chat receipt-gate scoping | ✅ **APPLIED** (v3.1) — Gate 10 updated with explicit `ConnectedReadWrite`-only scoping note. |
+| 5 | `_multiplayerWarnFired` reset on SP close | ❌ Not selected. Process-lifetime suppression is correct. |
 
-1. **Spike → Gate dependency table appendix** — Reviewer R2-2 ADD1. A 5-row table mapping which gates can only be validated after which spike deliverables complete. Effort: **trivial** (5 rows). Recommendation: **lean yes** — useful for operator validation.
-
-2. **Multiplayer regression gate** (Gate 16) — Reviewer R2-2 ADD2. Verifies the multiplayer bail path doesn't crash on the rare case of a user accidentally hitting Embark in an MP lobby. Requires a friend to test. Effort: **small** (one gate row, real-world cost is the testing). Recommendation: **lean no** — MP is out of scope, cost > value for a hobby slice.
-
-3. **Rename `ForceL3PopupFallback` to `ForceTextOnlyVariantPopup`** — Reviewer R2-2 L7. More descriptive for JSON-editing streamers ("L3" is internal spec shorthand). Effort: **trivial**. Recommendation: **neutral** — naming is fine either way; current name is consistent with internal vocabulary.
-
-4. **Read-only chat receipt-gate scoping** — Reviewer R2-1 #14. Document explicitly that Gate 10 only validates in `ConnectedReadWrite`; in `ConnectedReadOnly`, the vote counts chat input but receipts are best-effort. Effort: **trivial** (one sentence in Gates section). Recommendation: **lean yes** — clarity.
-
-5. **`_multiplayerWarnFired` reset on successful SP vote close** — Reviewer R2-2 L1 alternative. Currently process-lifetime (suppresses repeat warnings). Resetting would re-warn after each successful SP vote, which is probably noisier. Effort: **trivial**. Recommendation: **lean no** — process-lifetime is correct.
-
----
-
-**v3 ready for review.** The 7 round-2 must-do items + 10 should-do items are applied inline. Confirm v3 is good as-is and we'll move to implementation-plan writing, or pick optional numbers to fold in first.
+**v3 (with selected enhancements) ready.** Moving to implementation-plan writing via the writing-plans skill.

@@ -70,6 +70,12 @@ internal sealed partial class ActVariantVotePopup : Control {
                 return;
             }
             sceneTree.Root.AddChild(_canvasLayer);
+            // The popup Control itself must be in the tree for Godot to invoke
+            // _Process and _Input callbacks. _canvasLayer was constructed fresh
+            // by BuildNodeTree and only contains the backdrop + columns; adding
+            // `this` as a child of the layer wires the lifecycle. Mirrors
+            // BossVotePopup.Show() at BossVotePopup.cs:223.
+            _canvasLayer.AddChild(this);
             _session.Closed += OnClosed;
             TiLog.Debug($"[SlayTheStreamer2][act-variant-vote] popup opened (mode={_mode})");
         } catch (Exception ex) {

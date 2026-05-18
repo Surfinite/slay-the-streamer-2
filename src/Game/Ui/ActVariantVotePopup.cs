@@ -212,6 +212,9 @@ internal sealed partial class ActVariantVotePopup : Control {
         AddBanner(free, option.Title);
 
         // Tally label — text is updated by _Process tally-version polling.
+        // Left at default theme until the polish pass; readability gate met
+        // because the bottom-of-column area is unoccupied (no scene foreground
+        // collides with the text).
         var tally = new Label {
             Text = $"#{option.Index} — 0 votes",
             HorizontalAlignment = HorizontalAlignment.Center,

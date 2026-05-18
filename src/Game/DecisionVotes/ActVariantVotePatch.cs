@@ -13,7 +13,10 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Debug;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rooms;
@@ -26,11 +29,36 @@ using SlayTheStreamer2.Ti.Voting;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
-// PrefixContinue / HandleVoteAsync / ResumeOnMainThread land in Task 9.
-// This file currently hosts the Harmony target wiring + Prefix bail order +
-// the pre-warm helper. PrefixContinue is a stub that falls through to vanilla.
-[HarmonyPatch(typeof(StartRunLobby), "BeginRunLocally",
-              new[] { typeof(string), typeof(List<ModifierModel>) })]
+// Patch targets: NCharacterSelectScreen.OnEmbarkPressed(NButton _) AND
+//                NCustomRunScreen.OnEmbarkPressed(NButton _).
+//
+// Why this seam (vs. StartRunLobby.BeginRunLocally — the original target):
+// OnEmbarkPressed disables the embark / back / character buttons and calls
+// _lobby.SetReady(true) BEFORE eventually reaching BeginRunLocally. Patching
+// at BeginRunLocally meant a cancel-mid-vote left the lobby UI in a half-
+// mutated state (buttons disabled, lobby marked ready, no path back). Patching
+// at OnEmbarkPressed means: on suspend, NONE of those mutations have run yet,
+// so cancel is a clean no-op — vanilla never touched the UI, no restoration
+// needed. On confirm, we set Lobby.Act1 and reflectively re-invoke the same
+// method; the second pass goes through with _resumeInProgress=1 set so our
+// prefix passes through, and vanilla's full body runs unmodified.
+//
+// Both screens implement IStartRunLobbyListener, expose a public Lobby
+// property, and have the identical OnEmbarkPressed(NButton) signature, so a
+// shared TargetMethods() pattern works for both. The right MethodInfo for
+// re-invocation is picked per-screen via a small type dispatch (see GetLobby
+// / GetOnEmbarkPressedMethod).
+//
+// FTUE interaction (corner case, NCharacterSelectScreen only): on a profile
+// that hasn't seen the FTUE, vanilla's OnEmbarkPressed shows a modal at
+// line 472-480 and returns early after disabling _embarkButton. If the user
+// then accepts the modal, OnEmbarkPressed recurses and our prefix fires.
+// Cancelling THAT vote leaves _embarkButton disabled from vanilla's pre-modal
+// disable, with no restoration path — same stuck-UI the cancel-under-
+// BeginRunLocally bug had. Narrow (first run on fresh profile + voluntary
+// cancel) and not a regression from vanilla's own behavior in that path.
+// CLAUDE.md's "design as if streamer has unlocked everything" applies.
+[HarmonyPatch]
 internal static partial class ActVariantVotePatch {
 
     private static int _voteInProgress;
@@ -47,28 +75,56 @@ internal static partial class ActVariantVotePatch {
         public int NoVotes;
     }
 
-    private static readonly Lazy<MethodInfo?> _beginRunLocallyMethod =
-        new(() => AccessTools.Method(typeof(StartRunLobby), "BeginRunLocally",
-                                     new[] { typeof(string), typeof(List<ModifierModel>) }));
+    private static readonly Lazy<MethodInfo?> _characterSelectOnEmbark = new(() =>
+        AccessTools.Method(typeof(NCharacterSelectScreen), "OnEmbarkPressed", new[] { typeof(NButton) }));
+    private static readonly Lazy<MethodInfo?> _customRunOnEmbark = new(() =>
+        AccessTools.Method(typeof(NCustomRunScreen), "OnEmbarkPressed", new[] { typeof(NButton) }));
+
+    static IEnumerable<MethodBase> TargetMethods() {
+        var found = new List<MethodBase>(2);
+        if (_characterSelectOnEmbark.Value is { } m1) found.Add(m1);
+        else TiLog.Error("[SlayTheStreamer2][act-variant-vote] NCharacterSelectScreen.OnEmbarkPressed(NButton) not found via reflection");
+        if (_customRunOnEmbark.Value is { } m2) found.Add(m2);
+        else TiLog.Error("[SlayTheStreamer2][act-variant-vote] NCustomRunScreen.OnEmbarkPressed(NButton) not found via reflection");
+        return found;
+    }
 
     static bool Prepare(MethodBase? original) {
         if (original is null) {
-            if (_beginRunLocallyMethod.Value is null) {
-                TiLog.Error("[SlayTheStreamer2][act-variant-vote] hard check failed: StartRunLobby.BeginRunLocally(string, List<ModifierModel>) not found via reflection; patch will not register");
-                return false;
-            }
+            // Patch-level Prepare — fires before TargetMethods. Pass to let
+            // TargetMethods drive registration; per-target validation runs
+            // when Prepare(MethodBase) is called for each target below.
             return true;
         }
         var parameters = original.GetParameters();
-        if (parameters.Length != 2 ||
-            parameters[0].ParameterType != typeof(string) ||
-            parameters[1].ParameterType != typeof(List<ModifierModel>)) {
+        if (parameters.Length != 1 ||
+            parameters[0].ParameterType != typeof(NButton)) {
             TiLog.Error($"[SlayTheStreamer2][act-variant-vote] target signature mismatch: {original.DeclaringType?.FullName}.{original.Name}");
             return false;
         }
         TiLog.Info($"[SlayTheStreamer2][act-variant-vote] target resolved: {original.DeclaringType?.FullName}.{original.Name}");
         return true;
     }
+
+    /// <summary>
+    /// Look up the screen's StartRunLobby. Each screen exposes a public
+    /// Lobby property but they're distinct types — dispatch by C# type.
+    /// </summary>
+    private static StartRunLobby? GetLobby(object screen) => screen switch {
+        NCharacterSelectScreen s => s.Lobby,
+        NCustomRunScreen c => c.Lobby,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Look up the MethodInfo for re-invoking the originating screen's
+    /// OnEmbarkPressed during the synthetic resume path.
+    /// </summary>
+    private static MethodInfo? GetOnEmbarkPressedMethod(object screen) => screen switch {
+        NCharacterSelectScreen _ => _characterSelectOnEmbark.Value,
+        NCustomRunScreen _ => _customRunOnEmbark.Value,
+        _ => null,
+    };
 
     private static bool GetVoteOnActVariantSetting() {
         return ModEntry.Settings is SettingsResult.Success s
@@ -82,19 +138,27 @@ internal static partial class ActVariantVotePatch {
             : false;
     }
 
-    static bool Prefix(StartRunLobby __instance, string seed, List<ModifierModel> modifiers) {
-        // 1. Synthetic resume passes through.
+    static bool Prefix(object __instance, NButton _) {
+        // 1. Synthetic resume passes through. Set when ResumeOnMainThread
+        //    re-invokes OnEmbarkPressed to let vanilla's body run unmodified.
         if (_resumeInProgress == 1) return true;
 
-        // 2. Atomic acquire — moved up to close the chat-disconnect race
-        //    (per spec v3 round-2 meta-review).
+        // 2. Atomic acquire — close the chat-disconnect race.
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
             TiLog.Debug("[SlayTheStreamer2][act-variant-vote] repeat click during open vote; suppressed");
             return false;
         }
 
         try {
-            int playerCount = TryGetPlayerCount(__instance) ?? 1;
+            var lobby = GetLobby(__instance);
+            var onEmbarkMethod = GetOnEmbarkPressedMethod(__instance);
+            if (lobby is null || onEmbarkMethod is null) {
+                TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] unexpected screen type ({__instance?.GetType().FullName ?? "null"}) or null Lobby/method; passing through");
+                Interlocked.Exchange(ref _voteInProgress, 0);
+                return true;
+            }
+
+            int playerCount = TryGetPlayerCount(lobby) ?? 1;
             var coordinator = Voter.Default;
             var chatState = coordinator?.Chat.State ?? ChatConnectionState.Disconnected;
             var candidates = ActVariantVoteResolver.BuildCandidates();
@@ -103,69 +167,66 @@ internal static partial class ActVariantVotePatch {
                 settingsEnabled: GetVoteOnActVariantSetting(),
                 playerCount: playerCount,
                 chatState: chatState,
-                act1Value: __instance.Act1 ?? ActVariantVoteResolver.RandomActKey,
+                act1Value: lobby.Act1 ?? ActVariantVoteResolver.RandomActKey,
                 candidateCount: candidates.Count);
 
             if (reason is not ActVariantVoteResolver.BailReason.None) {
-                LogBailAndRelease(reason, __instance, playerCount);
+                LogBailAndRelease(reason, lobby, playerCount);
                 return true;
             }
 
             // coordinator guaranteed non-null when ShouldBail returns None.
-            return PrefixContinue(__instance, seed, modifiers, candidates, coordinator!);
+            return PrefixContinue(__instance, onEmbarkMethod, lobby, candidates, coordinator!);
         } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][act-variant-vote] Prefix threw; bailing to vanilla", ex);
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] Prefix threw; passing through", ex);
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
     }
 
-    private static int? TryGetPlayerCount(StartRunLobby instance) {
-        try { return instance?.Players?.Count; } catch { return null; }
+    private static int? TryGetPlayerCount(StartRunLobby lobby) {
+        try { return lobby?.Players?.Count; } catch { return null; }
     }
 
     private static void LogBailAndRelease(
             ActVariantVoteResolver.BailReason reason,
-            StartRunLobby instance,
+            StartRunLobby lobby,
             int playerCount) {
         switch (reason) {
             case ActVariantVoteResolver.BailReason.SettingsOff:
-                TiLog.Debug("[SlayTheStreamer2][act-variant-vote] settings off; bailing to vanilla");
+                TiLog.Debug("[SlayTheStreamer2][act-variant-vote] skipping vote — setting disabled");
                 break;
             case ActVariantVoteResolver.BailReason.Multiplayer:
                 if (Interlocked.CompareExchange(ref _multiplayerWarnFired, 1, 0) == 0) {
-                    TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] multiplayer detected (Players.Count={playerCount}); bailing to vanilla");
+                    TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] skipping vote — multiplayer run (Players.Count={playerCount})");
                 }
                 break;
             case ActVariantVoteResolver.BailReason.ChatUnreadable:
-                TiLog.Debug("[SlayTheStreamer2][act-variant-vote] chat not readable; bailing to vanilla");
+                TiLog.Debug("[SlayTheStreamer2][act-variant-vote] skipping vote — chat not readable");
                 break;
             case ActVariantVoteResolver.BailReason.Act1Pinned:
-                TiLog.Info($"[SlayTheStreamer2][act-variant-vote] Act1 explicitly pinned ({instance.Act1}); skipping vote");
+                TiLog.Info($"[SlayTheStreamer2][act-variant-vote] skipping vote — Act1 explicitly pinned ({lobby.Act1})");
                 break;
             case ActVariantVoteResolver.BailReason.PoolDegenerate:
-                TiLog.Info("[SlayTheStreamer2][act-variant-vote] degenerate pool; bailing to vanilla");
+                TiLog.Info("[SlayTheStreamer2][act-variant-vote] skipping vote — degenerate candidate pool");
                 break;
         }
         Interlocked.Exchange(ref _voteInProgress, 0);
     }
 
     private static bool PrefixContinue(
-            StartRunLobby instance,
-            string seed,
-            List<ModifierModel> modifiers,
+            object screen,
+            MethodInfo onEmbarkMethod,
+            StartRunLobby lobby,
             IReadOnlyList<ActVariantOption> candidates,
             VoteCoordinator coordinator) {
 
-        // Defensive modifier copy so the resumed run is deterministic against
-        // any UI mutation during the 30s vote window.
-        var capturedModifiers = modifiers.ToList();
-
-        // Build an Rng from the seed for BackgroundAssets layer-picking.
-        // Mirror vanilla's StartRunLobby pattern (StartRunLobby.cs:410):
-        //   Rng rng = new Rng((uint)StringHelper.GetDeterministicHashCode(seed));
-        // We salt with a slice-specific suffix so picks don't collide with vanilla.
-        var rng = new Rng((uint)StringHelper.GetDeterministicHashCode(seed + "-act-variant-vote"));
+        // Non-deterministic RNG for BackgroundAssets layer-picking (cosmetic —
+        // chooses which variant of bg/fg layer scenes to preview). Vanilla
+        // normally seeds layer picks from the run seed inside BeginRunLocally,
+        // but that seed doesn't exist yet at OnEmbarkPressed-time. Random
+        // per-vote layer choice is fine for a 30-second preview.
+        var rng = new Rng((uint)System.Environment.TickCount);
 
         // Pre-warm full layered backdrop scenes for both variants.
         var prewarm = PreWarmAssets(
@@ -211,12 +272,12 @@ internal static partial class ActVariantVotePatch {
                 mode: prewarm.Mode,
                 session: session,
                 dispatcher: coordinator.Dispatcher,
-                shouldCancel: () => IsRunStartAbandoned(instance),
+                shouldCancel: IsRunStartAbandoned,
                 onUserAbandoned: () => Interlocked.Exchange(ref pending.Cancelled, 1),
                 isOccludingOverlayVisible: IsOccludingOverlayVisible);
             coordinator.Dispatcher.Post(() => popup.Open());
 
-            _ = HandleVoteAsync(instance, seed, capturedModifiers, session, candidates, coordinator, pending);
+            _ = HandleVoteAsync(screen, onEmbarkMethod, lobby, session, candidates, coordinator, pending);
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][act-variant-vote] PrefixContinue threw; cancelling started session", ex);
             try { session?.Cancel(); } catch { /* swallow */ }
@@ -242,20 +303,18 @@ internal static partial class ActVariantVotePatch {
         }
     }
 
-    private static bool IsRunStartAbandoned(StartRunLobby instance) {
-        // Spike #4 attempted to identify a probe via NGame.RootSceneContainer.CurrentScene,
-        // but character-select sits as a submenu of NMainMenu, so CurrentScene stays
-        // NMainMenu throughout the vote. There's no clean "navigated back" signal at
-        // run-start; the popup's ESC handler (Task 11) is the primary cancellation path.
-        // Returning false means the popup's _Process poll never fires the cancel path;
-        // only ESC (or game shutdown) cancels.
+    private static bool IsRunStartAbandoned() {
+        // Popup ESC handler is the primary cancel path. No useful "navigated
+        // away" probe at run-start — both screens sit as a submenu of NMainMenu
+        // throughout the vote. Reserved here for parity with BossVotePopup's
+        // plumbing; always returns false.
         return false;
     }
 
     private static async Task HandleVoteAsync(
-            StartRunLobby instance,
-            string seed,
-            List<ModifierModel> capturedModifiers,
+            object screen,
+            MethodInfo onEmbarkMethod,
+            StartRunLobby lobby,
             VoteSession session,
             IReadOnlyList<ActVariantOption> candidates,
             VoteCoordinator coordinator,
@@ -267,6 +326,12 @@ internal static partial class ActVariantVotePatch {
             try {
                 int idx = await session.AwaitWinnerAsync();
                 if (idx >= 0 && idx < candidates.Count) winnerIndex = idx;
+            } catch (OperationCanceledException) {
+                // Expected when the popup cancels the session (ESC, shutdown).
+                // VoteSession.Cancel() propagates cancellation through the
+                // TaskCompletionSource the await is observing — log at Debug,
+                // not Error.
+                TiLog.Debug("[SlayTheStreamer2][act-variant-vote] AwaitWinnerAsync cancelled (expected on user abandon)");
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][act-variant-vote] AwaitWinnerAsync threw", ex);
             }
@@ -285,15 +350,15 @@ internal static partial class ActVariantVotePatch {
                 winnerKey = ActVariantVoteResolver.ResolveWinnerKey(candidates, winnerIndex);
             }
 
-            TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: winnerKey={winnerKey} (cancelled={cancelled}, noVotes={noVotes}, seed={seed})");
+            TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: winnerKey={winnerKey} (cancelled={cancelled}, noVotes={noVotes})");
 
             coordinator.Dispatcher.Post(() =>
-                ResumeOnMainThread(instance, seed, capturedModifiers, winnerKey, cancelled));
+                ResumeOnMainThread(screen, onEmbarkMethod, lobby, winnerKey, cancelled));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][act-variant-vote] HandleVoteAsync threw; fallback resume", ex);
             try {
                 coordinator.Dispatcher.Post(() =>
-                    ResumeOnMainThread(instance, seed, capturedModifiers, ActVariantVoteResolver.RandomActKey, cancelled: true));
+                    ResumeOnMainThread(screen, onEmbarkMethod, lobby, ActVariantVoteResolver.RandomActKey, cancelled: true));
             } catch (Exception postEx) {
                 TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback Post threw; resetting flags", postEx);
                 Interlocked.Exchange(ref _resumeInProgress, 0);
@@ -303,45 +368,43 @@ internal static partial class ActVariantVotePatch {
     }
 
     private static void ResumeOnMainThread(
-            StartRunLobby instance,
-            string seed,
-            List<ModifierModel> capturedModifiers,
+            object screen,
+            MethodInfo onEmbarkMethod,
+            StartRunLobby lobby,
             string winnerKey,
             bool cancelled) {
         Interlocked.Exchange(ref _resumeInProgress, 1);
         string? previousAct1 = null;
         try {
             if (cancelled) {
-                TiLog.Info("[SlayTheStreamer2][act-variant-vote] resume: vote cancelled; aborting without re-invoke");
+                // Clean no-op: vanilla OnEmbarkPressed never ran, so the lobby
+                // UI is still in pre-click state (embark/back/character buttons
+                // all enabled, lobby not SetReady). Just send the receipt and
+                // release flags via finally.
+                TiLog.Info("[SlayTheStreamer2][act-variant-vote] resume: vote cancelled; lobby UI untouched, no re-invoke");
                 SendCancellationReceipt();
                 return;
             }
 
-            previousAct1 = instance.Act1;
+            previousAct1 = lobby.Act1;
 
             if (!string.Equals(winnerKey, ActVariantVoteResolver.RandomActKey, StringComparison.Ordinal)) {
-                instance.Act1 = winnerKey;
-                TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: Act1 = {winnerKey} (previous: {previousAct1})");
-            }
-
-            var method = _beginRunLocallyMethod.Value;
-            if (method is null) {
-                TiLog.Error("[SlayTheStreamer2][act-variant-vote] _beginRunLocallyMethod is null; cannot re-invoke");
-                return;
+                lobby.Act1 = winnerKey;
+                TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: Lobby.Act1 = {winnerKey} (previous: {previousAct1})");
             }
 
             try {
-                method.Invoke(instance, new object?[] { seed, capturedModifiers });
+                // NButton arg is discarded inside vanilla's body — pass null.
+                // _resumeInProgress=1 (set above) ensures our prefix passes
+                // through on this synthetic re-entry.
+                onEmbarkMethod.Invoke(screen, new object?[] { (NButton?)null });
             } catch (TargetInvocationException tie) {
-                // Spike #2 verified BeginRunLocally is idempotent pre-line-411 (only
-                // Rng construction runs before the GetRandomList call). Fallback
-                // re-invoke with Act1=random is safe — won't double-create state.
                 TiLog.Error("[SlayTheStreamer2][act-variant-vote] re-invoke threw; attempting fallback with Act1=random",
                     tie.InnerException ?? tie);
                 winnerKey = ActVariantVoteResolver.RandomActKey;  // align with finally so restoration is consistent
                 try {
-                    instance.Act1 = ActVariantVoteResolver.RandomActKey;
-                    method.Invoke(instance, new object?[] { seed, capturedModifiers });
+                    lobby.Act1 = ActVariantVoteResolver.RandomActKey;
+                    onEmbarkMethod.Invoke(screen, new object?[] { (NButton?)null });
                 } catch (TargetInvocationException fallbackTie) {
                     TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke threw; player may be soft-locked",
                         fallbackTie.InnerException ?? fallbackTie);
@@ -356,7 +419,7 @@ internal static partial class ActVariantVotePatch {
         } finally {
             if (previousAct1 is not null
                     && !string.Equals(winnerKey, ActVariantVoteResolver.RandomActKey, StringComparison.Ordinal)) {
-                try { instance.Act1 = previousAct1; } catch { /* swallow */ }
+                try { lobby.Act1 = previousAct1; } catch { /* swallow */ }
             }
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);

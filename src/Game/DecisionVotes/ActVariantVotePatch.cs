@@ -4,17 +4,23 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rooms;
 using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Game.Ui;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
+using SlayTheStreamer2.Ti.Ui;
 using SlayTheStreamer2.Ti.Voting;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
@@ -96,7 +102,7 @@ internal static partial class ActVariantVotePatch {
                 settingsEnabled: GetVoteOnActVariantSetting(),
                 playerCount: playerCount,
                 chatState: chatState,
-                act1Value: __instance.Act1 ?? "random",
+                act1Value: __instance.Act1 ?? ActVariantVoteResolver.RandomActKey,
                 candidateCount: candidates.Count);
 
             if (reason is not ActVariantVoteResolver.BailReason.None) {
@@ -143,13 +149,210 @@ internal static partial class ActVariantVotePatch {
         Interlocked.Exchange(ref _voteInProgress, 0);
     }
 
-    // Stub — full implementation in Task 9.
     private static bool PrefixContinue(
-            StartRunLobby instance, string seed, List<ModifierModel> modifiers,
-            IReadOnlyList<ActVariantOption> candidates, VoteCoordinator coordinator) {
-        TiLog.Warn("[SlayTheStreamer2][act-variant-vote] PrefixContinue stub — falling through to vanilla (Task 9 implementation pending)");
-        Interlocked.Exchange(ref _voteInProgress, 0);
-        return true;
+            StartRunLobby instance,
+            string seed,
+            List<ModifierModel> modifiers,
+            IReadOnlyList<ActVariantOption> candidates,
+            VoteCoordinator coordinator) {
+
+        // Defensive modifier copy so the resumed run is deterministic against
+        // any UI mutation during the 30s vote window.
+        var capturedModifiers = modifiers.ToList();
+
+        // Build an Rng from the seed for BackgroundAssets layer-picking.
+        // Mirror vanilla's StartRunLobby pattern (StartRunLobby.cs:410):
+        //   Rng rng = new Rng((uint)StringHelper.GetDeterministicHashCode(seed));
+        // We salt with a slice-specific suffix so picks don't collide with vanilla.
+        var rng = new Rng((uint)StringHelper.GetDeterministicHashCode(seed + "-act-variant-vote"));
+
+        // Pre-warm full layered backdrop scenes for both variants.
+        var prewarm = PreWarmAssets(
+            candidates,
+            forceL3: GetForceL3PopupFallbackSetting(),
+            rng,
+            out BackgroundAssets?[] backgroundAssetsByCandidate);
+
+        // Build Func<Node>? factories per candidate. Null factories trigger
+        // popup L3 fallback for that column.
+        var factories = new Func<Node>?[candidates.Count];
+        for (int i = 0; i < candidates.Count; i++) {
+            var bg = backgroundAssetsByCandidate[i];
+            if (bg is null) continue;
+            // Capture bg in the closure.
+            var captured = bg;
+            factories[i] = () => NCombatBackground.Create(captured);
+        }
+
+        // Local-only pending state — NO static singleton.
+        var pending = new PendingActVariantVote();
+
+        // Custom formatReceipt callback: substitutes the no-votes close text
+        // AND side-channels pending.NoVotes for HandleVoteAsync.
+        Func<VoteSnapshot, ReceiptKind, string> formatReceipt = (snapshot, kind) =>
+            ActVariantReceiptFormatter.Format(snapshot, kind, () =>
+                Interlocked.Exchange(ref pending.NoVotes, 1));
+
+        VoteSession? session = null;
+        try {
+            var labels = candidates.Select(c => c.Title).ToList();
+            session = coordinator.Start(
+                label: "Act 1 variant",
+                options: labels,
+                duration: TimeSpan.FromSeconds(30),
+                receipts: null,
+                parsing: null,
+                formatReceipt: formatReceipt);
+
+            // TODO(task10): popup wiring. The popup will be parented to
+            // (Engine.GetMainLoop() as SceneTree).Root and take:
+            //   - candidates: IReadOnlyList<ActVariantOption>
+            //   - factories: IReadOnlyList<Func<Godot.Node>?>  (parallel to candidates)
+            //   - mode: prewarm.Mode
+            //   - session: VoteSession
+            //   - dispatcher: coordinator.Dispatcher
+            //   - shouldCancel: Func<bool> ()=>IsRunStartAbandoned(instance)
+            //   - onUserAbandoned: ()=>Interlocked.Exchange(ref pending.Cancelled, 1)
+            // Until Task 10 lands, votes complete silently — chat sees receipts
+            // but no on-screen UI. Vote outcomes still apply correctly.
+
+            _ = HandleVoteAsync(instance, seed, capturedModifiers, session, candidates, coordinator, pending);
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] PrefixContinue threw; cancelling started session", ex);
+            try { session?.Cancel(); } catch { /* swallow */ }
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+        return false;  // suspend vanilla
+    }
+
+    private static bool IsRunStartAbandoned(StartRunLobby instance) {
+        // Spike #4 attempted to identify a probe via NGame.RootSceneContainer.CurrentScene,
+        // but character-select sits as a submenu of NMainMenu, so CurrentScene stays
+        // NMainMenu throughout the vote. There's no clean "navigated back" signal at
+        // run-start; the popup's ESC handler (Task 11) is the primary cancellation path.
+        // Returning false means the popup's _Process poll never fires the cancel path;
+        // only ESC (or game shutdown) cancels.
+        return false;
+    }
+
+    private static async Task HandleVoteAsync(
+            StartRunLobby instance,
+            string seed,
+            List<ModifierModel> capturedModifiers,
+            VoteSession session,
+            IReadOnlyList<ActVariantOption> candidates,
+            VoteCoordinator coordinator,
+            PendingActVariantVote pending) {
+        try {
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+
+            int? winnerIndex = null;
+            try {
+                int idx = await session.AwaitWinnerAsync();
+                if (idx >= 0 && idx < candidates.Count) winnerIndex = idx;
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] AwaitWinnerAsync threw", ex);
+            }
+
+            bool cancelled = Volatile.Read(ref pending.Cancelled) == 1;
+            bool noVotes = Volatile.Read(ref pending.NoVotes) == 1;
+
+            string winnerKey;
+            if (cancelled) {
+                winnerKey = ActVariantVoteResolver.RandomActKey;
+            } else if (noVotes) {
+                winnerKey = ActVariantVoteResolver.RandomActKey;
+                // The custom no-votes receipt was already sent by formatReceipt
+                // callback during session.Close. No additional send needed.
+            } else {
+                winnerKey = ActVariantVoteResolver.ResolveWinnerKey(candidates, winnerIndex);
+            }
+
+            TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: winnerKey={winnerKey} (cancelled={cancelled}, noVotes={noVotes}, seed={seed})");
+
+            coordinator.Dispatcher.Post(() =>
+                ResumeOnMainThread(instance, seed, capturedModifiers, winnerKey, cancelled));
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] HandleVoteAsync threw; fallback resume", ex);
+            try {
+                coordinator.Dispatcher.Post(() =>
+                    ResumeOnMainThread(instance, seed, capturedModifiers, ActVariantVoteResolver.RandomActKey, cancelled: true));
+            } catch (Exception postEx) {
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback Post threw; resetting flags", postEx);
+                Interlocked.Exchange(ref _resumeInProgress, 0);
+                Interlocked.Exchange(ref _voteInProgress, 0);
+            }
+        }
+    }
+
+    private static void ResumeOnMainThread(
+            StartRunLobby instance,
+            string seed,
+            List<ModifierModel> capturedModifiers,
+            string winnerKey,
+            bool cancelled) {
+        Interlocked.Exchange(ref _resumeInProgress, 1);
+        string? previousAct1 = null;
+        try {
+            if (cancelled) {
+                TiLog.Info("[SlayTheStreamer2][act-variant-vote] resume: vote cancelled; aborting without re-invoke");
+                SendCancellationReceipt();
+                return;
+            }
+
+            previousAct1 = instance.Act1;
+
+            if (!string.Equals(winnerKey, ActVariantVoteResolver.RandomActKey, StringComparison.Ordinal)) {
+                instance.Act1 = winnerKey;
+                TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: Act1 = {winnerKey} (previous: {previousAct1})");
+            }
+
+            var method = _beginRunLocallyMethod.Value;
+            if (method is null) {
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] _beginRunLocallyMethod is null; cannot re-invoke");
+                return;
+            }
+
+            try {
+                method.Invoke(instance, new object?[] { seed, capturedModifiers });
+            } catch (TargetInvocationException tie) {
+                // Spike #2 verified BeginRunLocally is idempotent pre-line-411 (only
+                // Rng construction runs before the GetRandomList call). Fallback
+                // re-invoke with Act1=random is safe — won't double-create state.
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] re-invoke threw; attempting fallback with Act1=random",
+                    tie.InnerException ?? tie);
+                winnerKey = ActVariantVoteResolver.RandomActKey;  // align with finally so restoration is consistent
+                try {
+                    instance.Act1 = ActVariantVoteResolver.RandomActKey;
+                    method.Invoke(instance, new object?[] { seed, capturedModifiers });
+                } catch (TargetInvocationException fallbackTie) {
+                    TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke threw; player may be soft-locked",
+                        fallbackTie.InnerException ?? fallbackTie);
+                } catch (Exception fallbackEx) {
+                    TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke threw (non-reflection)", fallbackEx);
+                }
+            }
+        } catch (TargetInvocationException tie) {
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] resume threw (reflection)", tie.InnerException ?? tie);
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] resume threw", ex);
+        } finally {
+            if (previousAct1 is not null
+                    && !string.Equals(winnerKey, ActVariantVoteResolver.RandomActKey, StringComparison.Ordinal)) {
+                try { instance.Act1 = previousAct1; } catch { /* swallow */ }
+            }
+            Interlocked.Exchange(ref _resumeInProgress, 0);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+        }
+    }
+
+    private static void SendCancellationReceipt() {
+        var coordinator = Voter.Default;
+        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+        _ = coordinator.Chat.SendMessageAsync(
+            "Act 1 variant vote cancelled — run-start abandoned.",
+            OutgoingMessagePriority.Normal);
     }
 
     /// <summary>

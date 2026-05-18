@@ -11,6 +11,15 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 internal static class ActVariantVoteResolver {
 
     /// <summary>
+    /// Vanilla's StartRunLobby.GetAct decoder ordinal-matches "random" to
+    /// fall through to GetRandomList's coin-flip. We use this exact string
+    /// at multiple sites: ResolveWinnerKey's null/out-of-range return,
+    /// ShouldBail's act1Value compare, and ActVariantVotePatch's
+    /// fallback re-invoke. Centralized to eliminate typo divergence risk.
+    /// </summary>
+    internal const string RandomActKey = "random";
+
+    /// <summary>
     /// Per-variant fallback color constants used by ActVariantVoteResolver to
     /// populate FallbackColorHex on each ActVariantOption.
     ///
@@ -44,8 +53,8 @@ internal static class ActVariantVoteResolver {
     }
 
     internal static string ResolveWinnerKey(IReadOnlyList<ActVariantOption> options, int? winnerIndex) {
-        if (winnerIndex is null) return "random";
-        if (winnerIndex < 0 || winnerIndex >= options.Count) return "random";
+        if (winnerIndex is null) return RandomActKey;
+        if (winnerIndex < 0 || winnerIndex >= options.Count) return RandomActKey;
         return options[winnerIndex.Value].Key;
     }
 
@@ -78,7 +87,7 @@ internal static class ActVariantVoteResolver {
                 SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite or
                 SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadOnly))
             return BailReason.ChatUnreadable;
-        if (!string.Equals(act1Value, "random", System.StringComparison.Ordinal))
+        if (!string.Equals(act1Value, RandomActKey, System.StringComparison.Ordinal))
             return BailReason.Act1Pinned;
         if (candidateCount <= 1) return BailReason.PoolDegenerate;
         return BailReason.None;

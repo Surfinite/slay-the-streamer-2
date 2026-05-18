@@ -28,11 +28,17 @@ internal sealed partial class ActVariantVotePopup : Control {
     private readonly IMainThreadDispatcher _dispatcher;
     private readonly Func<bool> _shouldCancel;
     private readonly Action _onUserAbandoned;
+    private readonly Func<bool>? _isOccludingOverlayVisible;
 
     private CanvasLayer? _canvasLayer;
     private Label[] _tallyLabels = Array.Empty<Label>();
     private bool _userAbandoned;   // Task 11 will set this; declared here so the fields are stable
     private int _cachedTallyVersion = -1;   // -1 sentinel — first poll always updates labels
+
+    // Stored event handlers so we can unsubscribe. Lambdas inline at += time
+    // would be non-removable. Mirrors BossVotePopup.cs:82-83.
+    private EventHandler<VoteSession>? _closedHandler;
+    private EventHandler<VoteSession>? _cancelledHandler;
 
     private const int CanvasLayerIndex = 100;
     private const float BackdropAlpha = 0.6f;
@@ -44,7 +50,8 @@ internal sealed partial class ActVariantVotePopup : Control {
             VoteSession session,
             IMainThreadDispatcher dispatcher,
             Func<bool> shouldCancel,
-            Action onUserAbandoned) {
+            Action onUserAbandoned,
+            Func<bool>? isOccludingOverlayVisible = null) {
         _options = candidates ?? throw new ArgumentNullException(nameof(candidates));
         _factories = factories ?? throw new ArgumentNullException(nameof(factories));
         if (factories.Count != candidates.Count)
@@ -54,6 +61,7 @@ internal sealed partial class ActVariantVotePopup : Control {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _shouldCancel = shouldCancel ?? throw new ArgumentNullException(nameof(shouldCancel));
         _onUserAbandoned = onUserAbandoned ?? throw new ArgumentNullException(nameof(onUserAbandoned));
+        _isOccludingOverlayVisible = isOccludingOverlayVisible;
     }
 
     /// <summary>
@@ -76,7 +84,17 @@ internal sealed partial class ActVariantVotePopup : Control {
             // `this` as a child of the layer wires the lifecycle. Mirrors
             // BossVotePopup.Show() at BossVotePopup.cs:223.
             _canvasLayer.AddChild(this);
-            _session.Closed += OnClosed;
+            // Subscribe to BOTH terminal events: Closed fires on natural
+            // expiry (timer ran out), Cancelled fires on Cancel() (ESC, run
+            // shutdown). VoteSession does NOT fire Closed from Cancel — they
+            // are independent — so we'd leak the popup if we only listened
+            // to one. Marshal through dispatcher because Cancelled may fire
+            // from the chat-parser thread (on connection drop). Mirrors
+            // BossVotePopup.Show() at BossVotePopup.cs:217-220.
+            _closedHandler = (s, v) => _dispatcher.Post(() => SafeTeardown(s, v));
+            _cancelledHandler = (s, v) => _dispatcher.Post(() => SafeTeardown(s, v));
+            _session.Closed += _closedHandler;
+            _session.Cancelled += _cancelledHandler;
             TiLog.Debug($"[SlayTheStreamer2][act-variant-vote] popup opened (mode={_mode})");
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][act-variant-vote] popup Open threw", ex);
@@ -128,10 +146,19 @@ internal sealed partial class ActVariantVotePopup : Control {
             try {
                 var visual = factory!();
                 if (visual is not null) {
-                    if (visual is Control ctrl) {
-                        ctrl.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-                    }
-                    free.AddChild(visual);
+                    // Vanilla combat parents NCombatBackground under BgContainer, which is
+                    // a Center-anchored zero-size Control (combat_room.tscn:41 — anchors_preset=8
+                    // with cancelling offsets). The Layer_NN offsets inside the .tscn are
+                    // calibrated for that "origin at viewport center" frame, NOT
+                    // "origin at top-left". Anchoring the visual to FullRect (a top-left frame)
+                    // shifts the texture's center off-screen and clips most of it. Mirror
+                    // vanilla: wrap in a center-anchored bgHolder so the visual's (0,0) lands
+                    // at the column's visual center. ClipContents on the PanelContainer
+                    // belts texture overflow into the adjacent column.
+                    var bgHolder = new Control { MouseFilter = MouseFilterEnum.Ignore };
+                    bgHolder.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+                    free.AddChild(bgHolder);
+                    bgHolder.AddChild(visual);
                 } else {
                     TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] factory for {option.Key} returned null; degrading column to L3");
                     AddL3Fallback(free, option);
@@ -200,6 +227,19 @@ internal sealed partial class ActVariantVotePopup : Control {
     public override void _Process(double delta) {
         if (_userAbandoned) return;
 
+        // Yield the screen to an occluding overlay (e.g., the dev console) so it
+        // isn't covered by the popup. Vote machinery keeps running in the background.
+        // Mirrors BossVotePopup._Process at BossVotePopup.cs:335.
+        if (_canvasLayer is not null && _isOccludingOverlayVisible is not null) {
+            bool occluded = false;
+            try { occluded = _isOccludingOverlayVisible(); }
+            catch { /* probe must never crash _Process */ }
+            if (_canvasLayer.Visible == occluded) {
+                _canvasLayer.Visible = !occluded;
+            }
+            if (occluded) return;
+        }
+
         // Cancel polling.
         bool shouldCancel = false;
         try { shouldCancel = _shouldCancel(); }
@@ -233,6 +273,11 @@ internal sealed partial class ActVariantVotePopup : Control {
         // _Input fires BEFORE _UnhandledInput — guarantees popup gets ESC even
         // if a parent control would have consumed it. Per v3 spec S5.
         if (_userAbandoned) return;
+        // When an occluding overlay (dev console) is visible, the popup is hidden;
+        // pass ESC through to the overlay's own handler instead of cancelling the vote.
+        if (_isOccludingOverlayVisible is not null) {
+            try { if (_isOccludingOverlayVisible()) return; } catch { /* swallow */ }
+        }
         if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape }) {
             TryFireCancellation();
             try { GetViewport().SetInputAsHandled(); } catch { /* swallow */ }
@@ -251,10 +296,13 @@ internal sealed partial class ActVariantVotePopup : Control {
         }
     }
 
-    private void OnClosed(object? sender, VoteSession session) {
-        try {
-            _session.Closed -= OnClosed;
-        } catch { /* swallow */ }
+    private void SafeTeardown(object? sender, VoteSession session) {
+        // Idempotent: both Closed and Cancelled call this; whichever fires
+        // first does the unsubscribe + QueueFree, the second is a no-op.
+        try { if (_closedHandler is not null) _session.Closed -= _closedHandler; } catch { /* swallow */ }
+        try { if (_cancelledHandler is not null) _session.Cancelled -= _cancelledHandler; } catch { /* swallow */ }
+        _closedHandler = null;
+        _cancelledHandler = null;
         if (_canvasLayer is not null && GodotObject.IsInstanceValid(_canvasLayer)) {
             _canvasLayer.QueueFree();
             _canvasLayer = null;

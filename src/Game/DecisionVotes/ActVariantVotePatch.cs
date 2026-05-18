@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Random;
@@ -211,7 +212,8 @@ internal static partial class ActVariantVotePatch {
                 session: session,
                 dispatcher: coordinator.Dispatcher,
                 shouldCancel: () => IsRunStartAbandoned(instance),
-                onUserAbandoned: () => Interlocked.Exchange(ref pending.Cancelled, 1));
+                onUserAbandoned: () => Interlocked.Exchange(ref pending.Cancelled, 1),
+                isOccludingOverlayVisible: IsOccludingOverlayVisible);
             coordinator.Dispatcher.Post(() => popup.Open());
 
             _ = HandleVoteAsync(instance, seed, capturedModifiers, session, candidates, coordinator, pending);
@@ -222,6 +224,22 @@ internal static partial class ActVariantVotePatch {
             return true;
         }
         return false;  // suspend vanilla
+    }
+
+    /// <summary>
+    /// Probe passed to ActVariantVotePopup so the popup hides itself while the
+    /// dev console (or other vanilla overlay we don't want to cover) is up.
+    /// At run-start, NRun.Instance is null until BeginRunLocally completes, so
+    /// the submenu-stack arm BossVotePatch uses isn't relevant here — only
+    /// NDevConsole is. Mirrors BossVotePatch.IsOccludingOverlayVisible's defensive
+    /// shape so future code can fold in pause-menu detection without rework.
+    /// </summary>
+    private static bool IsOccludingOverlayVisible() {
+        try {
+            return NDevConsole.Instance?.Visible ?? false;
+        } catch {
+            return false;
+        }
     }
 
     private static bool IsRunStartAbandoned(StartRunLobby instance) {

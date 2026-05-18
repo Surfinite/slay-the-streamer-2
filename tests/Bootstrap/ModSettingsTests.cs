@@ -375,6 +375,92 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- voteOnActVariant + forceL3PopupFallback (B.3.2 act-variant vote toggles) ---
+
+    [Fact]
+    public void Load_VoteOnActVariantAndForceL3Missing_UseDefaults() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.VoteOnActVariant);
+            Assert.False(success.Settings.ForceL3PopupFallback);
+            Assert.DoesNotContain(success.Warnings, w => w.Contains("voteOnActVariant"));
+            Assert.DoesNotContain(success.Warnings, w => w.Contains("forceL3PopupFallback"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_VoteOnActVariantFalse_Parses() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "voteOnActVariant": false
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.VoteOnActVariant);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ForceL3PopupFallbackTrue_Parses() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "forceL3PopupFallback": true
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.ForceL3PopupFallback);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_VoteOnActVariantNotBool_WarnsAndUsesDefault() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "voteOnActVariant": "yes"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.VoteOnActVariant);   // default
+            Assert.Contains(success.Warnings, w => w.Contains("voteOnActVariant"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ForceL3PopupFallbackNotBool_WarnsAndUsesDefault() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "forceL3PopupFallback": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.ForceL3PopupFallback);   // default
+            Assert.Contains(success.Warnings, w => w.Contains("forceL3PopupFallback"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

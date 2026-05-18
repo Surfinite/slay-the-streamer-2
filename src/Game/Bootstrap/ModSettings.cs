@@ -7,7 +7,13 @@ using SlayTheStreamer2.Ti.Chat;
 
 namespace SlayTheStreamer2.Game.Bootstrap;
 
-public sealed record ChatSettings(string Channel, ChatCredentials Credentials, int CardSkipsPerAct, string? YoutubeChannelId);
+public sealed record ChatSettings(
+    string Channel,
+    ChatCredentials Credentials,
+    int CardSkipsPerAct,
+    string? YoutubeChannelId,
+    bool VoteOnActVariant = true,
+    bool ForceL3PopupFallback = false);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -107,8 +113,24 @@ public static class ModSettings {
                 }
             }
 
+            bool voteOnActVariant = true;
+            if (root.TryGetProperty("voteOnActVariant", out var voteActProp)) {
+                if (voteActProp.ValueKind == JsonValueKind.True) voteOnActVariant = true;
+                else if (voteActProp.ValueKind == JsonValueKind.False) voteOnActVariant = false;
+                else warnings.Add("voteOnActVariant is not a boolean; using default (true)");
+            }
+
+            bool forceL3PopupFallback = false;
+            if (root.TryGetProperty("forceL3PopupFallback", out var forceL3Prop)) {
+                if (forceL3Prop.ValueKind == JsonValueKind.True) forceL3PopupFallback = true;
+                else if (forceL3Prop.ValueKind == JsonValueKind.False) forceL3PopupFallback = false;
+                else warnings.Add("forceL3PopupFallback is not a boolean; using default (false)");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
-            return new SettingsResult.Success(new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId), warnings);
+            return new SettingsResult.Success(
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback),
+                warnings);
         }
     }
 

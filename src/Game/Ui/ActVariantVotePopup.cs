@@ -32,8 +32,10 @@ internal sealed partial class ActVariantVotePopup : Control {
 
     private CanvasLayer? _canvasLayer;
     private Label[] _tallyLabels = Array.Empty<Label>();
+    private Label? _timerLabel;
     private bool _userAbandoned;   // Task 11 will set this; declared here so the fields are stable
     private int _cachedTallyVersion = -1;   // -1 sentinel — first poll always updates labels
+    private int _cachedSecondsLeft = -1;
 
     // Stored event handlers so we can unsubscribe. Lambdas inline at += time
     // would be non-removable. Mirrors BossVotePopup.cs:82-83.
@@ -42,6 +44,17 @@ internal sealed partial class ActVariantVotePopup : Control {
 
     private const int CanvasLayerIndex = 100;
     private const float BackdropAlpha = 0.6f;
+
+    // Vanilla act-banner styling (decompiled/sts2-assets/scenes/ui/act_banner.tscn).
+    // Kept as field-style constants so the values are easy to spot-check against
+    // a fresh decompile after a game update.
+    private const string TitleFontPath = "res://themes/spectral_bold_shared.tres";
+    private const string ActNumberFontPath = "res://themes/kreon_regular_glyph_space_one.tres";
+    private static readonly Color TitleColor = new(0.937f, 0.784f, 0.318f, 1f);    // gold
+    private static readonly Color ActNumberColor = new(0.529f, 0.808f, 0.921f, 1f); // light blue
+    private static readonly Color BannerStripColor = new(0f, 0f, 0f, 0.25f);
+    private const float BannerAnchorTop = 0.398f;
+    private const float BannerAnchorBottom = 0.583f;
 
     public ActVariantVotePopup(
             IReadOnlyList<ActVariantOption> candidates,
@@ -123,7 +136,28 @@ internal sealed partial class ActVariantVotePopup : Control {
             hbox.AddChild(column);
         }
 
+        // Countdown timer — full-screen-centered text positioned just above the
+        // banner strip, occupying the same on-screen slot the vanilla act banner
+        // uses for its "Act N" label. Styled to match (Kreon Regular, light blue).
+        _timerLabel = new Label {
+            Text = FormatTimer(_session.TimeRemaining),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        _timerLabel.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+        _timerLabel.OffsetLeft = -200;
+        _timerLabel.OffsetRight = 200;
+        _timerLabel.OffsetTop = -100;
+        _timerLabel.OffsetBottom = -46;
+        ApplyActNumberTheme(_timerLabel);
+        layer.AddChild(_timerLabel);
+
         return layer;
+    }
+
+    private static string FormatTimer(TimeSpan remaining) {
+        return $"{Math.Max(0, (int)remaining.TotalSeconds)}s left";
     }
 
     private PanelContainer BuildColumn(ActVariantOption option, Func<Node>? factory, int columnIndex) {
@@ -171,6 +205,12 @@ internal sealed partial class ActVariantVotePopup : Control {
             AddL3Fallback(free, option);
         }
 
+        // Banner — dim horizontal strip (full column width) + gold title text,
+        // styled to mirror vanilla act_banner.tscn. Per-column strips appear
+        // continuous across the screen seam because they're aligned vertically
+        // and have no horizontal padding.
+        AddBanner(free, option.Title);
+
         // Tally label — text is updated by _Process tally-version polling.
         var tally = new Label {
             Text = $"#{option.Index} — 0 votes",
@@ -193,18 +233,67 @@ internal sealed partial class ActVariantVotePopup : Control {
         };
         rect.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         parent.AddChild(rect);
+    }
 
-        var title = new Label {
-            Text = option.Title,
+    private static void AddBanner(Control parent, string title) {
+        // Dim horizontal strip — matches vanilla act_banner.tscn's Banner ColorRect
+        // (modulate 0,0,0,0.25 spanning ~39.8%–58.3% of viewport height).
+        var strip = new ColorRect {
+            Color = BannerStripColor,
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        strip.AnchorLeft = 0;
+        strip.AnchorRight = 1;
+        strip.AnchorTop = BannerAnchorTop;
+        strip.AnchorBottom = BannerAnchorBottom;
+        strip.OffsetLeft = 0;
+        strip.OffsetRight = 0;
+        strip.OffsetTop = 0;
+        strip.OffsetBottom = 0;
+        parent.AddChild(strip);
+
+        // Title text — Spectral Bold + StS2's gold, centered in the strip.
+        var label = new Label {
+            Text = title,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = MouseFilterEnum.Ignore,
         };
-        title.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
-        title.OffsetLeft = -200;
-        title.OffsetRight = 200;
-        title.OffsetTop = -30;
-        title.OffsetBottom = 30;
-        parent.AddChild(title);
+        label.AnchorLeft = 0;
+        label.AnchorRight = 1;
+        label.AnchorTop = BannerAnchorTop;
+        label.AnchorBottom = BannerAnchorBottom;
+        label.OffsetLeft = 0;
+        label.OffsetRight = 0;
+        label.OffsetTop = 0;
+        label.OffsetBottom = 0;
+        ApplyTitleTheme(label);
+        parent.AddChild(label);
+    }
+
+    private static void ApplyTitleTheme(Label label) {
+        // Mirror vanilla act_banner.tscn _actName styling. Font size scaled down
+        // from vanilla's 120 to 80 — each column is half-screen wide, so 120
+        // would overflow on narrow windows.
+        var font = ResourceLoader.Load<Font>(TitleFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", TitleColor);
+        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.05f));
+        label.AddThemeConstantOverride("shadow_offset_x", 4);
+        label.AddThemeConstantOverride("shadow_offset_y", 3);
+        label.AddThemeFontSizeOverride("font_size", 80);
+    }
+
+    private static void ApplyActNumberTheme(Label label) {
+        // Mirror vanilla act_banner.tscn _actNumber styling. Used here for the
+        // countdown timer to keep it visually consistent with the gold title.
+        var font = ResourceLoader.Load<Font>(ActNumberFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", ActNumberColor);
+        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.05f));
+        label.AddThemeConstantOverride("shadow_offset_x", 3);
+        label.AddThemeConstantOverride("shadow_offset_y", 2);
+        label.AddThemeFontSizeOverride("font_size", 40);
     }
 
     private static Color ParseHex(string rrggbb) {
@@ -265,6 +354,15 @@ internal sealed partial class ActVariantVotePopup : Control {
                 }
             } catch (Exception ex) {
                 TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] tally update threw: {ex.Message}");
+            }
+        }
+
+        // Countdown timer polling.
+        if (_timerLabel is not null) {
+            int secondsLeft = Math.Max(0, (int)_session.TimeRemaining.TotalSeconds);
+            if (secondsLeft != _cachedSecondsLeft) {
+                _cachedSecondsLeft = secondsLeft;
+                _timerLabel.Text = $"{secondsLeft}s left";
             }
         }
     }

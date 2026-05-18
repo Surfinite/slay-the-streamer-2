@@ -68,4 +68,39 @@ internal static class ActVariantVoteResolver {
         if (winnerIndex < 0 || winnerIndex >= options.Count) return "random";
         return options[winnerIndex.Value].Key;
     }
+
+    /// <summary>
+    /// Bail reasons returnable as pure-function output. Atomic-acquire bails
+    /// (ResumeInProgress, VoteInProgress) are intentionally NOT in this enum —
+    /// they have Interlocked.CompareExchange semantics that pure functions
+    /// cannot replicate. Those bails are handled inline in
+    /// ActVariantVotePatch.Prefix and verified by operator-validation
+    /// Gates 7 (spam-Embark) and 12 (Embark→ESC→Embark cycle).
+    /// </summary>
+    internal enum BailReason {
+        None,
+        SettingsOff,
+        Multiplayer,
+        ChatUnreadable,
+        Act1Pinned,
+        PoolDegenerate,
+    }
+
+    internal static BailReason ShouldBail(
+            bool settingsEnabled,
+            int playerCount,
+            SlayTheStreamer2.Ti.Chat.ChatConnectionState chatState,
+            string act1Value,
+            int candidateCount) {
+        if (!settingsEnabled) return BailReason.SettingsOff;
+        if (playerCount > 1) return BailReason.Multiplayer;
+        if (chatState is not (
+                SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite or
+                SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadOnly))
+            return BailReason.ChatUnreadable;
+        if (!string.Equals(act1Value, "random", System.StringComparison.Ordinal))
+            return BailReason.Act1Pinned;
+        if (candidateCount <= 1) return BailReason.PoolDegenerate;
+        return BailReason.None;
+    }
 }

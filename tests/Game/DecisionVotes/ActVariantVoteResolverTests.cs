@@ -67,4 +67,105 @@ public sealed class ActVariantVoteResolverTests {
         var candidates = ActVariantVoteResolver.BuildCandidates();
         Assert.Equal("random", ActVariantVoteResolver.ResolveWinnerKey(candidates, idx));
     }
+
+    [Fact]
+    public void ShouldBail_none_when_all_inputs_healthy() {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 1,
+            chatState: SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite,
+            act1Value: "random",
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.None, reason);
+    }
+
+    [Fact]
+    public void ShouldBail_settings_off_returns_SettingsOff() {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: false,
+            playerCount: 1,
+            chatState: SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite,
+            act1Value: "random",
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.SettingsOff, reason);
+    }
+
+    [Fact]
+    public void ShouldBail_multiplayer_returns_Multiplayer() {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 2,
+            chatState: SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite,
+            act1Value: "random",
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.Multiplayer, reason);
+    }
+
+    [Theory]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.Disconnected)]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.Connecting)]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.Reconnecting)]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.AuthenticationFailed)]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.JoinFailed)]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.Disposed)]
+    public void ShouldBail_chat_unreadable_returns_ChatUnreadable(SlayTheStreamer2.Ti.Chat.ChatConnectionState state) {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 1,
+            chatState: state,
+            act1Value: "random",
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.ChatUnreadable, reason);
+    }
+
+    [Theory]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite)]
+    [InlineData(SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadOnly)]
+    public void ShouldBail_chat_readable_passes_to_next_check(SlayTheStreamer2.Ti.Chat.ChatConnectionState state) {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 1,
+            chatState: state,
+            act1Value: "random",
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.None, reason);
+    }
+
+    [Theory]
+    [InlineData("overgrowth")]
+    [InlineData("underdocks")]
+    [InlineData("anything-not-random")]
+    public void ShouldBail_act1_pinned_returns_Act1Pinned(string act1) {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 1,
+            chatState: SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite,
+            act1Value: act1,
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.Act1Pinned, reason);
+    }
+
+    [Fact]
+    public void ShouldBail_act1_pinned_uses_ordinal_comparison() {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 1,
+            chatState: SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite,
+            act1Value: "RANDOM",
+            candidateCount: 2);
+        Assert.Equal(ActVariantVoteResolver.BailReason.Act1Pinned, reason);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void ShouldBail_pool_degenerate_returns_PoolDegenerate(int count) {
+        var reason = ActVariantVoteResolver.ShouldBail(
+            settingsEnabled: true,
+            playerCount: 1,
+            chatState: SlayTheStreamer2.Ti.Chat.ChatConnectionState.ConnectedReadWrite,
+            act1Value: "random",
+            candidateCount: count);
+        Assert.Equal(ActVariantVoteResolver.BailReason.PoolDegenerate, reason);
+    }
 }

@@ -1,0 +1,202 @@
+using System;
+using System.Collections.Generic;
+using Godot;
+using SlayTheStreamer2.Ti.Internal;
+using SlayTheStreamer2.Ti.Voting;
+
+namespace SlayTheStreamer2.Game.Ui;
+
+/// <summary>
+/// Vertical 50/50 split popup for the act-variant vote. Renders L1 (full
+/// layered combat backdrop scenes via injected factory closures) or L3
+/// (hex-color rects + title labels) based on the mode parameter from
+/// PreWarmAssets.
+///
+/// Fully MegaCrit-free at the public interface; the cancellation probe and
+/// no-votes side-channel are Func/Action callbacks injected from the patch
+/// (mirroring BossVotePopup's isOccludingOverlayVisible/isRunDying pattern).
+///
+/// Lifecycle (TallyChanged subscription, _Process polling, _Input ESC):
+/// landed in Task 11. This task wires Open() — construction + parent — only.
+/// </summary>
+internal sealed partial class ActVariantVotePopup : Control {
+    private readonly IReadOnlyList<ActVariantOption> _options;
+    private readonly IReadOnlyList<Func<Node>?> _factories;
+    private readonly ActVariantPopupMode _mode;
+    private readonly VoteSession _session;
+    private readonly IMainThreadDispatcher _dispatcher;
+    private readonly Func<bool> _shouldCancel;
+    private readonly Action _onUserAbandoned;
+
+    private CanvasLayer? _canvasLayer;
+    private Label[] _tallyLabels = Array.Empty<Label>();
+    private bool _userAbandoned;   // Task 11 will set this; declared here so the fields are stable
+
+    private const int CanvasLayerIndex = 100;
+    private const float BackdropAlpha = 0.6f;
+
+    public ActVariantVotePopup(
+            IReadOnlyList<ActVariantOption> candidates,
+            IReadOnlyList<Func<Node>?> factories,
+            ActVariantPopupMode mode,
+            VoteSession session,
+            IMainThreadDispatcher dispatcher,
+            Func<bool> shouldCancel,
+            Action onUserAbandoned) {
+        _options = candidates ?? throw new ArgumentNullException(nameof(candidates));
+        _factories = factories ?? throw new ArgumentNullException(nameof(factories));
+        if (factories.Count != candidates.Count)
+            throw new ArgumentException("factories must be parallel to candidates", nameof(factories));
+        _mode = mode;
+        _session = session ?? throw new ArgumentNullException(nameof(session));
+        _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _shouldCancel = shouldCancel ?? throw new ArgumentNullException(nameof(shouldCancel));
+        _onUserAbandoned = onUserAbandoned ?? throw new ArgumentNullException(nameof(onUserAbandoned));
+    }
+
+    /// <summary>
+    /// Builds the CanvasLayer tree and parents it to the gameplay-area
+    /// surface ((Engine.GetMainLoop() as SceneTree).Root, mirroring
+    /// BossVotePopup). Must be called on the Godot main thread.
+    /// </summary>
+    public void Open() {
+        try {
+            _canvasLayer = BuildNodeTree();
+            var sceneTree = Engine.GetMainLoop() as SceneTree;
+            if (sceneTree?.Root is null) {
+                TiLog.Error("[SlayTheStreamer2][act-variant-vote] popup Open: SceneTree.Root is null; cannot parent");
+                return;
+            }
+            sceneTree.Root.AddChild(_canvasLayer);
+            // Task 11: subscribe to _session.TallyChanged + _session.Closed,
+            // start _Process polling, install _Input ESC handler.
+            TiLog.Debug($"[SlayTheStreamer2][act-variant-vote] popup opened (mode={_mode})");
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] popup Open threw", ex);
+        }
+    }
+
+    private CanvasLayer BuildNodeTree() {
+        var layer = new CanvasLayer { Layer = CanvasLayerIndex };
+
+        var backdrop = new ColorRect {
+            Color = new Color(0f, 0f, 0f, BackdropAlpha),
+            MouseFilter = MouseFilterEnum.Stop,
+        };
+        backdrop.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        layer.AddChild(backdrop);
+
+        var hbox = new HBoxContainer();
+        hbox.AddThemeConstantOverride("separation", 0);
+        hbox.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        layer.AddChild(hbox);
+
+        _tallyLabels = new Label[_options.Count];
+
+        for (int i = 0; i < _options.Count; i++) {
+            var column = BuildColumn(_options[i], _factories[i], i);
+            hbox.AddChild(column);
+        }
+
+        return layer;
+    }
+
+    private PanelContainer BuildColumn(ActVariantOption option, Func<Node>? factory, int columnIndex) {
+        var column = new PanelContainer {
+            ClipContents = true,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+        };
+
+        // Free-positioning Control opts out of PanelContainer's sequential
+        // layout so overlay children (background, banner, tally) can stack
+        // freely.
+        var free = new Control { MouseFilter = MouseFilterEnum.Ignore };
+        free.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        column.AddChild(free);
+
+        bool useL1 = _mode == ActVariantPopupMode.L1Textures && factory is not null;
+
+        if (useL1) {
+            try {
+                var visual = factory!();
+                if (visual is not null) {
+                    if (visual is Control ctrl) {
+                        ctrl.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+                    }
+                    free.AddChild(visual);
+                } else {
+                    TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] factory for {option.Key} returned null; degrading column to L3");
+                    AddL3Fallback(free, option);
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] factory for {option.Key} threw; degrading column to L3: {ex.Message}");
+                AddL3Fallback(free, option);
+            }
+        } else {
+            AddL3Fallback(free, option);
+        }
+
+        // Tally label (Task 11 will subscribe to TallyChanged to update text).
+        var tally = new Label {
+            Text = $"#{option.Index} — 0 votes",
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        tally.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterBottom);
+        tally.OffsetTop = -80;
+        tally.OffsetLeft = -150;
+        tally.OffsetRight = 150;
+        free.AddChild(tally);
+        _tallyLabels[columnIndex] = tally;
+
+        return column;
+    }
+
+    private void AddL3Fallback(Control parent, ActVariantOption option) {
+        var rect = new ColorRect {
+            Color = ParseHex(option.FallbackColorHex),
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        rect.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        parent.AddChild(rect);
+
+        var title = new Label {
+            Text = option.Title,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        title.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+        title.OffsetLeft = -200;
+        title.OffsetRight = 200;
+        title.OffsetTop = -30;
+        title.OffsetBottom = 30;
+        parent.AddChild(title);
+    }
+
+    private static Color ParseHex(string rrggbb) {
+        // RRGGBB format only — no '#', no alpha. Per ActVariantOption doc.
+        if (string.IsNullOrEmpty(rrggbb) || rrggbb.Length != 6)
+            return new Color(0.5f, 0.5f, 0.5f, 1f);
+        try {
+            int r = Convert.ToInt32(rrggbb.Substring(0, 2), 16);
+            int g = Convert.ToInt32(rrggbb.Substring(2, 2), 16);
+            int b = Convert.ToInt32(rrggbb.Substring(4, 2), 16);
+            return new Color(r / 255f, g / 255f, b / 255f, 1f);
+        } catch {
+            return new Color(0.5f, 0.5f, 0.5f, 1f);
+        }
+    }
+
+    // Lifecycle stubs — Task 11 wires TallyChanged subscription, _Process
+    // cancellation polling, _Input ESC handling.
+
+    public override void _Process(double delta) {
+        // TODO(task11): poll _shouldCancel each frame, fire _onUserAbandoned
+        // and _session.Cancel on detection.
+    }
+
+    public override void _Input(InputEvent @event) {
+        // TODO(task11): intercept ESC, fire _onUserAbandoned + _session.Cancel,
+        // SetInputAsHandled.
+    }
+}

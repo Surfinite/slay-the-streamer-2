@@ -96,25 +96,27 @@ internal static class SettingsPanelBuilder {
         // dark transparent. HSlider's `slider` stylebox fills the full control
         // height, so we use a StyleBoxFlat with vertical ContentMargin to
         // visually constrain the dark band to a thin centred line.
+        const int SliderTrackBandHeight = 8;
+        const int SliderFillBandHeight  = 6;
         _sliderTrackStyle ??= new StyleBoxFlat {
             BgColor                 = new Color(0f, 0f, 0f, 0.361f),
-            CornerRadiusTopLeft     = 4,
-            CornerRadiusTopRight    = 4,
-            CornerRadiusBottomLeft  = 4,
-            CornerRadiusBottomRight = 4,
-            ContentMarginTop        = (SliderGrabberSize - 14) / 2f,
-            ContentMarginBottom     = (SliderGrabberSize - 14) / 2f,
+            CornerRadiusTopLeft     = 3,
+            CornerRadiusTopRight    = 3,
+            CornerRadiusBottomLeft  = 3,
+            CornerRadiusBottomRight = 3,
+            ContentMarginTop        = (SliderGrabberSize - SliderTrackBandHeight) / 2f,
+            ContentMarginBottom     = (SliderGrabberSize - SliderTrackBandHeight) / 2f,
         };
         // Vanilla teal-ish fill, thin band centred vertically. Same approach
         // as _sliderTrackStyle: StyleBoxFlat with corner radius for soft edges.
         _sliderFillStyle ??= new StyleBoxFlat {
             BgColor                 = new Color(0.361f, 0.451f, 0.459f, 1f),
-            CornerRadiusTopLeft     = 3,
-            CornerRadiusTopRight    = 3,
-            CornerRadiusBottomLeft  = 3,
-            CornerRadiusBottomRight = 3,
-            ContentMarginTop        = (SliderGrabberSize - 10) / 2f,
-            ContentMarginBottom     = (SliderGrabberSize - 10) / 2f,
+            CornerRadiusTopLeft     = 2,
+            CornerRadiusTopRight    = 2,
+            CornerRadiusBottomLeft  = 2,
+            CornerRadiusBottomRight = 2,
+            ContentMarginTop        = (SliderGrabberSize - SliderFillBandHeight) / 2f,
+            ContentMarginBottom     = (SliderGrabberSize - SliderFillBandHeight) / 2f,
         };
 
         var root = new VBoxContainer {

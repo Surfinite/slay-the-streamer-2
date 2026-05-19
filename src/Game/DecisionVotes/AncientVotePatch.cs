@@ -134,7 +134,10 @@ internal static class AncientVotePatch {
 
         VoteSession session;
         try {
-            session = coordinator.Start(GetVoteTitle(__instance), labels, TimeSpan.FromSeconds(30));
+            var settings = SlayTheStreamer2.Game.Bootstrap.ModSettings.Current;
+            var voteDuration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
+            var showTag = settings?.ShowVoteTag ?? false;
+            session = coordinator.Start(GetVoteTitle(__instance), labels, voteDuration, showTag);
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][ancient-vote] Voter.Default.Start threw; falling back to vanilla", ex);
             Interlocked.Exchange(ref _voteInProgress, 0);

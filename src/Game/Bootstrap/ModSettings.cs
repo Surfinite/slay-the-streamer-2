@@ -13,7 +13,8 @@ public sealed record ChatSettings(
     int CardSkipsPerAct,
     string? YoutubeChannelId,
     bool VoteOnActVariant = true,
-    bool ForceL3PopupFallback = false);
+    bool ForceL3PopupFallback = false,
+    int VoteDurationSeconds = 30);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -127,9 +128,24 @@ public static class ModSettings {
                 else warnings.Add("forceL3PopupFallback is not a boolean; using default (false)");
             }
 
+            int voteDurationSeconds = 30;
+            if (root.TryGetProperty("voteDurationSeconds", out var voteDurProp)) {
+                if (voteDurProp.ValueKind != JsonValueKind.Number || !voteDurProp.TryGetInt32(out var rawDur)) {
+                    warnings.Add("voteDurationSeconds is not an integer; using default (30)");
+                } else if (rawDur < 10) {
+                    warnings.Add($"voteDurationSeconds {rawDur} below minimum; clamped to 10");
+                    voteDurationSeconds = 10;
+                } else if (rawDur > 120) {
+                    warnings.Add($"voteDurationSeconds {rawDur} above maximum; clamped to 120");
+                    voteDurationSeconds = 120;
+                } else {
+                    voteDurationSeconds = rawDur;
+                }
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds),
                 warnings);
         }
     }

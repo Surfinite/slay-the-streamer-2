@@ -461,6 +461,79 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    [Fact]
+    public void Load_MissingVoteDurationSeconds_DefaultsTo30() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(30, success.Settings.VoteDurationSeconds);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_VoteDurationSeconds_ReadsExplicitValue() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "voteDurationSeconds": 60
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(60, success.Settings.VoteDurationSeconds);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_VoteDurationSeconds_BelowMin_ClampsAndWarns() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "voteDurationSeconds": 5
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(10, success.Settings.VoteDurationSeconds);
+            Assert.Contains(success.Warnings, w => w.Contains("voteDurationSeconds"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_VoteDurationSeconds_AboveMax_ClampsAndWarns() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "voteDurationSeconds": 500
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(120, success.Settings.VoteDurationSeconds);
+            Assert.Contains(success.Warnings, w => w.Contains("voteDurationSeconds"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

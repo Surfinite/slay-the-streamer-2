@@ -34,6 +34,9 @@ internal static class SettingsPanelBuilder {
     // layout-only and does not shrink the icon. We downscale the 64×64 atlas
     // textures to this size so the visible checkbox matches intent.
     private const int CheckboxIconSize = 40;
+    // Vanilla slider grabber is a 58×89 AtlasTexture (scrollbar_train_large.tres)
+    // rendered at ~45px in the full-size settings screen. Our compact panel uses 36px.
+    private const int SliderGrabberSize = 36;
 
     // Warm-white used for vanilla row labels.
     // From settings_screen.tscn: theme_override_colors/font_color for SliderValue
@@ -51,6 +54,12 @@ internal static class SettingsPanelBuilder {
     // Vanilla tickbox icons — AtlasTexture resources from ui_atlas_0.png (64×64 each).
     private const string TickboxCheckedPath   = "res://images/atlases/ui_atlas.sprites/checkbox_ticked.tres";
     private const string TickboxUncheckedPath = "res://images/atlases/ui_atlas.sprites/checkbox_unticked.tres";
+    // Vanilla slider resources — from volume_slider.tscn.
+    // Grabber: AtlasTexture (58×89) from ui_atlas_1.png. Track pieces: NinePatchRect
+    // textures used as StyleBoxTexture with their vanilla patch margins.
+    private const string SliderGrabberPath    = "res://images/atlases/ui_atlas.sprites/scrollbar_train_large.tres";
+    private const string SliderTrackBgPath    = "res://images/ui/combat/health_bar_bg.png";
+    private const string SliderTrackFillPath  = "res://images/ui/combat/health_bar.png";
 
     // Cached font references — loaded once, reused for every row.
     private static Font? _kreonRegular;
@@ -58,6 +67,10 @@ internal static class SettingsPanelBuilder {
     private static Texture2D? _buttonBg;
     private static Texture2D? _tickboxChecked;
     private static Texture2D? _tickboxUnchecked;
+    // Cached slider resources.
+    private static Texture2D? _sliderGrabber;
+    private static StyleBox?  _sliderTrackStyle;
+    private static StyleBox?  _sliderFillStyle;
 
     public static Control Build(ChatSettings current, SettingsSaveDebouncer debouncer) {
         // Load vanilla fonts; if resource loading fails we fall back to null
@@ -72,6 +85,36 @@ internal static class SettingsPanelBuilder {
         if (_tickboxUnchecked == null) {
             var raw = TryLoadTexture(TickboxUncheckedPath);
             _tickboxUnchecked = Downscale(raw, CheckboxIconSize) ?? raw;
+        }
+        if (_sliderGrabber == null) {
+            var raw = TryLoadTexture(SliderGrabberPath);
+            _sliderGrabber = Downscale(raw, SliderGrabberSize) ?? raw;
+        }
+        if (_sliderTrackStyle == null) {
+            var tex = TryLoadTexture(SliderTrackBgPath);
+            if (tex != null) {
+                // health_bar_bg.png used as NinePatchRect with patch_margin L=9 R=9
+                // in vanilla. Replicate as StyleBoxTexture so the track bar
+                // stretches correctly at any width.
+                var sb = new StyleBoxTexture { Texture = tex };
+                sb.SetTextureMargin(Side.Left,  9);
+                sb.SetTextureMargin(Side.Right, 9);
+                _sliderTrackStyle = sb;
+            }
+        }
+        if (_sliderFillStyle == null) {
+            var tex = TryLoadTexture(SliderTrackFillPath);
+            if (tex != null) {
+                // health_bar.png — vanilla tints with Color(0.36, 0.45, 0.46, 1).
+                // Applied as grabber_area (the filled-left portion of the track).
+                var sb = new StyleBoxTexture {
+                    Texture        = tex,
+                    ModulateColor  = new Color(0.361f, 0.451f, 0.459f, 1f),
+                };
+                sb.SetTextureMargin(Side.Left,  6);
+                sb.SetTextureMargin(Side.Right, 6);
+                _sliderFillStyle = sb;
+            }
         }
 
         var root = new VBoxContainer {
@@ -117,8 +160,18 @@ internal static class SettingsPanelBuilder {
             Value = current.VoteDurationSeconds,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical   = Control.SizeFlags.ShrinkCenter,
-            CustomMinimumSize   = new Vector2(0, 20),
+            CustomMinimumSize   = new Vector2(0, SliderGrabberSize),
         };
+        // Vanilla slider styling: NinePatch track stylebox + atlas grabber icon.
+        // Falls back to Godot defaults if any resource failed to load.
+        if (_sliderTrackStyle != null) slider.AddThemeStyleboxOverride("slider", _sliderTrackStyle);
+        if (_sliderFillStyle  != null) slider.AddThemeStyleboxOverride("grabber_area", _sliderFillStyle);
+        if (_sliderGrabber    != null) {
+            slider.AddThemeIconOverride("grabber",           _sliderGrabber);
+            slider.AddThemeIconOverride("grabber_highlight", _sliderGrabber);
+            slider.AddThemeIconOverride("grabber_disabled",  _sliderGrabber);
+        }
+        slider.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
 
         var badge = new Label {
             Text               = $"{current.VoteDurationSeconds}s",
@@ -155,6 +208,9 @@ internal static class SettingsPanelBuilder {
         // to fit the icon slot, which the CheckBox sizes to CustomMinimumSize.
         if (_tickboxChecked   != null) check.AddThemeIconOverride("checked",   _tickboxChecked);
         if (_tickboxUnchecked != null) check.AddThemeIconOverride("unchecked", _tickboxUnchecked);
+        // Suppress the white focus rectangle Godot draws on click; keep keyboard
+        // focus accessible but invisible.
+        check.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
         check.Toggled += pressed => onChange(pressed);
         inner.AddChild(check);
 
@@ -173,9 +229,10 @@ internal static class SettingsPanelBuilder {
         };
         if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
         dropdown.AddThemeFontSizeOverride("font_size", 22);
+        dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
 
         (string Label, int Value)[] entries = {
-            ("0 (strict)", 0),
+            ("0  (strict)", 0),
             ("1", 1),
             ("2", 2),
             ("3", 3),
@@ -220,6 +277,7 @@ internal static class SettingsPanelBuilder {
         };
 
         ApplyButtonStyle(openBtn);
+        openBtn.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
         openBtn.Pressed += () => RevealInExplorerAction.Open();
         var mc = new MarginContainer {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,

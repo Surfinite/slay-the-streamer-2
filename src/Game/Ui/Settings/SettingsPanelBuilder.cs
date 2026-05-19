@@ -29,7 +29,7 @@ internal static class SettingsPanelBuilder {
     // Vanilla settings row labels are font_size=28; ours are smaller because the
     // panel area is narrower. 22 fits well with the 52px row height.
     private const int RowFontSize  = 22;
-    private const int HelpFontSize = 14;
+    private const int HelpFontSize = 15;
 
     // Warm-white used for vanilla row labels.
     // From settings_screen.tscn: theme_override_colors/font_color for SliderValue
@@ -44,18 +44,25 @@ internal static class SettingsPanelBuilder {
     private const string KreonBoldPath     = "res://themes/kreon_bold_glyph_space_two.tres";
     // Button background image used by vanilla Credits / Feedback buttons.
     private const string ButtonBgPath      = "res://images/ui/reward_screen/reward_skip_button.png";
+    // Vanilla tickbox icons — AtlasTexture resources from ui_atlas_0.png (64×64 each).
+    private const string TickboxCheckedPath   = "res://images/atlases/ui_atlas.sprites/checkbox_ticked.tres";
+    private const string TickboxUncheckedPath = "res://images/atlases/ui_atlas.sprites/checkbox_unticked.tres";
 
     // Cached font references — loaded once, reused for every row.
     private static Font? _kreonRegular;
     private static Font? _kreonBold;
     private static Texture2D? _buttonBg;
+    private static Texture2D? _tickboxChecked;
+    private static Texture2D? _tickboxUnchecked;
 
     public static Control Build(ChatSettings current, SettingsSaveDebouncer debouncer) {
         // Load vanilla fonts; if resource loading fails we fall back to null
         // (Godot will use its default font, which is still legible).
-        _kreonRegular ??= TryLoadFont(KreonRegularPath);
-        _kreonBold    ??= TryLoadFont(KreonBoldPath);
-        _buttonBg     ??= TryLoadTexture(ButtonBgPath);
+        _kreonRegular     ??= TryLoadFont(KreonRegularPath);
+        _kreonBold        ??= TryLoadFont(KreonBoldPath);
+        _buttonBg         ??= TryLoadTexture(ButtonBgPath);
+        _tickboxChecked   ??= TryLoadTexture(TickboxCheckedPath);
+        _tickboxUnchecked ??= TryLoadTexture(TickboxUncheckedPath);
 
         var root = new VBoxContainer {
             Name = ModConstants.SettingsPanelNodeName,
@@ -73,9 +80,10 @@ internal static class SettingsPanelBuilder {
         AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
+        AddHelpText(root, "Displays and increments a tag for each vote, e.g.  [b][14][/b]\nChat can vote with [b]#0!14[/b] so delayed votes don't land in the wrong tally.\nCould be useful to combat lag on YT, (might just be confusing).");
         AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);
-        AddHelpText(root, "Card-reward skips per act (streamer). 0 = strict.");
+        AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
         AddDivider(root);
         AddFilePathRow(root);
 
@@ -132,6 +140,11 @@ internal static class SettingsPanelBuilder {
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
             CustomMinimumSize = new Vector2(40, 40),
         };
+        // Apply vanilla tickbox icons so the checkbox is the right size and clearly
+        // visible in both states. The atlas textures are 64×64; Godot scales them
+        // to fit the icon slot, which the CheckBox sizes to CustomMinimumSize.
+        if (_tickboxChecked   != null) check.AddThemeIconOverride("checked",   _tickboxChecked);
+        if (_tickboxUnchecked != null) check.AddThemeIconOverride("unchecked", _tickboxUnchecked);
         check.Toggled += pressed => onChange(pressed);
         inner.AddChild(check);
 
@@ -146,7 +159,7 @@ internal static class SettingsPanelBuilder {
 
         var dropdown = new OptionButton {
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            CustomMinimumSize = new Vector2(115, 44),
+            CustomMinimumSize = new Vector2(115, 0),
         };
         if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
         dropdown.AddThemeFontSizeOverride("font_size", 22);
@@ -186,27 +199,39 @@ internal static class SettingsPanelBuilder {
     }
 
     private static void AddFilePathRow(Container parent) {
-        var path = System.IO.Path.Combine(OS.GetUserDataDir(), ModConstants.SettingsFileName);
+        var path = System.IO.Path.Combine(OS.GetUserDataDir(), ModConstants.SettingsFileName).Replace('/', '\\');
+        // "Open folder" button styled like the vanilla Credits button:
+        // reward_skip_button.png background + Kreon bold label.
+
+
+        var openBtn = new Button {
+            Text              = "Open settings folder",
+            CustomMinimumSize = new Vector2(0, 48),
+        };
+
+        ApplyButtonStyle(openBtn);
+        openBtn.Pressed += () => RevealInExplorerAction.Open();
+        var mc = new MarginContainer {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        mc.AddThemeConstantOverride("margin_left",   0);
+        mc.AddThemeConstantOverride("margin_top",    18);
+        mc.AddThemeConstantOverride("margin_right",  0);
+        mc.AddThemeConstantOverride("margin_bottom", 0);
+        mc.AddChild(openBtn);
+        parent.AddChild(mc);
 
         var pathLbl = new Label {
-            Text                = $"Settings: {path}",
+            Text                = path,
             AutowrapMode        = TextServer.AutowrapMode.WordSmart,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            HorizontalAlignment = HorizontalAlignment.Center,
             CustomMinimumSize   = new Vector2(0, 20),
             Modulate            = HelpColor,
         };
         ApplyFont(pathLbl, _kreonRegular, HelpFontSize);
         parent.AddChild(pathLbl);
 
-        // "Open folder" button styled like the vanilla Credits button:
-        // reward_skip_button.png background + Kreon bold label.
-        var openBtn = new Button {
-            Text              = "Open settings folder",
-            CustomMinimumSize = new Vector2(0, 48),
-        };
-        ApplyButtonStyle(openBtn);
-        openBtn.Pressed += () => RevealInExplorerAction.Open();
-        parent.AddChild(openBtn);
     }
 
     // -------------------------------------------------------------------------
@@ -214,23 +239,30 @@ internal static class SettingsPanelBuilder {
     // -------------------------------------------------------------------------
 
     private static void AddHelpText(Container parent, string text) {
-        var lbl = new Label {
+
+        var lbl = new RichTextLabel {
             Text                = text,
+            BbcodeEnabled       = true,
+            FitContent          = true,
+            ScrollActive        = false,
             AutowrapMode        = TextServer.AutowrapMode.Word,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             Modulate            = HelpColor,
             CustomMinimumSize   = new Vector2(0, 20),
         };
-        ApplyFont(lbl, _kreonRegular, HelpFontSize);
 
-        // Inset left edge to match the row-label left margin (same 12px as MakeRow).
+        if (_kreonRegular != null) lbl.AddThemeFontOverride("normal_font", _kreonRegular);
+        if (_kreonBold    != null) lbl.AddThemeFontOverride("bold_font",   _kreonBold);
+        lbl.AddThemeFontSizeOverride("normal_font_size", HelpFontSize);
+        lbl.AddThemeFontSizeOverride("bold_font_size",   HelpFontSize);
+
         var mc = new MarginContainer {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
         mc.AddThemeConstantOverride("margin_left",   12);
-        mc.AddThemeConstantOverride("margin_top",    0);
-        mc.AddThemeConstantOverride("margin_right",  0);
-        mc.AddThemeConstantOverride("margin_bottom", 0);
+        mc.AddThemeConstantOverride("margin_top",    -15);
+        mc.AddThemeConstantOverride("margin_right",  130);
+        mc.AddThemeConstantOverride("margin_bottom", 12);
         mc.AddChild(lbl);
         parent.AddChild(mc);
     }

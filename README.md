@@ -127,6 +127,31 @@ ilspycmd "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_st
 See `notes/` for the running research log, hook-point inventory,
 and any open questions.
 
+## In-game settings UI
+
+Open the mod manager from the Settings screen and select **Slay the Streamer 2**. The right-hand panel now exposes:
+
+- **Vote duration** — 10–120s slider (default 30s)
+- **Vote on Act 1 variant** — toggle the Act-1 variant chat vote
+- **Allow chat to skip** — when on, chat votes `#0` to skip a card reward (cards become `#1`, `#2`, …); default on
+- **Show vote tag** — show the `[NN]`-style vote tag in chat receipts and the on-screen tally; default off for Twitch-only, on if YouTube is configured
+- **Card skips per act** — number of card-reward skips the **streamer** can use per act (0 / 1 / 2 / 3 / 5 / Unlimited)
+- **Settings file** — read-only path with an Open-folder button to reveal `%APPDATA%\SlayTheSpire2\` in Explorer
+
+Changes save automatically (debounced 500ms). The mod-manager screen is disabled mid-run; configure settings between runs.
+
+### JSON-only fields
+
+These stay in `%APPDATA%\SlayTheSpire2\slay_the_streamer_2.json` to avoid stream-side visibility:
+
+- `channel`, `username`, `oauthToken` — Twitch credentials
+- `youtubeChannelId` — optional YouTube channel ID
+- `schemaVersion`, `forceL3PopupFallback` — internal
+
+### Boss-vote and unlock state
+
+Slay the Streamer 2 was developed and tested on a modded save with all content unlocked. The boss vote samples from the act's full boss pool, so chat may vote for — and the run may end on — bosses you haven't unlocked through vanilla progression. This is the intended behaviour; chat gets the full pool to pick from. Boss unlocks come early in vanilla play, so this is rarely a lasting issue. If you want your boss codex / progression to match what chat is seeing in-run, open the dev console and run `unlock all` at any time.
+
 ## Licence
 
 [MIT](LICENSE) — do whatever you want with this code as long as the

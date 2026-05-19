@@ -534,6 +534,60 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    [Fact]
+    public void Load_MissingCardSkipAsVoteOption_DefaultsToTrue() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.CardSkipAsVoteOption);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipAsVoteOption_ReadsExplicitFalse() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cardSkipAsVoteOption": false
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.CardSkipAsVoteOption);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_CardSkipAsVoteOption_NonBoolean_WarnsAndDefaults() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1,
+            "channel": "x",
+            "username": "x",
+            "oauthToken": "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cardSkipAsVoteOption": "yes"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.CardSkipAsVoteOption);
+            Assert.Contains(success.Warnings, w => w.Contains("cardSkipAsVoteOption"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

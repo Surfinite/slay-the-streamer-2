@@ -148,7 +148,7 @@ internal static class SettingsPanelBuilder {
         var check = new CheckBox {
             ButtonPressed     = initial,
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            CustomMinimumSize = new Vector2(20, 20),
+            CustomMinimumSize = new Vector2(40, 40),
         };
         // Apply vanilla tickbox icons so the checkbox is the right size and clearly
         // visible in both states. The atlas textures are 64×64; Godot scales them
@@ -378,15 +378,30 @@ internal static class SettingsPanelBuilder {
 
     /// <summary>
     /// Returns a fresh ImageTexture at the target square size, lanczos-filtered.
-    /// Used to downscale vanilla's 64x64 atlas checkbox icons to a smaller size
-    /// so we can control visible checkbox dimensions (the CheckBox control draws
-    /// its icon at the texture's native size; CustomMinimumSize only affects layout).
+    /// Handles AtlasTexture explicitly because AtlasTexture.GetImage() returns the
+    /// full underlying atlas, not the cropped region. We crop to the region first,
+    /// then resize. Non-atlas textures use GetImage directly.
     /// </summary>
     private static Texture2D? Downscale(Texture2D? source, int targetPx) {
         if (source == null) return null;
-        var img = source.GetImage();
+
+        Image? img;
+        if (source is AtlasTexture atlas && atlas.Atlas != null) {
+            var atlasImg = atlas.Atlas.GetImage();
+            if (atlasImg == null) return null;
+            if (atlasImg.IsCompressed()) atlasImg.Decompress();
+            var region = atlas.Region;
+            var regionRect = new Rect2I(
+                (int)region.Position.X, (int)region.Position.Y,
+                (int)region.Size.X,     (int)region.Size.Y);
+            // Image.GetRegion returns a new Image containing just the cropped pixels.
+            img = atlasImg.GetRegion(regionRect);
+        } else {
+            img = source.GetImage();
+            if (img != null && img.IsCompressed()) img.Decompress();
+        }
+
         if (img == null) return null;
-        if (img.IsCompressed()) img.Decompress();
         img.Resize(targetPx, targetPx, Image.Interpolation.Lanczos);
         return ImageTexture.CreateFromImage(img);
     }

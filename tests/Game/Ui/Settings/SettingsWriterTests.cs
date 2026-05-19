@@ -74,4 +74,28 @@ public class SettingsWriterTests {
             if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
         }
     }
+
+    [Fact]
+    public void Write_OverExistingFile_CreatesBakCopyOfPriorContents() {
+        var path = TempPath();
+        var bak = path + ".bak";
+
+        try {
+            // First write — no prior file, no .bak created.
+            SettingsWriter.Write(path, MakeSettings(voteDur: 30));
+            Assert.False(File.Exists(bak));
+
+            // Second write — prior file existed, .bak should now contain the prior contents.
+            var priorContents = File.ReadAllText(path);
+            SettingsWriter.Write(path, MakeSettings(voteDur: 60));
+
+            Assert.True(File.Exists(bak));
+            Assert.Equal(priorContents, File.ReadAllText(bak));
+            Assert.Contains("\"voteDurationSeconds\": 60", File.ReadAllText(path));
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(bak)) File.Delete(bak);
+            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
+        }
+    }
 }

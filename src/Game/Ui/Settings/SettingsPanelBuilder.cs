@@ -28,8 +28,12 @@ namespace SlayTheStreamer2.Game.Ui.Settings;
 internal static class SettingsPanelBuilder {
     // Vanilla settings row labels are font_size=28; ours are smaller because the
     // panel area is narrower. 22 fits well with the 52px row height.
-    private const int RowFontSize  = 22;
-    private const int HelpFontSize = 15;
+    private const int RowFontSize      = 22;
+    private const int HelpFontSize     = 15;
+    // CheckBox draws icons at the texture's native size; CustomMinimumSize is
+    // layout-only and does not shrink the icon. We downscale the 64×64 atlas
+    // textures to this size so the visible checkbox matches intent.
+    private const int CheckboxIconSize = 40;
 
     // Warm-white used for vanilla row labels.
     // From settings_screen.tscn: theme_override_colors/font_color for SliderValue
@@ -61,8 +65,14 @@ internal static class SettingsPanelBuilder {
         _kreonRegular     ??= TryLoadFont(KreonRegularPath);
         _kreonBold        ??= TryLoadFont(KreonBoldPath);
         _buttonBg         ??= TryLoadTexture(ButtonBgPath);
-        _tickboxChecked   ??= TryLoadTexture(TickboxCheckedPath);
-        _tickboxUnchecked ??= TryLoadTexture(TickboxUncheckedPath);
+        if (_tickboxChecked == null) {
+            var raw = TryLoadTexture(TickboxCheckedPath);
+            _tickboxChecked = Downscale(raw, CheckboxIconSize) ?? raw;
+        }
+        if (_tickboxUnchecked == null) {
+            var raw = TryLoadTexture(TickboxUncheckedPath);
+            _tickboxUnchecked = Downscale(raw, CheckboxIconSize) ?? raw;
+        }
 
         var root = new VBoxContainer {
             Name = ModConstants.SettingsPanelNodeName,
@@ -138,7 +148,7 @@ internal static class SettingsPanelBuilder {
         var check = new CheckBox {
             ButtonPressed     = initial,
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            CustomMinimumSize = new Vector2(40, 40),
+            CustomMinimumSize = new Vector2(20, 20),
         };
         // Apply vanilla tickbox icons so the checkbox is the right size and clearly
         // visible in both states. The atlas textures are 64×64; Godot scales them
@@ -365,6 +375,21 @@ internal static class SettingsPanelBuilder {
     // -------------------------------------------------------------------------
     // Resource loading with graceful fallback
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Returns a fresh ImageTexture at the target square size, lanczos-filtered.
+    /// Used to downscale vanilla's 64x64 atlas checkbox icons to a smaller size
+    /// so we can control visible checkbox dimensions (the CheckBox control draws
+    /// its icon at the texture's native size; CustomMinimumSize only affects layout).
+    /// </summary>
+    private static Texture2D? Downscale(Texture2D? source, int targetPx) {
+        if (source == null) return null;
+        var img = source.GetImage();
+        if (img == null) return null;
+        if (img.IsCompressed()) img.Decompress();
+        img.Resize(targetPx, targetPx, Image.Interpolation.Lanczos);
+        return ImageTexture.CreateFromImage(img);
+    }
 
     private static Font? TryLoadFont(string resPath) {
         try {

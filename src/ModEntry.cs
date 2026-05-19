@@ -98,6 +98,7 @@ public static class ModEntry {
             switch (settingsResult) {
                 case SettingsResult.Success s:
                     settings = s.Settings;
+                    BootstrapModSettings.UpdateCurrent(settings);
                     Log.Info($"[SlayTheStreamer2] settings loaded; channel=#{settings.Channel}");
                     foreach (var w in s.Warnings) Log.Info($"[SlayTheStreamer2]   {w}");
                     break;

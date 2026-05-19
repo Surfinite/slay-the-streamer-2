@@ -54,12 +54,12 @@ internal static class SettingsPanelBuilder {
     // Vanilla tickbox icons — AtlasTexture resources from ui_atlas_0.png (64×64 each).
     private const string TickboxCheckedPath   = "res://images/atlases/ui_atlas.sprites/checkbox_ticked.tres";
     private const string TickboxUncheckedPath = "res://images/atlases/ui_atlas.sprites/checkbox_unticked.tres";
-    // Vanilla slider resources — from volume_slider.tscn.
-    // Grabber: AtlasTexture (58×89) from ui_atlas_1.png. Track pieces: NinePatchRect
-    // textures used as StyleBoxTexture with their vanilla patch margins.
+    // Vanilla slider grabber — AtlasTexture (58×89) from ui_atlas_1.png. Track + fill
+    // styleboxes are built from solid colours rather than vanilla's health_bar PNG
+    // NinePatch, because HSlider stretches the `slider` stylebox to fill the full
+    // control height; we use StyleBoxFlat with vertical ContentMargin to keep the
+    // visible band thin like vanilla. Colours match vanilla's self_modulate values.
     private const string SliderGrabberPath    = "res://images/atlases/ui_atlas.sprites/scrollbar_train_large.tres";
-    private const string SliderTrackBgPath    = "res://images/ui/combat/health_bar_bg.png";
-    private const string SliderTrackFillPath  = "res://images/ui/combat/health_bar.png";
 
     // Cached font references — loaded once, reused for every row.
     private static Font? _kreonRegular;
@@ -87,35 +87,35 @@ internal static class SettingsPanelBuilder {
             _tickboxUnchecked = Downscale(raw, CheckboxIconSize) ?? raw;
         }
         if (_sliderGrabber == null) {
+            // Preserve the 58:89 aspect ratio of vanilla's scrollbar_train_large
+            // grabber. Treat SliderGrabberSize as target HEIGHT; width auto-derives.
             var raw = TryLoadTexture(SliderGrabberPath);
-            _sliderGrabber = Downscale(raw, SliderGrabberSize) ?? raw;
+            _sliderGrabber = Downscale(raw, SliderGrabberSize, preserveAspect: true) ?? raw;
         }
-        if (_sliderTrackStyle == null) {
-            var tex = TryLoadTexture(SliderTrackBgPath);
-            if (tex != null) {
-                // health_bar_bg.png used as NinePatchRect with patch_margin L=9 R=9
-                // in vanilla. Replicate as StyleBoxTexture so the track bar
-                // stretches correctly at any width.
-                var sb = new StyleBoxTexture { Texture = tex };
-                sb.SetTextureMargin(Side.Left,  9);
-                sb.SetTextureMargin(Side.Right, 9);
-                _sliderTrackStyle = sb;
-            }
-        }
-        if (_sliderFillStyle == null) {
-            var tex = TryLoadTexture(SliderTrackFillPath);
-            if (tex != null) {
-                // health_bar.png — vanilla tints with Color(0.36, 0.45, 0.46, 1).
-                // Applied as grabber_area (the filled-left portion of the track).
-                var sb = new StyleBoxTexture {
-                    Texture        = tex,
-                    ModulateColor  = new Color(0.361f, 0.451f, 0.459f, 1f),
-                };
-                sb.SetTextureMargin(Side.Left,  6);
-                sb.SetTextureMargin(Side.Right, 6);
-                _sliderFillStyle = sb;
-            }
-        }
+        // Vanilla draws the track as a thin NinePatchRect child (h=15) tinted
+        // dark transparent. HSlider's `slider` stylebox fills the full control
+        // height, so we use a StyleBoxFlat with vertical ContentMargin to
+        // visually constrain the dark band to a thin centred line.
+        _sliderTrackStyle ??= new StyleBoxFlat {
+            BgColor                 = new Color(0f, 0f, 0f, 0.361f),
+            CornerRadiusTopLeft     = 4,
+            CornerRadiusTopRight    = 4,
+            CornerRadiusBottomLeft  = 4,
+            CornerRadiusBottomRight = 4,
+            ContentMarginTop        = (SliderGrabberSize - 14) / 2f,
+            ContentMarginBottom     = (SliderGrabberSize - 14) / 2f,
+        };
+        // Vanilla teal-ish fill, thin band centred vertically. Same approach
+        // as _sliderTrackStyle: StyleBoxFlat with corner radius for soft edges.
+        _sliderFillStyle ??= new StyleBoxFlat {
+            BgColor                 = new Color(0.361f, 0.451f, 0.459f, 1f),
+            CornerRadiusTopLeft     = 3,
+            CornerRadiusTopRight    = 3,
+            CornerRadiusBottomLeft  = 3,
+            CornerRadiusBottomRight = 3,
+            ContentMarginTop        = (SliderGrabberSize - 10) / 2f,
+            ContentMarginBottom     = (SliderGrabberSize - 10) / 2f,
+        };
 
         var root = new VBoxContainer {
             Name = ModConstants.SettingsPanelNodeName,
@@ -435,12 +435,16 @@ internal static class SettingsPanelBuilder {
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Returns a fresh ImageTexture at the target square size, lanczos-filtered.
+    /// Returns a fresh ImageTexture at the target size, lanczos-filtered.
     /// Handles AtlasTexture explicitly because AtlasTexture.GetImage() returns the
     /// full underlying atlas, not the cropped region. We crop to the region first,
     /// then resize. Non-atlas textures use GetImage directly.
+    ///
+    /// If <paramref name="preserveAspect"/> is true, <paramref name="targetPx"/> is
+    /// treated as the target HEIGHT; width is computed from the source aspect ratio.
+    /// Otherwise both dimensions are set to targetPx (square).
     /// </summary>
-    private static Texture2D? Downscale(Texture2D? source, int targetPx) {
+    private static Texture2D? Downscale(Texture2D? source, int targetPx, bool preserveAspect = false) {
         if (source == null) return null;
 
         Image? img;
@@ -460,7 +464,14 @@ internal static class SettingsPanelBuilder {
         }
 
         if (img == null) return null;
-        img.Resize(targetPx, targetPx, Image.Interpolation.Lanczos);
+        int targetW, targetH;
+        if (preserveAspect) {
+            targetH = targetPx;
+            targetW = System.Math.Max(1, (int)System.Math.Round(targetPx * (double)img.GetWidth() / img.GetHeight()));
+        } else {
+            targetW = targetH = targetPx;
+        }
+        img.Resize(targetW, targetH, Image.Interpolation.Lanczos);
         return ImageTexture.CreateFromImage(img);
     }
 

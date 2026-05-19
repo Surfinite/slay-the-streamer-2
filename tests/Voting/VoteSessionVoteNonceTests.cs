@@ -120,4 +120,16 @@ public class VoteSessionVoteNonceTests : VoteSessionTestBase {
 
         Assert.Contains("[04]", text);
     }
+
+    [Fact]
+    public void StaleNonceVote_IsDroppedEvenWhenShowTagFalse() {
+        // Build a session with ShowTag=false. Send a vote with stale nonce.
+        // Confirm tally stays empty: parser is defensive regardless of display.
+
+        var session = CreateSession(voteId: 42, showTag: false);
+        var staleNonce = (session.VoteId + 50) % 100;   // guaranteed not to match
+        InjectTwitchVoteText(session, userId: "u1", text: $"#0!{staleNonce:D2}");
+
+        Assert.Equal(0, session.Tallies[0]);
+    }
 }

@@ -24,7 +24,8 @@ public abstract class VoteSessionTestBase {
         VoteParsingPolicy? parsing = null,
         VoteReceiptPolicy? receipts = null,
         string[]? options = null,
-        IReadOnlyList<string>? configuredPlatforms = null) {
+        IReadOnlyList<string>? configuredPlatforms = null,
+        bool showTag = true) {
         // StartVote keeps the simple-substitute behaviour because no existing
         // tests rely on threading null through it.
         var opts = options ?? new[] { "Bash", "Defend", "Strike" };
@@ -45,7 +46,8 @@ public abstract class VoteSessionTestBase {
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
             formatReceipt: null,
             configuredPlatforms: configuredPlatforms ?? new[] { ChatPlatformNames.Twitch },
-            voteId: 0);
+            voteId: 0,
+            showTag: showTag);
     }
 
     protected VoteSession CreateSession(
@@ -55,7 +57,8 @@ public abstract class VoteSessionTestBase {
         TimeSpan? duration = null,
         VoteParsingPolicy? parsing = null,
         VoteReceiptPolicy? receipts = null,
-        string[]? options = null) {
+        string[]? options = null,
+        bool showTag = true) {
         var opts = options ?? new[] { "Bash", "Defend", "Strike" };
         var optionList = new List<VoteOption>();
         for (int i = 0; i < opts.Length; i++) optionList.Add(new VoteOption(i, opts[i]));
@@ -74,7 +77,8 @@ public abstract class VoteSessionTestBase {
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
             formatReceipt: null,
             configuredPlatforms: configuredPlatforms ?? new[] { ChatPlatformNames.Twitch },
-            voteId: voteId);
+            voteId: voteId,
+            showTag: showTag);
     }
 
     /// <summary>
@@ -89,7 +93,8 @@ public abstract class VoteSessionTestBase {
         TimeSpan? duration = null,
         VoteParsingPolicy? parsing = null,
         VoteReceiptPolicy? receipts = null,
-        string[]? options = null) {
+        string[]? options = null,
+        bool showTag = true) {
         var opts = options ?? new[] { "Bash", "Defend", "Strike" };
         var optionList = new List<VoteOption>();
         for (int i = 0; i < opts.Length; i++) optionList.Add(new VoteOption(i, opts[i]));
@@ -108,7 +113,8 @@ public abstract class VoteSessionTestBase {
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
             formatReceipt: null,
             configuredPlatforms: configuredPlatforms!,
-            voteId: voteId);
+            voteId: voteId,
+            showTag: showTag);
     }
 
     protected VoteCoordinator CreateCoordinator(IReadOnlyList<string>? configuredPlatforms = null) =>

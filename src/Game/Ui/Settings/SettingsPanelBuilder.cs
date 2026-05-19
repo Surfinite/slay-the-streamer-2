@@ -1,29 +1,35 @@
 using Godot;
 using SlayTheStreamer2.Game.Bootstrap;
-using MegaCrit.Sts2.addons.mega_text;
 
 namespace SlayTheStreamer2.Game.Ui.Settings;
 
 /// <summary>
-/// Builds the settings panel Control imperatively. Hand-rolled MegaRichTextLabel
-/// + stock Godot controls (CheckBox, HSlider, OptionButton, Button). Each
-/// control's change event calls into the SettingsSaveDebouncer.
+/// Builds the settings panel Control imperatively using plain Godot Label /
+/// RichTextLabel nodes. MegaRichTextLabel is intentionally avoided here: its
+/// SetTextAutoSize / AdjustFontSize logic binary-searches for the largest font
+/// that fits the label's rect, and when the parent width is constrained (or
+/// briefly zero before layout resolves) it can jump to MaxFontSize (100pt) and
+/// wrap every character to its own line — exactly the catastrophic rendering
+/// seen in the injected panel.
 ///
-/// Style trade-off accepted: stylistic drift vs MegaCrit's vanilla settings
-/// rows. Mitigation: keep visuals simple so drift is minimal.
+/// Plain Label with AutowrapMode = Word gives predictable wrapping; plain
+/// RichTextLabel with BbcodeEnabled and explicit font-size overrides gives
+/// predictable BBCode rendering without any auto-size machinery.
 ///
-/// Note on MegaRichTextLabel.AutoSizeEnabled: the class guards against using
-/// AutoSizeEnabled together with FitContent (it would push a warning and disable
-/// auto-size). We use FitContent = true for all labels here so that they size
-/// to their content height; AutoSizeEnabled is therefore left at its default
-/// (true) but will be overridden to false by the class itself when FitContent
-/// is set. This is expected and harmless.
+/// Style note: we skip vanilla's MegaCrit theme entirely for now. Controls
+/// render in Godot's default theme, which is legible and non-intrusive.
 /// </summary>
 internal static class SettingsPanelBuilder {
+    // Font size constants — keep consistent across headers, body text, and help text.
+    private const int HeaderFontSize = 18;
+    private const int BodyFontSize   = 14;
+    private const int HelpFontSize   = 12;
+
     public static Control Build(ChatSettings current, SettingsSaveDebouncer debouncer) {
         var root = new VBoxContainer {
             Name = ModConstants.SettingsPanelNodeName,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            // ExpandFill so the VBoxContainer fills the ScrollContainer's horizontal space.
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
 
         AddSeparator(root);
@@ -39,7 +45,7 @@ internal static class SettingsPanelBuilder {
         AddSeparator(root);
         AddHeader(root, "Streamer");
         AddCardSkipsDropdown(root, current, debouncer);
-        AddHelpText(root, "Number of card-reward skips the streamer can use per act. 0 = strict (no skips).");
+        AddHelpText(root, "Card-reward skips per act the streamer can use. 0 = strict (no skips).");
 
         AddSeparator(root);
         AddHeader(root, "Settings file");
@@ -48,43 +54,81 @@ internal static class SettingsPanelBuilder {
         return root;
     }
 
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
     private static void AddSeparator(Container parent) {
         parent.AddChild(new HSeparator());
     }
 
-    private static MegaRichTextLabel MakeLabel(string text) {
-        var lbl = new MegaRichTextLabel {
-            BbcodeEnabled = true,
-            FitContent = true
-        };
-        lbl.Text = text;
-        return lbl;
-    }
-
+    /// <summary>
+    /// Short header label. Bold via a plain Label with a slightly larger font.
+    /// Does NOT use BBCode or MegaRichTextLabel — no auto-size risk.
+    /// </summary>
     private static void AddHeader(Container parent, string text) {
-        parent.AddChild(MakeLabel($"[b]{text}[/b]"));
+        var lbl = new Label {
+            Text = text,
+            AutowrapMode = TextServer.AutowrapMode.Off,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0, 24),
+        };
+        lbl.AddThemeFontSizeOverride("font_size", HeaderFontSize);
+        parent.AddChild(lbl);
     }
 
+    /// <summary>
+    /// Small italic help text. Uses a plain Label with word-wrap.
+    /// </summary>
     private static void AddHelpText(Container parent, string text) {
-        var lbl = MakeLabel($"[i]{text}[/i]");
-        lbl.Modulate = new Color(0.7f, 0.7f, 0.7f);
+        var lbl = new Label {
+            Text = text,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Modulate = new Color(0.75f, 0.75f, 0.75f),
+            CustomMinimumSize = new Vector2(0, 20),
+        };
+        lbl.AddThemeFontSizeOverride("font_size", HelpFontSize);
         parent.AddChild(lbl);
+    }
+
+    /// <summary>
+    /// Inline body label — used inside HBoxContainers as a row label.
+    /// </summary>
+    private static Label MakeBodyLabel(string text) {
+        var lbl = new Label {
+            Text = text,
+            AutowrapMode = TextServer.AutowrapMode.Off,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(0, 24),
+        };
+        lbl.AddThemeFontSizeOverride("font_size", BodyFontSize);
+        return lbl;
     }
 
     private static void AddVoteDurationSlider(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
         var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 
-        row.AddChild(MakeLabel("Vote duration"));
+        row.AddChild(MakeBodyLabel("Vote duration"));
 
         var slider = new HSlider {
             MinValue = 10,
             MaxValue = 120,
             Step = 5,
             Value = current.VoteDurationSeconds,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0, 24),
         };
 
-        var badge = MakeLabel($"{current.VoteDurationSeconds}s");
+        // Value badge — plain Label, no auto-size.
+        var badge = new Label {
+            Text = $"{current.VoteDurationSeconds}s",
+            AutowrapMode = TextServer.AutowrapMode.Off,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(36, 24),
+        };
+        badge.AddThemeFontSizeOverride("font_size", BodyFontSize);
 
         slider.ValueChanged += value => {
             badge.Text = $"{(int)value}s";
@@ -99,9 +143,12 @@ internal static class SettingsPanelBuilder {
     private static void AddCheckbox(Container parent, string text, bool initial, System.Action<bool> onChange) {
         var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 
-        row.AddChild(MakeLabel(text));
+        row.AddChild(MakeBodyLabel(text));
 
-        var check = new CheckBox { ButtonPressed = initial };
+        var check = new CheckBox {
+            ButtonPressed = initial,
+            CustomMinimumSize = new Vector2(0, 24),
+        };
         check.Toggled += pressed => onChange(pressed);
         row.AddChild(check);
 
@@ -111,9 +158,12 @@ internal static class SettingsPanelBuilder {
     private static void AddCardSkipsDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
         var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 
-        row.AddChild(MakeLabel("Card skips per act (streamer's)"));
+        row.AddChild(MakeBodyLabel("Card skips per act (streamer's)"));
 
-        var dropdown = new OptionButton();
+        var dropdown = new OptionButton {
+            CustomMinimumSize = new Vector2(110, 24),
+        };
+
         // (label, jsonValue) pairs.
         (string Label, int Value)[] entries = {
             ("0 (strict)", 0),
@@ -149,9 +199,19 @@ internal static class SettingsPanelBuilder {
     private static void AddFilePathRow(Container parent) {
         var path = System.IO.Path.Combine(OS.GetUserDataDir(), ModConstants.SettingsFileName);
 
-        parent.AddChild(MakeLabel($"Settings file: [i]{path}[/i]"));
+        var pathLbl = new Label {
+            Text = $"Path: {path}",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0, 20),
+        };
+        pathLbl.AddThemeFontSizeOverride("font_size", HelpFontSize);
+        parent.AddChild(pathLbl);
 
-        var openBtn = new Button { Text = "Open folder" };
+        var openBtn = new Button {
+            Text = "Open folder",
+            CustomMinimumSize = new Vector2(0, 28),
+        };
         openBtn.Pressed += () => RevealInExplorerAction.Open();
         parent.AddChild(openBtn);
     }

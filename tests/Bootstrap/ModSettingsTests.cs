@@ -588,9 +588,97 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- showVoteTag (A.3 conditional default based on youtubeChannelId) ---
+
+    [Fact]
+    public void Load_ShowVoteTag_MissingWithoutYouTube_DefaultsToFalse() {
+        var path = WriteTempJson(new {
+            schemaVersion = 1,
+            channel = "x",
+            username = "x",
+            oauthToken = "x" + new string('a', 29)
+        });
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.ShowVoteTag);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ShowVoteTag_MissingWithYouTube_DefaultsToTrue() {
+        var path = WriteTempJson(new {
+            schemaVersion = 1,
+            channel = "x",
+            username = "x",
+            oauthToken = "x" + new string('a', 29),
+            youtubeChannelId = "UCabcdefghijklmnopqrstu"
+        });
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.ShowVoteTag);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ShowVoteTag_ExplicitFalse_OverridesYouTubeDefault() {
+        var path = WriteTempJson(new {
+            schemaVersion = 1,
+            channel = "x",
+            username = "x",
+            oauthToken = "x" + new string('a', 29),
+            youtubeChannelId = "UCabcdefghijklmnopqrstu",
+            showVoteTag = false
+        });
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.ShowVoteTag);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ShowVoteTag_ExplicitTrue_OverridesTwitchOnlyDefault() {
+        var path = WriteTempJson(new {
+            schemaVersion = 1,
+            channel = "x",
+            username = "x",
+            oauthToken = "x" + new string('a', 29),
+            showVoteTag = true
+        });
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.ShowVoteTag);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_ShowVoteTag_NonBoolean_WarnsAndAppliesConditionalDefault() {
+        var path = WriteTempJson(new {
+            schemaVersion = 1,
+            channel = "x",
+            username = "x",
+            oauthToken = "x" + new string('a', 29),
+            youtubeChannelId = "UCabcdefghijklmnopqrstu",
+            showVoteTag = "maybe"
+        });
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.ShowVoteTag);  // conditional default fires
+            Assert.Contains(success.Warnings, w => w.Contains("showVoteTag"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);
         return path;
+    }
+
+    private static string WriteTempJson(object obj) {
+        return WriteTempJson(System.Text.Json.JsonSerializer.Serialize(obj));
     }
 }

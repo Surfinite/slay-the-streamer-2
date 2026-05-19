@@ -15,7 +15,8 @@ public sealed record ChatSettings(
     bool VoteOnActVariant = true,
     bool ForceL3PopupFallback = false,
     int VoteDurationSeconds = 30,
-    bool CardSkipAsVoteOption = true);
+    bool CardSkipAsVoteOption = true,
+    bool ShowVoteTag = false);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -151,9 +152,16 @@ public static class ModSettings {
                 else warnings.Add("cardSkipAsVoteOption is not a boolean; using default (true)");
             }
 
+            bool showVoteTag = (youtubeChannelId != null);   // conditional default
+            if (root.TryGetProperty("showVoteTag", out var showTagProp)) {
+                if (showTagProp.ValueKind == JsonValueKind.True) showVoteTag = true;
+                else if (showTagProp.ValueKind == JsonValueKind.False) showVoteTag = false;
+                else warnings.Add("showVoteTag is not a boolean; using conditional default (true if YouTube configured, else false)");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag),
                 warnings);
         }
     }

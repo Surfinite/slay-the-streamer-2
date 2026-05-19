@@ -7,10 +7,12 @@ using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
+using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Ui;
@@ -51,6 +53,8 @@ internal static class CardRewardVotePatch {
         new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_cardRow"));
     private static readonly Lazy<MethodInfo?> _selectCardMethod =
         new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "SelectCard", new[] { typeof(NCardHolder) }));
+    private static readonly Lazy<MethodInfo?> _onAlternateRewardSelectedMethod =
+        new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected", new[] { typeof(PostAlternateCardRewardAction) }));
 
     /// <summary>
     /// Captures option identity (not holder identity) for reroll detection at resume.
@@ -211,7 +215,14 @@ internal static class CardRewardVotePatch {
         }
         var optionsSnapshot = options.ToList();
         var holdersSnapshot = holders.ToList();
-        var labels = optionsSnapshot.Select(o => o.Card.Title).ToList();   // SPIKE-CORRECTED: was Card.Name.GetText()
+
+        var settings = ModSettings.Current;
+        var voteDuration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
+        var showTag = settings?.ShowVoteTag ?? false;
+        var includeSkip = settings?.CardSkipAsVoteOption ?? false;
+
+        var cardTitles = optionsSnapshot.Select(o => o.Card.Title).ToList();   // SPIKE-CORRECTED: was Card.Name.GetText()
+        var labels = CardRewardOptionLabels.Build(cardTitles, includeSkip);
 
         int playerClickIndex = FindHolderIndex(holdersSnapshot, cardHolder) ?? 0;
         var optionsSig = CaptureSignature(optionsSnapshot);
@@ -232,15 +243,15 @@ internal static class CardRewardVotePatch {
         // Voter.Start with try/catch fallback to vanilla
         VoteSession session;
         try {
-            session = coordinator.Start("Card Reward", labels, TimeSpan.FromSeconds(30));
+            session = coordinator.Start("Card Reward", labels, voteDuration, showTag);
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] Voter.Default.Start threw; falling back to vanilla", ex);
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
 
-        TiLog.Info($"[SlayTheStreamer2][card-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{playerClickIndex}");
-        _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, optionsSig, playerClickIndex, runIdAtStart);
+        TiLog.Info($"[SlayTheStreamer2][card-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{playerClickIndex}; includeSkip={includeSkip}");
+        _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, optionsSig, playerClickIndex, runIdAtStart, includeSkip);
         return false;
     }
 
@@ -251,7 +262,8 @@ internal static class CardRewardVotePatch {
         IReadOnlyList<CardCreationResult> optionsSnapshot,
         OptionsSignature optionsSig,
         int playerClickIndex,
-        string? runIdAtStart) {
+        string? runIdAtStart,
+        bool includeSkip) {
         try {
             coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
 
@@ -260,16 +272,30 @@ internal static class CardRewardVotePatch {
                 winnerIndex = await session.AwaitWinnerAsync();
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-vote] AwaitWinnerAsync threw; falling back to player click", ex);
-                winnerIndex = playerClickIndex;
+                winnerIndex = includeSkip ? playerClickIndex + 1 : playerClickIndex;
             }
 
-            if (winnerIndex < 0 || winnerIndex >= optionsSnapshot.Count) {
-                TiLog.Warn($"[SlayTheStreamer2][card-vote] winnerIndex {winnerIndex} out of range; using player click");
-                winnerIndex = playerClickIndex;
+            // Remap chat-voted index to card index, accounting for Skip-as-#0 shift.
+            var cardIndex = CardRewardOptionLabels.ResolveCardIndex(winnerIndex, includeSkip);
+
+            if (cardIndex is null) {
+                // Chat voted Skip (#0 with includeSkip = true). Trigger vanilla's skip path via
+                // OnAlternateRewardSelected(DismissScreenAndKeepReward) — exactly what the
+                // vanilla "Skip" button does. The skip-gate's OnAlternateRewardSelected prefix
+                // checks _voteInProgress; clear it first so the call goes through.
+                TiLog.Info("[SlayTheStreamer2][card-vote] chat voted Skip (#0); triggering vanilla skip path on main thread");
+                coordinator.Dispatcher.Post(() => ResumeSkipOnMainThread(screen, runIdAtStart, optionsSig));
+                return;
             }
 
-            TiLog.Info($"[SlayTheStreamer2][card-vote] resume: applying winner #{winnerIndex} on main thread");
-            coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, winnerIndex, playerClickIndex, runIdAtStart, optionsSig));
+            int resolvedCardIndex = cardIndex.Value;
+            if (resolvedCardIndex < 0 || resolvedCardIndex >= optionsSnapshot.Count) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] resolvedCardIndex {resolvedCardIndex} out of range; using player click");
+                resolvedCardIndex = playerClickIndex;
+            }
+
+            TiLog.Info($"[SlayTheStreamer2][card-vote] resume: applying winner #{resolvedCardIndex} on main thread");
+            coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, resolvedCardIndex, playerClickIndex, runIdAtStart, optionsSig));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] HandleVoteAsync threw; attempting fallback resume with player click", ex);
             try {
@@ -389,6 +415,85 @@ internal static class CardRewardVotePatch {
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] resume threw", ex);
         } finally {
+            Interlocked.Exchange(ref _resumeInProgress, 0);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+        }
+    }
+
+    private static void ResumeSkipOnMainThread(
+        NCardRewardSelectionScreen screen,
+        string? runIdAtStart,
+        OptionsSignature snapshotSig) {
+        try {
+            if (!GodotObject.IsInstanceValid(screen)) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume: screen no longer valid; dropping");
+                SendCancellationReceipt();
+                return;
+            }
+
+            // Run-state liveness checks (same guards as ResumeOnMainThread).
+            try {
+                var rm = RunManager.Instance;
+                if (rm is null) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: RunManager.Instance is null");
+                    SendCancellationReceipt();
+                    return;
+                }
+                if (rm.IsAbandoned) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run was abandoned during vote");
+                    SendCancellationReceipt();
+                    return;
+                }
+                var currentState = rm.DebugOnlyGetState();
+                if (currentState is null) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run state is gone");
+                    SendCancellationReceipt();
+                    return;
+                }
+                if (currentState.IsGameOver) {
+                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run is over (player dead)");
+                    SendCancellationReceipt();
+                    return;
+                }
+                if (runIdAtStart is not null) {
+                    string? currentRunId = currentState.Rng?.StringSeed;
+                    if (currentRunId != runIdAtStart) {
+                        TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run changed during vote");
+                        SendCancellationReceipt();
+                        return;
+                    }
+                }
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] skip-resume aborted: liveness check threw ({ex.Message})");
+                SendCancellationReceipt();
+                return;
+            }
+
+            // Options-signature check — skip still requires the same options were present.
+            var currentOptions = GetCurrentOptions(screen);
+            if (currentOptions is null || !snapshotSig.Matches(currentOptions)) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: card selection changed before apply");
+                SendCancellationReceipt();
+                return;
+            }
+
+            var method = _onAlternateRewardSelectedMethod.Value;
+            if (method is null) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume: OnAlternateRewardSelected method not found; deferring to streamer");
+                // TODO: settings-ui/3.4 — wire actual skip trigger if reflection lookup ever fails
+                return;
+            }
+
+            // Clear _voteInProgress before invoking so the OnAlternateRewardSelected prefix
+            // (which checks _voteInProgress == 1) doesn't block our own skip call.
+            // _resumeInProgress is NOT set here because we are not re-entering SelectCard.
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            TiLog.Info("[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected(DismissScreenAndKeepReward)");
+            method.Invoke(screen, new object[] { PostAlternateCardRewardAction.DismissScreenAndKeepReward });
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-vote] skip-resume threw", ex);
+        } finally {
+            // Ensure flags are clean even if the try block returned early after clearing _voteInProgress.
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
         }

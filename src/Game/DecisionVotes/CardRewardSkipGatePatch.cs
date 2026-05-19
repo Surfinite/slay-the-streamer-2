@@ -14,6 +14,7 @@ using SlayTheStreamer2.Game.Ui;               // CardSkipCounterLabel
 using SlayTheStreamer2.Ti.Chat;               // ChatConnectionState, OutgoingMessagePriority
 using SlayTheStreamer2.Ti.Internal;           // TiLog
 using SlayTheStreamer2.Ti.Voting;             // Voter
+using BootstrapModSettings = SlayTheStreamer2.Game.Bootstrap.ModSettings;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
@@ -58,9 +59,8 @@ internal static class CardRewardSkipGatePatch {
     internal static int ResetBudgetForDevConsole() {
         int previousUsed = _tracker.ActSkipsUsed;
         _tracker.ResetCounterOnly();
-        if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)
-            && ModEntry.Settings is SettingsResult.Success success) {
-            _activeLabel.UpdateText(_tracker.Snapshot(success.Settings.CardSkipsPerAct));
+        if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
+            _activeLabel.UpdateText(_tracker.Snapshot(BootstrapModSettings.Current?.CardSkipsPerAct ?? 1));
         }
         return previousUsed;
     }
@@ -289,14 +289,13 @@ internal static class CardRewardSkipGatePatch {
 
                 int? actIndex = GetCurrentActIndex(runState);
                 var resetReason = _tracker.ObserveRunAndAct(runState.Rng?.StringSeed, actIndex);
-                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
 
                 if (resetReason != BudgetResetReason.None) {
                     // Human-readable act number (1-based). actIndex is 0-based; if null
                     // we send 0 to the receipt (which skips formatting it) and tag the
                     // log with "?" so it's debuggable.
                     int humanAct = actIndex.HasValue ? actIndex.Value + 1 : 0;
-                    SendBudgetResetReceipt(settings.CardSkipsPerAct, humanAct);
+                    SendBudgetResetReceipt(BootstrapModSettings.Current?.CardSkipsPerAct ?? 1, humanAct);
                     TiLog.Info($"[SlayTheStreamer2][card-skip-gate] budget reset ({resetReason}); Act {(actIndex.HasValue ? humanAct.ToString() : "?")}");
                 }
 
@@ -310,7 +309,7 @@ internal static class CardRewardSkipGatePatch {
                 // allow a skip. The streamer will see clicks no-op silently when
                 // blocked; counter label gives visual feedback. v0.2 polish: live
                 // DisallowSkipping/AllowSkipping toggling as state changes.
-                AttachOrUpdateLabel(__instance, settings.CardSkipsPerAct);
+                AttachOrUpdateLabel(__instance, BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] SetRewards postfix failed", ex);
             }
@@ -344,10 +343,9 @@ internal static class CardRewardSkipGatePatch {
                 var pending = CountPendingCardRewards(__instance);
                 if (pending.Total == 0) return;
 
-                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
                 for (int i = 0; i < pending.Total; i++) {
                     _tracker.RecordSkip();
-                    SendSkipReceipt(settings.CardSkipsPerAct);
+                    SendSkipReceipt(BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
                 }
                 TiLog.Info($"[SlayTheStreamer2][card-skip-gate] AfterOverlayClosed: charged {pending.Total} card-skip(s) on Proceed commit");
             } catch (Exception ex) {
@@ -446,8 +444,7 @@ internal static class CardRewardSkipGatePatch {
                     return false;
                 }
 
-                var settings = ((SettingsResult.Success)ModEntry.Settings!).Settings;
-                int limit = settings.CardSkipsPerAct;
+                int limit = BootstrapModSettings.Current?.CardSkipsPerAct ?? 1;
                 if (limit >= 0 && _tracker.ActSkipsUsed + pending.Total > limit) {
                     int remaining = Math.Max(0, limit - _tracker.ActSkipsUsed);
                     TiLog.Info($"[SlayTheStreamer2][card-skip-gate] parent Skip blocked: would cost {pending.Total} skip(s); only {remaining}/{limit} budget remaining");

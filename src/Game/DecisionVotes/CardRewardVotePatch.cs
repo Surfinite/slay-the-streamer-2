@@ -122,6 +122,9 @@ internal static class CardRewardVotePatch {
                 PreparedSuccessfully = false;
                 return false;
             }
+            if (_onAlternateRewardSelectedMethod.Value is null) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] soft check: OnAlternateRewardSelected(PostAlternateCardRewardAction) not found; chat Skip votes will fall back to streamer-manual");
+            }
 
             // Soft check: run-id accessor. Failure logs Warn but does NOT abort registration.
             try {
@@ -334,41 +337,8 @@ internal static class CardRewardVotePatch {
             //  - State fully torn down (DebugOnlyGetState null)
             // Seed-only guard remains as a final check for "started a NEW run with a different seed
             // before our resume Posted" — rare but possible.
-            try {
-                var rm = RunManager.Instance;
-                if (rm is null) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: RunManager.Instance is null");
-                    SendCancellationReceipt();
-                    return;
-                }
-                if (rm.IsAbandoned) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run was abandoned during vote");
-                    SendCancellationReceipt();
-                    return;
-                }
-                var currentState = rm.DebugOnlyGetState();
-                if (currentState is null) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run state is gone");
-                    SendCancellationReceipt();
-                    return;
-                }
-                if (currentState.IsGameOver) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run is over (player dead)");
-                    SendCancellationReceipt();
-                    return;
-                }
-                if (runIdAtStart is not null) {
-                    string? currentRunId = currentState.Rng?.StringSeed;
-                    if (currentRunId != runIdAtStart) {
-                        TiLog.Warn("[SlayTheStreamer2][card-vote] resume aborted: run changed during vote");
-                        SendCancellationReceipt();
-                        return;
-                    }
-                }
-            } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][card-vote] resume aborted: liveness check threw ({ex.Message})");
-                SendCancellationReceipt();
-                return;
+            if (!IsRunLiveForResume("resume", runIdAtStart)) {
+                return;   // helper already sent cancellation receipt
             }
 
             // Options-signature check — detects reroll specifically (reroll uniquely rebuilds
@@ -432,41 +402,8 @@ internal static class CardRewardVotePatch {
             }
 
             // Run-state liveness checks (same guards as ResumeOnMainThread).
-            try {
-                var rm = RunManager.Instance;
-                if (rm is null) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: RunManager.Instance is null");
-                    SendCancellationReceipt();
-                    return;
-                }
-                if (rm.IsAbandoned) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run was abandoned during vote");
-                    SendCancellationReceipt();
-                    return;
-                }
-                var currentState = rm.DebugOnlyGetState();
-                if (currentState is null) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run state is gone");
-                    SendCancellationReceipt();
-                    return;
-                }
-                if (currentState.IsGameOver) {
-                    TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run is over (player dead)");
-                    SendCancellationReceipt();
-                    return;
-                }
-                if (runIdAtStart is not null) {
-                    string? currentRunId = currentState.Rng?.StringSeed;
-                    if (currentRunId != runIdAtStart) {
-                        TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume aborted: run changed during vote");
-                        SendCancellationReceipt();
-                        return;
-                    }
-                }
-            } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][card-vote] skip-resume aborted: liveness check threw ({ex.Message})");
-                SendCancellationReceipt();
-                return;
+            if (!IsRunLiveForResume("skip-resume", runIdAtStart)) {
+                return;   // helper already sent cancellation receipt
             }
 
             // Options-signature check — skip still requires the same options were present.
@@ -479,8 +416,10 @@ internal static class CardRewardVotePatch {
 
             var method = _onAlternateRewardSelectedMethod.Value;
             if (method is null) {
-                TiLog.Warn("[SlayTheStreamer2][card-vote] skip-resume: OnAlternateRewardSelected method not found; deferring to streamer");
-                // TODO: settings-ui/3.4 — wire actual skip trigger if reflection lookup ever fails
+                TiLog.Warn("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected not found; chat Skip vote ignored — streamer can pick a card or hit Proceed manually");
+                // Intentionally NO SendCancellationReceipt: the vote completed normally (chat got
+                // a "Chat chose #0: Skip" close-receipt). The mechanism is what failed, not the vote;
+                // a cancellation receipt would mislead chat into thinking their vote was invalid.
                 return;
             }
 
@@ -493,9 +432,56 @@ internal static class CardRewardVotePatch {
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] skip-resume threw", ex);
         } finally {
-            // Ensure flags are clean even if the try block returned early after clearing _voteInProgress.
+            // _resumeInProgress is NOT set in the skip path (we don't re-enter SelectCard).
+            // The reset is defensive belt-and-suspenders against future refactor where this
+            // path might gain a re-entry. Currently a no-op.
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
+        }
+    }
+
+    /// <summary>
+    /// Returns true if the run is still in a state where a vote resume can safely apply.
+    /// Logs the abort reason and sends a cancellation receipt on failure.
+    /// The logPrefix parameter distinguishes the caller in logs (e.g. "resume" vs "skip-resume").
+    /// </summary>
+    private static bool IsRunLiveForResume(string logPrefix, string? runIdAtStart) {
+        try {
+            var rm = RunManager.Instance;
+            if (rm is null) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] {logPrefix} aborted: RunManager.Instance is null");
+                SendCancellationReceipt();
+                return false;
+            }
+            if (rm.IsAbandoned) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] {logPrefix} aborted: run was abandoned during vote");
+                SendCancellationReceipt();
+                return false;
+            }
+            var currentState = rm.DebugOnlyGetState();
+            if (currentState is null) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] {logPrefix} aborted: run state is gone");
+                SendCancellationReceipt();
+                return false;
+            }
+            if (currentState.IsGameOver) {
+                TiLog.Warn($"[SlayTheStreamer2][card-vote] {logPrefix} aborted: run is over (player dead)");
+                SendCancellationReceipt();
+                return false;
+            }
+            if (runIdAtStart is not null) {
+                string? currentRunId = currentState.Rng?.StringSeed;
+                if (currentRunId != runIdAtStart) {
+                    TiLog.Warn($"[SlayTheStreamer2][card-vote] {logPrefix} aborted: run changed during vote");
+                    SendCancellationReceipt();
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][card-vote] {logPrefix} aborted: liveness check threw ({ex.Message})");
+            SendCancellationReceipt();
+            return false;
         }
     }
 

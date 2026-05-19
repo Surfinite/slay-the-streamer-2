@@ -258,10 +258,14 @@ internal static partial class ActVariantVotePatch {
         VoteSession? session = null;
         try {
             var labels = candidates.Select(c => c.Title).ToList();
+            var settings = SlayTheStreamer2.Game.Bootstrap.ModSettings.Current;
+            var voteDuration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
+            var showTag = settings?.ShowVoteTag ?? false;
             session = coordinator.Start(
                 label: "Act 1 variant",
                 options: labels,
-                duration: TimeSpan.FromSeconds(30),
+                duration: voteDuration,
+                showTag: showTag,
                 receipts: null,
                 parsing: null,
                 formatReceipt: formatReceipt);

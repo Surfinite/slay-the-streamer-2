@@ -14,9 +14,12 @@ namespace SlayTheStreamer2.Game.Ui.Settings;
 ///
 /// Layout: NModInfoContainer is a plain Panel with absolute-positioned children
 /// (ModTitle y=18–110, ModImage y=104–484, ModDescription y=493–886, container
-/// is 666×901px). We absolutely position our scroll+panel to exactly overlap the
-/// ModDescription region (y=493, height=393, x=17, width=618) and hide the
-/// vanilla description node so there is no overlap.
+/// is 666×901px).
+///
+/// When our mod is selected we shrink ModDescription to DescHeight px so the
+/// author/version/description text remains visible, then place our scroll panel
+/// immediately below it. When the user switches to a different mod we restore
+/// ModDescription to its original size.
 ///
 /// Save lifecycle:
 ///   - control change → SettingsSaveDebouncer.MarkDirtyAndRestart (500ms timer)
@@ -28,13 +31,24 @@ namespace SlayTheStreamer2.Game.Ui.Settings;
 /// </summary>
 [HarmonyPatch(typeof(NModInfoContainer), nameof(NModInfoContainer.Fill))]
 internal static class SettingsPanelPatch {
-    // Pixel bounds matching ModDescription in modding_screen.tscn (layout_mode=0).
-    // ModDescription: offset_left=25, offset_top=493, offset_right=635, offset_bottom=886.
-    // We use slightly tighter left/right (17/635) to align with ModTitle's left edge.
-    private const float PanelLeft   = 17f;
-    private const float PanelTop    = 493f;
-    private const float PanelRight  = 635f;
-    private const float PanelBottom = 886f;
+    // ModDescription occupies y=493–886 in modding_screen.tscn (393px total).
+    // We keep the top DescHeight px for the description text, and give the rest
+    // (plus a small padding gap) to the settings scroll panel.
+    private const float DescTop    = 493f;
+    private const float DescBottom = 886f;
+    private const float DescHeight = 150f;   // visible description lines (~4–5)
+    private const float Padding    = 8f;
+
+    private const float PanelLeft  = 17f;
+    private const float PanelRight = 635f;
+
+    // y-top and height for our scroll container
+    private static float PanelTop    => DescTop + DescHeight + Padding;
+    private static float PanelHeight => DescBottom - PanelTop;
+
+    // Original ModDescription size, saved the first time we shrink it so we
+    // can restore it when the user selects a different mod.
+    private static Vector2? _savedDescSize;
 
     static void Postfix(NModInfoContainer __instance, Mod mod) {
         try {
@@ -44,14 +58,15 @@ internal static class SettingsPanelPatch {
                 existing.QueueFree();
             }
 
-            // 2a. Always restore vanilla description visibility (in case we toggled it
-            //     on a previous fill of our mod and the user switched to another mod).
+            // 2. Always restore vanilla ModDescription to its original size/position
+            //    (in case we shrunk it on a previous fill of our mod and the user
+            //    has now selected a different mod).
             var descNode = __instance.GetNodeOrNull<RichTextLabel>("ModDescription");
-            if (descNode != null) {
-                descNode.Visible = true;
+            if (descNode != null && _savedDescSize.HasValue) {
+                descNode.Size = _savedDescSize.Value;
             }
 
-            // 2b. Inject only when our mod is selected.
+            // 3. Inject only when our mod is selected.
             if (mod.manifest?.id != ModConstants.ModId) return;
 
             var current = ChatModSettings.Current;
@@ -60,29 +75,30 @@ internal static class SettingsPanelPatch {
                 return;
             }
 
-            // 3. Hide the vanilla description — our panel replaces it in that region.
+            // 4. Shrink ModDescription to make room for our settings panel below it.
             if (descNode != null) {
-                descNode.Visible = false;
+                if (!_savedDescSize.HasValue) {
+                    _savedDescSize = descNode.Size;
+                }
+                descNode.Size = new Vector2(descNode.Size.X, DescHeight);
             }
 
-            // 4. Build the settings content VBoxContainer (no scroll yet — just the inner widget tree).
+            // 5. Build the settings content VBoxContainer (no scroll yet — just the inner widget tree).
             var debouncer = new SettingsSaveDebouncer();
             var content = SettingsPanelBuilder.Build(current, debouncer);
             content.AddChild(debouncer);
 
-            // 5. Wrap in a ScrollContainer so the content can exceed the available height.
+            // 6. Wrap in a ScrollContainer below the description region.
             var scroll = new ScrollContainer {
                 Name = ModConstants.SettingsPanelNodeName,
-                // Absolute position inside the Panel, matching ModDescription region.
                 Position = new Vector2(PanelLeft, PanelTop),
-                Size     = new Vector2(PanelRight - PanelLeft, PanelBottom - PanelTop),
-                // Let horizontal scroll be off — content should fit the width.
+                Size     = new Vector2(PanelRight - PanelLeft, PanelHeight),
                 HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
             };
             scroll.AddChild(content);
 
             __instance.AddChild(scroll);
-            TiLog.Info($"[settings-ui] settings panel injected (scroll region y={PanelTop}–{PanelBottom}, {PanelRight - PanelLeft}px wide)");
+            TiLog.Info($"[settings-ui] settings panel injected (scroll region y={PanelTop:F0}–{DescBottom}, {PanelRight - PanelLeft}px wide)");
         } catch (System.Exception ex) {
             TiLog.Error("[settings-ui] SettingsPanelPatch.Postfix threw — vanilla mod manager continues", ex);
         }

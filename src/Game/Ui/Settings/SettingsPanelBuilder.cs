@@ -4,113 +4,93 @@ using SlayTheStreamer2.Game.Bootstrap;
 namespace SlayTheStreamer2.Game.Ui.Settings;
 
 /// <summary>
-/// Builds the settings panel Control imperatively using plain Godot Label /
-/// RichTextLabel nodes. MegaRichTextLabel is intentionally avoided here: its
-/// SetTextAutoSize / AdjustFontSize logic binary-searches for the largest font
-/// that fits the label's rect, and when the parent width is constrained (or
-/// briefly zero before layout resolves) it can jump to MaxFontSize (100pt) and
-/// wrap every character to its own line — exactly the catastrophic rendering
-/// seen in the injected panel.
+/// Builds the settings panel Control imperatively using plain Godot controls
+/// styled to match vanilla NSettings* rows.
 ///
-/// Plain Label with AutowrapMode = Word gives predictable wrapping; plain
-/// RichTextLabel with BbcodeEnabled and explicit font-size overrides gives
-/// predictable BBCode rendering without any auto-size machinery.
+/// Styling approach (theme-injection, not scene instantiation):
+///   - Vanilla row labels use kreon_regular_shared.tres at font_size=22 (slightly
+///     below vanilla's 28 because our panel area is smaller) with warm-white colour.
+///   - Vanilla dividers are ColorRect h=2 with the standard muted-gold tint.
+///   - Vanilla row containers are MarginContainer with custom_minimum_size h=52
+///     and 12px left/right margin.
+///   - Vanilla button labels use kreon_bold_glyph_space_two.tres with the same
+///     warm-white colour and a dark outline.
 ///
-/// Style note: we skip vanilla's MegaCrit theme entirely for now. Controls
-/// render in Godot's default theme, which is legible and non-intrusive.
+/// We avoid MegaRichTextLabel throughout: its SetTextAutoSize binary-search can
+/// jump to MaxFontSize (100pt) when the parent rect is briefly zero during layout,
+/// wrapping every character to its own line.
+///
+/// Vanilla scene instantiation is skipped because NSettingsSlider and
+/// NSettingsDropdown are abstract (subclassed per-option), and NSettingsTickbox
+/// has no Label node — vanilla always pairs it with a separate RichTextLabel
+/// in the same MarginContainer row.
 /// </summary>
 internal static class SettingsPanelBuilder {
-    // Font size constants — keep consistent across headers, body text, and help text.
-    private const int HeaderFontSize = 18;
-    private const int BodyFontSize   = 14;
-    private const int HelpFontSize   = 12;
+    // Vanilla settings row labels are font_size=28; ours are smaller because the
+    // panel area is narrower. 22 fits well with the 52px row height.
+    private const int RowFontSize  = 22;
+    private const int HelpFontSize = 14;
+
+    // Warm-white used for vanilla row labels.
+    // From settings_screen.tscn: theme_override_colors/font_color for SliderValue
+    //   = Color(1, 0.964706, 0.886275, 1)
+    private static readonly Color LabelColor  = new Color(1f, 0.965f, 0.886f, 1f);
+    private static readonly Color HelpColor   = new Color(0.7f, 0.7f, 0.7f, 1f);
+    // Vanilla divider colour from settings_screen.tscn ColorRect nodes.
+    private static readonly Color DividerColor = new Color(0.910f, 0.863f, 0.745f, 0.251f);
+
+    // Kreon font paths (vanilla resource paths, loaded at runtime).
+    private const string KreonRegularPath  = "res://themes/kreon_regular_shared.tres";
+    private const string KreonBoldPath     = "res://themes/kreon_bold_glyph_space_two.tres";
+    // Button background image used by vanilla Credits / Feedback buttons.
+    private const string ButtonBgPath      = "res://images/ui/reward_screen/reward_skip_button.png";
+
+    // Cached font references — loaded once, reused for every row.
+    private static Font? _kreonRegular;
+    private static Font? _kreonBold;
+    private static Texture2D? _buttonBg;
 
     public static Control Build(ChatSettings current, SettingsSaveDebouncer debouncer) {
+        // Load vanilla fonts; if resource loading fails we fall back to null
+        // (Godot will use its default font, which is still legible).
+        _kreonRegular ??= TryLoadFont(KreonRegularPath);
+        _kreonBold    ??= TryLoadFont(KreonBoldPath);
+        _buttonBg     ??= TryLoadTexture(ButtonBgPath);
+
         var root = new VBoxContainer {
             Name = ModConstants.SettingsPanelNodeName,
-            // ExpandFill so the VBoxContainer fills the ScrollContainer's horizontal space.
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
 
-        AddSeparator(root);
-        AddHeader(root, "Vote behaviour");
+        AddDivider(root);
         AddVoteDurationSlider(root, current, debouncer);
-        AddCheckbox(root, "Vote on Act 1 variant", current.VoteOnActVariant,
+        AddDivider(root);
+        AddCheckboxRow(root, "Vote on Act 1 variant", current.VoteOnActVariant,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { VoteOnActVariant = value }));
-        AddCheckbox(root, "Allow chat to skip", current.CardSkipAsVoteOption,
+        AddDivider(root);
+        AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));
-        AddCheckbox(root, "Show vote tag", current.ShowVoteTag,
+        AddDivider(root);
+        AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
-
-        AddSeparator(root);
-        AddHeader(root, "Streamer");
+        AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);
-        AddHelpText(root, "Card-reward skips per act the streamer can use. 0 = strict (no skips).");
-
-        AddSeparator(root);
-        AddHeader(root, "Settings file");
+        AddHelpText(root, "Card-reward skips per act (streamer). 0 = strict.");
+        AddDivider(root);
         AddFilePathRow(root);
 
         return root;
     }
 
     // -------------------------------------------------------------------------
-    // Private helpers
+    // Row factories — each produces a vanilla-style MarginContainer row
     // -------------------------------------------------------------------------
 
-    private static void AddSeparator(Container parent) {
-        parent.AddChild(new HSeparator());
-    }
-
-    /// <summary>
-    /// Short header label. Bold via a plain Label with a slightly larger font.
-    /// Does NOT use BBCode or MegaRichTextLabel — no auto-size risk.
-    /// </summary>
-    private static void AddHeader(Container parent, string text) {
-        var lbl = new Label {
-            Text = text,
-            AutowrapMode = TextServer.AutowrapMode.Off,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(0, 24),
-        };
-        lbl.AddThemeFontSizeOverride("font_size", HeaderFontSize);
-        parent.AddChild(lbl);
-    }
-
-    /// <summary>
-    /// Small italic help text. Uses a plain Label with word-wrap.
-    /// </summary>
-    private static void AddHelpText(Container parent, string text) {
-        var lbl = new Label {
-            Text = text,
-            AutowrapMode = TextServer.AutowrapMode.Word,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            Modulate = new Color(0.75f, 0.75f, 0.75f),
-            CustomMinimumSize = new Vector2(0, 20),
-        };
-        lbl.AddThemeFontSizeOverride("font_size", HelpFontSize);
-        parent.AddChild(lbl);
-    }
-
-    /// <summary>
-    /// Inline body label — used inside HBoxContainers as a row label.
-    /// </summary>
-    private static Label MakeBodyLabel(string text) {
-        var lbl = new Label {
-            Text = text,
-            AutowrapMode = TextServer.AutowrapMode.Off,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(0, 24),
-        };
-        lbl.AddThemeFontSizeOverride("font_size", BodyFontSize);
-        return lbl;
-    }
-
     private static void AddVoteDurationSlider(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
-        var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        var row = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
 
-        row.AddChild(MakeBodyLabel("Vote duration"));
+        inner.AddChild(MakeRowLabel("Vote duration"));
 
         var slider = new HSlider {
             MinValue = 10,
@@ -118,53 +98,56 @@ internal static class SettingsPanelBuilder {
             Step = 5,
             Value = current.VoteDurationSeconds,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(0, 24),
+            SizeFlagsVertical   = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize   = new Vector2(0, 20),
         };
 
-        // Value badge — plain Label, no auto-size.
         var badge = new Label {
-            Text = $"{current.VoteDurationSeconds}s",
-            AutowrapMode = TextServer.AutowrapMode.Off,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(36, 24),
+            Text               = $"{current.VoteDurationSeconds}s",
+            AutowrapMode       = TextServer.AutowrapMode.Off,
+            VerticalAlignment  = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            CustomMinimumSize  = new Vector2(44, 0),
         };
-        badge.AddThemeFontSizeOverride("font_size", BodyFontSize);
+        ApplyRowFont(badge);
 
         slider.ValueChanged += value => {
             badge.Text = $"{(int)value}s";
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { VoteDurationSeconds = (int)value });
         };
 
-        row.AddChild(slider);
-        row.AddChild(badge);
+        inner.AddChild(slider);
+        inner.AddChild(badge);
         parent.AddChild(row);
     }
 
-    private static void AddCheckbox(Container parent, string text, bool initial, System.Action<bool> onChange) {
-        var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+    private static void AddCheckboxRow(Container parent, string text, bool initial, System.Action<bool> onChange) {
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
 
-        row.AddChild(MakeBodyLabel(text));
+        inner.AddChild(MakeRowLabel(text));
 
         var check = new CheckBox {
-            ButtonPressed = initial,
-            CustomMinimumSize = new Vector2(0, 24),
+            ButtonPressed     = initial,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
         };
         check.Toggled += pressed => onChange(pressed);
-        row.AddChild(check);
+        inner.AddChild(check);
 
         parent.AddChild(row);
     }
 
     private static void AddCardSkipsDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
-        var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
 
-        row.AddChild(MakeBodyLabel("Card skips per act (streamer's)"));
+        inner.AddChild(MakeRowLabel("Streamer card skips / act"));
 
         var dropdown = new OptionButton {
-            CustomMinimumSize = new Vector2(110, 24),
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(115, 0),
         };
 
-        // (label, jsonValue) pairs.
         (string Label, int Value)[] entries = {
             ("0 (strict)", 0),
             ("1", 1),
@@ -179,8 +162,6 @@ internal static class SettingsPanelBuilder {
             dropdown.AddItem(entries[i].Label, entries[i].Value);
             if (entries[i].Value == current.CardSkipsPerAct) selectedIdx = i;
         }
-
-        // Legacy unsupported values (e.g. 4 from a hand-edited JSON) get a "Custom (N)" row.
         if (selectedIdx == -1) {
             dropdown.AddItem($"Custom ({current.CardSkipsPerAct})", current.CardSkipsPerAct);
             selectedIdx = dropdown.ItemCount - 1;
@@ -192,7 +173,7 @@ internal static class SettingsPanelBuilder {
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = id });
         };
 
-        row.AddChild(dropdown);
+        inner.AddChild(dropdown);
         parent.AddChild(row);
     }
 
@@ -200,19 +181,158 @@ internal static class SettingsPanelBuilder {
         var path = System.IO.Path.Combine(OS.GetUserDataDir(), ModConstants.SettingsFileName);
 
         var pathLbl = new Label {
-            Text = $"Path: {path}",
-            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            Text                = $"Settings: {path}",
+            AutowrapMode        = TextServer.AutowrapMode.WordSmart,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(0, 20),
+            CustomMinimumSize   = new Vector2(0, 20),
+            Modulate            = HelpColor,
         };
-        pathLbl.AddThemeFontSizeOverride("font_size", HelpFontSize);
+        ApplyFont(pathLbl, _kreonRegular, HelpFontSize);
         parent.AddChild(pathLbl);
 
+        // "Open folder" button styled like the vanilla Credits button:
+        // reward_skip_button.png background + Kreon bold label.
         var openBtn = new Button {
-            Text = "Open folder",
-            CustomMinimumSize = new Vector2(0, 28),
+            Text              = "Open settings folder",
+            CustomMinimumSize = new Vector2(0, 48),
         };
+        ApplyButtonStyle(openBtn);
         openBtn.Pressed += () => RevealInExplorerAction.Open();
         parent.AddChild(openBtn);
+    }
+
+    // -------------------------------------------------------------------------
+    // Help text (small, muted, word-wrapped — e.g. below dropdowns)
+    // -------------------------------------------------------------------------
+
+    private static void AddHelpText(Container parent, string text) {
+        var lbl = new Label {
+            Text                = text,
+            AutowrapMode        = TextServer.AutowrapMode.Word,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Modulate            = HelpColor,
+            CustomMinimumSize   = new Vector2(0, 20),
+        };
+        ApplyFont(lbl, _kreonRegular, HelpFontSize);
+        parent.AddChild(lbl);
+    }
+
+    // -------------------------------------------------------------------------
+    // Vanilla-style divider (muted gold 2px line)
+    // -------------------------------------------------------------------------
+
+    private static void AddDivider(Container parent) {
+        var div = new ColorRect {
+            Color             = DividerColor,
+            CustomMinimumSize = new Vector2(0, 2),
+            MouseFilter       = Control.MouseFilterEnum.Ignore,
+        };
+        parent.AddChild(div);
+    }
+
+    // -------------------------------------------------------------------------
+    // Row builder: MarginContainer (h=52) → HBoxContainer → [label, control]
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Returns a MarginContainer with a single HBoxContainer child.
+    /// Callers append their label + control into the HBoxContainer.
+    /// </summary>
+    private static MarginContainer MakeRow() {
+        var mc = new MarginContainer {
+            CustomMinimumSize = new Vector2(0, 52),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        mc.AddThemeConstantOverride("margin_left",   12);
+        mc.AddThemeConstantOverride("margin_top",    0);
+        mc.AddThemeConstantOverride("margin_right",  12);
+        mc.AddThemeConstantOverride("margin_bottom", 0);
+
+        var hbox = new HBoxContainer {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical   = Control.SizeFlags.ExpandFill,
+        };
+        mc.AddChild(hbox);
+        return mc;
+    }
+
+    /// <summary>
+    /// Row label: ExpandFill, vertically centred, Kreon Regular, warm-white.
+    /// </summary>
+    private static Label MakeRowLabel(string text) {
+        var lbl = new Label {
+            Text                = text,
+            AutowrapMode        = TextServer.AutowrapMode.Off,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            VerticalAlignment   = VerticalAlignment.Center,
+        };
+        ApplyRowFont(lbl);
+        return lbl;
+    }
+
+    // -------------------------------------------------------------------------
+    // Style helpers
+    // -------------------------------------------------------------------------
+
+    private static void ApplyRowFont(Label lbl) {
+        ApplyFont(lbl, _kreonRegular, RowFontSize);
+        lbl.AddThemeColorOverride("font_color", LabelColor);
+    }
+
+    private static void ApplyFont(Label lbl, Font? font, int size) {
+        if (font != null) lbl.AddThemeFontOverride("font", font);
+        lbl.AddThemeFontSizeOverride("font_size", size);
+    }
+
+    /// <summary>
+    /// Style a Button to look like vanilla's Credits/Feedback buttons:
+    /// reward_skip_button.png background, Kreon bold label, warm-white text.
+    /// </summary>
+    private static void ApplyButtonStyle(Button btn) {
+        // Vanilla button text styling.
+        if (_kreonBold != null) btn.AddThemeFontOverride("font", _kreonBold);
+        btn.AddThemeFontSizeOverride("font_size", RowFontSize);
+        btn.AddThemeColorOverride("font_color",          LabelColor);
+        btn.AddThemeColorOverride("font_hover_color",    LabelColor);
+        btn.AddThemeColorOverride("font_pressed_color",  LabelColor);
+        btn.AddThemeColorOverride("font_focus_color",    LabelColor);
+        btn.AddThemeColorOverride("font_disabled_color", new Color(LabelColor, 0.5f));
+        // Dark outline, matching vanilla button labels.
+        btn.AddThemeConstantOverride("outline_size", 8);
+        btn.AddThemeColorOverride("font_outline_color", new Color(0.13f, 0.10f, 0.06f, 1f));
+
+        // If the background texture loaded, use it via a StyleBoxTexture.
+        if (_buttonBg != null) {
+            var normal = new StyleBoxTexture { Texture = _buttonBg };
+            btn.AddThemeStyleboxOverride("normal",   normal);
+            btn.AddThemeStyleboxOverride("hover",    normal);
+            btn.AddThemeStyleboxOverride("pressed",  normal);
+            btn.AddThemeStyleboxOverride("focus",    normal);
+            btn.AddThemeStyleboxOverride("disabled", normal);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Resource loading with graceful fallback
+    // -------------------------------------------------------------------------
+
+    private static Font? TryLoadFont(string resPath) {
+        try {
+            return ResourceLoader.Exists(resPath)
+                ? ResourceLoader.Load<Font>(resPath)
+                : null;
+        } catch {
+            return null;
+        }
+    }
+
+    private static Texture2D? TryLoadTexture(string resPath) {
+        try {
+            return ResourceLoader.Exists(resPath)
+                ? ResourceLoader.Load<Texture2D>(resPath)
+                : null;
+        } catch {
+            return null;
+        }
     }
 }

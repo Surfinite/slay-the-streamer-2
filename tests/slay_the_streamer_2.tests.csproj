@@ -17,6 +17,9 @@
     <Compile Include="..\src\Game\Ui\PortraitFit.cs" />
     <Compile Include="..\src\Game\Ui\ActVariantOption.cs" />
     <Compile Include="..\src\Game\Ui\ActVariantPopupMode.cs" />
+    <!-- settings-ui/1.7: unit-testable settings persistence helper -->
+    <Compile Include="..\src\Game\Ui\Settings\SettingsWriter.cs" />
+    <Compile Include="..\src\Game\Ui\Settings\ModConstants.cs" />
     <!--
       Game/DecisionVotes contains Harmony patches that reference
       MegaCrit.Sts2.* / Godot / HarmonyLib types not available to the test

@@ -38,7 +38,7 @@ internal static class SettingsPanelPatch {
 
     // When our mod is selected we move ModDescription up to just below the title.
     private const float DescTopOurs  = 120f;  // just below ModTitle (y=18–110)
-    private const float DescHeight   = 130f;  // ~5 lines: Author + Version + 2-3 desc lines
+    private const float DescHeight   = 160f;  // ~6 lines: Author + Version + 2-3 desc lines
     private const float Padding      = 8f;
 
     private const float PanelLeft  = 17f;

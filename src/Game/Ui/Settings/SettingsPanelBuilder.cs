@@ -130,6 +130,7 @@ internal static class SettingsPanelBuilder {
         var check = new CheckBox {
             ButtonPressed     = initial,
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(40, 40),
         };
         check.Toggled += pressed => onChange(pressed);
         inner.AddChild(check);
@@ -145,8 +146,10 @@ internal static class SettingsPanelBuilder {
 
         var dropdown = new OptionButton {
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            CustomMinimumSize = new Vector2(115, 0),
+            CustomMinimumSize = new Vector2(115, 44),
         };
+        if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
+        dropdown.AddThemeFontSizeOverride("font_size", 22);
 
         (string Label, int Value)[] entries = {
             ("0 (strict)", 0),
@@ -167,6 +170,11 @@ internal static class SettingsPanelBuilder {
             selectedIdx = dropdown.ItemCount - 1;
         }
         dropdown.Selected = selectedIdx;
+
+        // Apply Kreon font to the popup menu so opened items match the button.
+        var popup = dropdown.GetPopup();
+        if (_kreonRegular != null) popup.AddThemeFontOverride("font", _kreonRegular);
+        popup.AddThemeFontSizeOverride("font_size", 22);
 
         dropdown.ItemSelected += idx => {
             var id = (int)dropdown.GetItemId((int)idx);
@@ -214,7 +222,17 @@ internal static class SettingsPanelBuilder {
             CustomMinimumSize   = new Vector2(0, 20),
         };
         ApplyFont(lbl, _kreonRegular, HelpFontSize);
-        parent.AddChild(lbl);
+
+        // Inset left edge to match the row-label left margin (same 12px as MakeRow).
+        var mc = new MarginContainer {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        mc.AddThemeConstantOverride("margin_left",   12);
+        mc.AddThemeConstantOverride("margin_top",    0);
+        mc.AddThemeConstantOverride("margin_right",  0);
+        mc.AddThemeConstantOverride("margin_bottom", 0);
+        mc.AddChild(lbl);
+        parent.AddChild(mc);
     }
 
     // -------------------------------------------------------------------------

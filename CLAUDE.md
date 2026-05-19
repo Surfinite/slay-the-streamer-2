@@ -36,6 +36,7 @@ Per-task commits to `main` with a slice-specific prefix:
 - B.3: `plan-b-3/N.M:`
 - B.3.1: `plan-b-3-1/N.M:`
 - B.3.2: `plan-b-3-2/N.M:`
+- Settings UI: `settings-ui/N.M:`
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 

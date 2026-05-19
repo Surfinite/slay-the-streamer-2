@@ -19,6 +19,7 @@ public static class Voter {
         string label,
         IReadOnlyList<string> options,
         TimeSpan duration,
+        bool showTag = true,
         VoteReceiptPolicy? receipts = null,
         VoteParsingPolicy? parsing = null,
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt = null,
@@ -26,6 +27,6 @@ public static class Voter {
         var coord = Default
             ?? throw new InvalidOperationException(
                 "Voter.Default is not initialised. Set it from ModEntry.Initialize.");
-        return coord.Start(label, options, duration, receipts, parsing, formatReceipt, ct);
+        return coord.Start(label, options, duration, showTag, receipts, parsing, formatReceipt, ct);
     }
 }

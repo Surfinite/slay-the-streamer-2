@@ -16,6 +16,7 @@ public sealed class VoteSession : IDisposable {
     private readonly VoteParsingPolicy _parsing;
     private readonly VoteReceiptPolicy _receipts;
     private readonly Func<VoteSnapshot, ReceiptKind, string>? _formatReceipt;
+    private readonly bool _showTag;
 
     private const int MaxVoters = 10_000;
     private bool _voterCapWarnLogged;
@@ -66,7 +67,8 @@ public sealed class VoteSession : IDisposable {
         VoteParsingPolicy parsingPolicy, VoteReceiptPolicy receiptPolicy,
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt,
         IReadOnlyList<string> configuredPlatforms,
-        int voteId) {
+        int voteId,
+        bool showTag = true) {
 
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id required", nameof(id));
         if (string.IsNullOrWhiteSpace(label)) throw new ArgumentException("label required", nameof(label));
@@ -92,6 +94,7 @@ public sealed class VoteSession : IDisposable {
         _random = random; _parsing = parsingPolicy; _receipts = receiptPolicy;
         _formatReceipt = formatReceipt;
         _configuredPlatforms = configuredPlatforms;
+        _showTag = showTag;
 
         _openedAt = clock.UtcNow;
         _tallies = options.ToDictionary(o => o.Index, _ => 0);
@@ -287,7 +290,8 @@ public sealed class VoteSession : IDisposable {
             State: _state, WinnerIndex: WinnerIndex,
             RandomTieAmong: _tieAmong, NoVotesReceived: _noVotesReceived,
             DisconnectGap: liveGap,
-            VoteId: VoteId);
+            VoteId: VoteId,
+            ShowTag: _showTag);
     }
 
     public void Dispose() {

@@ -46,6 +46,7 @@ public sealed class VoteCoordinator : IDisposable {
         string label,
         IReadOnlyList<string> options,
         TimeSpan duration,
+        bool showTag = true,
         VoteReceiptPolicy? receipts = null,
         VoteParsingPolicy? parsing = null,
         Func<VoteSnapshot, ReceiptKind, string>? formatReceipt = null,
@@ -71,7 +72,8 @@ public sealed class VoteCoordinator : IDisposable {
             receiptPolicy: receipts ?? VoteReceiptPolicy.Default,
             formatReceipt: formatReceipt,
             configuredPlatforms: _configuredPlatforms,
-            voteId: voteId);
+            voteId: voteId,
+            showTag: showTag);
 
         CurrentSession = session;
         session.Closed += OnSessionEnded;

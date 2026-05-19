@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using SlayTheStreamer2.Ti.Voting;
 using Xunit;
 
@@ -73,5 +74,50 @@ public class VoteSessionVoteNonceTests : VoteSessionTestBase {
         var session = CreateSession(voteId: 42);
         InjectTwitchVoteText(session, userId: "u1", text: "#1!100");
         Assert.Equal(0, session.Tallies[1]);
+    }
+
+    [Fact]
+    public void FormatOpen_ShowTagFalse_OmitsBracketTag() {
+        var snapshot = new VoteSnapshot(
+            Id: "id",
+            Label: "Card Reward",
+            Options: new[] { new VoteOption(0, "Card A"), new VoteOption(1, "Card B") },
+            Duration: TimeSpan.FromSeconds(30),
+            TimeRemaining: TimeSpan.FromSeconds(30),
+            Tallies: new Dictionary<int, int>(),
+            State: VoteSessionState.Open,
+            WinnerIndex: null,
+            RandomTieAmong: null,
+            NoVotesReceived: false,
+            DisconnectGap: TimeSpan.Zero,
+            VoteId: 4,
+            ShowTag: false);
+
+        var text = EnglishReceipts.FormatOpen(snapshot);
+
+        Assert.DoesNotContain("[04]", text);
+        Assert.Contains("Card Reward", text);
+    }
+
+    [Fact]
+    public void FormatOpen_ShowTagTrue_IncludesBracketTag() {
+        var snapshot = new VoteSnapshot(
+            Id: "id",
+            Label: "Card Reward",
+            Options: new[] { new VoteOption(0, "Card A"), new VoteOption(1, "Card B") },
+            Duration: TimeSpan.FromSeconds(30),
+            TimeRemaining: TimeSpan.FromSeconds(30),
+            Tallies: new Dictionary<int, int>(),
+            State: VoteSessionState.Open,
+            WinnerIndex: null,
+            RandomTieAmong: null,
+            NoVotesReceived: false,
+            DisconnectGap: TimeSpan.Zero,
+            VoteId: 4,
+            ShowTag: true);
+
+        var text = EnglishReceipts.FormatOpen(snapshot);
+
+        Assert.Contains("[04]", text);
     }
 }

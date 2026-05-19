@@ -36,5 +36,6 @@ $out = "dist\slay_the_streamer_2"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item -Force "dist\publish-tmp\slay_the_streamer_2.dll" "$out\slay_the_streamer_2.dll"
 Copy-Item -Force "src\slay_the_streamer_2.json" "$out\slay_the_streamer_2.json"
+Copy-Item -Force "src\slay_the_streamer_2.example.json" "$out\slay_the_streamer_2.example.json"
 Write-Host "Built $out\"
 Write-Host "Plan B prep build cycle: OK"

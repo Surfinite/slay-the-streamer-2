@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "channel": "your_twitch_channel",
+  "username": "your_twitch_bot_username",
+  "oauthToken": "oauth:your_30_character_lowercase_alphanumeric_token",
+  "youtubeChannelId": null,
+  "cardSkipsPerAct": 1,
+  "voteOnActVariant": true,
+  "voteDurationSeconds": 30,
+  "cardSkipAsVoteOption": true,
+  "showVoteTag": false
+}

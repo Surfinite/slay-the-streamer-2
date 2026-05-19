@@ -267,7 +267,10 @@ internal static class BossVotePatch {
         var label = salt == 0
             ? $"Act {runState.CurrentActIndex + 1} boss vote"
             : $"Act {runState.CurrentActIndex + 1} boss vote (reroll #{salt})";
-        var session = coordinator.Start(label, labels, TimeSpan.FromSeconds(30));
+        var settings = SlayTheStreamer2.Game.Bootstrap.ModSettings.Current;
+        var voteDuration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
+        var showTag = settings?.ShowVoteTag ?? false;
+        var session = coordinator.Start(label, labels, voteDuration, showTag);
 
         try {
             var popup = new BossVotePopup(

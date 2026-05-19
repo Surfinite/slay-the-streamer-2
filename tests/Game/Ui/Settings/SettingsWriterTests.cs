@@ -45,4 +45,33 @@ public class SettingsWriterTests {
             if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
         }
     }
+
+    [Fact]
+    public void Write_PreservesUnknownKeys() {
+        var path = TempPath();
+        var initial = new JsonObject {
+            ["schemaVersion"] = 1,
+            ["channel"] = "secret-channel",
+            ["username"] = "secret-user",
+            ["oauthToken"] = "oauth:" + new string('a', 30),
+            ["forceL3PopupFallback"] = true,
+            ["someFutureFlag"] = "future-value"
+        };
+        File.WriteAllText(path, initial.ToJsonString());
+
+        try {
+            SettingsWriter.Write(path, MakeSettings(voteDur: 60));
+
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert.Equal("secret-channel", json["channel"]!.GetValue<string>());
+            Assert.Equal("secret-user", json["username"]!.GetValue<string>());
+            Assert.True(json["forceL3PopupFallback"]!.GetValue<bool>());
+            Assert.Equal("future-value", json["someFutureFlag"]!.GetValue<string>());
+            Assert.Equal(60, json["voteDurationSeconds"]!.GetValue<int>());
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bak")) File.Delete(path + ".bak");
+            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
+        }
+    }
 }

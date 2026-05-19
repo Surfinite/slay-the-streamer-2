@@ -29,6 +29,22 @@ public abstract record SettingsResult {
 public static class ModSettings {
     public const int CurrentSchemaVersion = 1;
 
+    private static ChatSettings? _current;
+
+    /// <summary>
+    /// Hot-reload read site. Consumers read this at invocation time rather than
+    /// caching a captured-once snapshot. Volatile-read for cross-thread visibility
+    /// (async chat services and the dispatcher cross threads).
+    /// </summary>
+    public static ChatSettings? Current => System.Threading.Volatile.Read(ref _current);
+
+    /// <summary>
+    /// Called by ModEntry.Init after Load succeeds, and by SettingsWriter when
+    /// a control change applies. Volatile-write for cross-thread visibility.
+    /// </summary>
+    public static void UpdateCurrent(ChatSettings settings) =>
+        System.Threading.Volatile.Write(ref _current, settings);
+
     public static SettingsResult Load(string path) {
         if (!File.Exists(path)) return new SettingsResult.Missing(path);
 

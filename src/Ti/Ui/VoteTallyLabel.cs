@@ -67,7 +67,11 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
 
         var sb = new StringBuilder();
         // Vote-ID in header so YT viewers (who don't see Twitch receipts) can use the !NN syntax.
-        sb.AppendLine($"Chat voting [{_session.VoteId:D2}] — {secondsLeft}s left, type #N (or #N!{_session.VoteId:D2})");
+        if (_session.ShowTag) {
+            sb.AppendLine($"Chat voting [{_session.VoteId:D2}] — {secondsLeft}s left, type #N (or #N!{_session.VoteId:D2})");
+        } else {
+            sb.AppendLine($"Chat voting — {secondsLeft}s left, type #N");
+        }
 
         var perPlatform = _session.TalliesByPlatform;
         if (perPlatform is null) {

@@ -46,6 +46,7 @@ public sealed class VoteSession : IDisposable {
     public IReadOnlyList<VoteOption> Options { get; }
     public TimeSpan Duration { get; }
     public int VoteId { get; }
+    public bool ShowTag => _showTag;
     public int TallyVersion { get; private set; }
     public VoteSessionState State => _state;
     public int? WinnerIndex { get; private set; }

@@ -378,6 +378,7 @@ internal static partial class ActVariantVotePatch {
             bool cancelled) {
         Interlocked.Exchange(ref _resumeInProgress, 1);
         string? previousAct1 = null;
+        bool needsAct1Restore = false;
         try {
             if (cancelled) {
                 // Clean no-op: vanilla OnEmbarkPressed never ran, so the lobby
@@ -399,15 +400,22 @@ internal static partial class ActVariantVotePatch {
             try {
                 // NButton arg is discarded inside vanilla's body — pass null.
                 // _resumeInProgress=1 (set above) ensures our prefix passes
-                // through on this synthetic re-entry.
+                // through on this synthetic re-entry. We do NOT restore
+                // Lobby.Act1 after this returns: vanilla reads Lobby.Act1
+                // during run-state construction, which can happen after Invoke
+                // returns to us (verified by godot.log: "Preloading 'Act=...'"
+                // can fire post-Invoke). Restoring previousAct1 in finally
+                // here would race vanilla and reset to "random" before vanilla
+                // commits — producing a random act despite chat's vote.
                 onEmbarkMethod.Invoke(screen, new object?[] { (NButton?)null });
             } catch (TargetInvocationException tie) {
                 TiLog.Error("[SlayTheStreamer2][act-variant-vote] re-invoke threw; attempting fallback with Act1=random",
                     tie.InnerException ?? tie);
-                winnerKey = ActVariantVoteResolver.RandomActKey;  // align with finally so restoration is consistent
+                needsAct1Restore = true;
                 try {
                     lobby.Act1 = ActVariantVoteResolver.RandomActKey;
                     onEmbarkMethod.Invoke(screen, new object?[] { (NButton?)null });
+                    needsAct1Restore = false;   // fallback succeeded; leave Act1=random for vanilla
                 } catch (TargetInvocationException fallbackTie) {
                     TiLog.Error("[SlayTheStreamer2][act-variant-vote] fallback re-invoke threw; player may be soft-locked",
                         fallbackTie.InnerException ?? fallbackTie);
@@ -417,11 +425,16 @@ internal static partial class ActVariantVotePatch {
             }
         } catch (TargetInvocationException tie) {
             TiLog.Error("[SlayTheStreamer2][act-variant-vote] resume threw (reflection)", tie.InnerException ?? tie);
+            needsAct1Restore = true;
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][act-variant-vote] resume threw", ex);
+            needsAct1Restore = true;
         } finally {
-            if (previousAct1 is not null
-                    && !string.Equals(winnerKey, ActVariantVoteResolver.RandomActKey, StringComparison.Ordinal)) {
+            // Only restore Lobby.Act1 on a real failure (both Invoke attempts
+            // threw, or an outer catch fired). The happy path intentionally
+            // leaves Lobby.Act1 = winnerKey so vanilla's post-Invoke run-state
+            // construction reads the chat-chosen variant.
+            if (needsAct1Restore && previousAct1 is not null) {
                 try { lobby.Act1 = previousAct1; } catch { /* swallow */ }
             }
             Interlocked.Exchange(ref _resumeInProgress, 0);

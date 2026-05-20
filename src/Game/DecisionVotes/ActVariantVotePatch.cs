@@ -127,15 +127,14 @@ internal static partial class ActVariantVotePatch {
     };
 
     private static bool GetVoteOnActVariantSetting() {
-        return ModEntry.Settings is SettingsResult.Success s
-            ? s.Settings.VoteOnActVariant
-            : true;
+        // Hot-reload read: ModSettings.Current is updated immediately when the
+        // streamer toggles the setting via the in-game UI. ModEntry.Settings is
+        // the captured-once load-time value and would mask the UI change.
+        return SlayTheStreamer2.Game.Bootstrap.ModSettings.Current?.VoteOnActVariant ?? true;
     }
 
     private static bool GetForceL3PopupFallbackSetting() {
-        return ModEntry.Settings is SettingsResult.Success s
-            ? s.Settings.ForceL3PopupFallback
-            : false;
+        return SlayTheStreamer2.Game.Bootstrap.ModSettings.Current?.ForceL3PopupFallback ?? false;
     }
 
     static bool Prefix(object __instance, NButton _) {

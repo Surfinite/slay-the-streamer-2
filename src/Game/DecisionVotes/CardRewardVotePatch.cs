@@ -282,11 +282,18 @@ internal static class CardRewardVotePatch {
             var cardIndex = CardRewardOptionLabels.ResolveCardIndex(winnerIndex, includeSkip);
 
             if (cardIndex is null) {
-                // Chat voted Skip (#0 with includeSkip = true). Trigger vanilla's skip path via
-                // OnAlternateRewardSelected(DismissScreenAndKeepReward) — exactly what the
-                // vanilla "Skip" button does. The skip-gate's OnAlternateRewardSelected prefix
-                // checks _voteInProgress; clear it first so the call goes through.
-                TiLog.Info("[SlayTheStreamer2][card-vote] chat voted Skip (#0); triggering vanilla skip path on main thread");
+                // Chat voted Skip (#0 with includeSkip = true). Use
+                // OnAlternateRewardSelected(DismissScreenAndRemoveReward) — the same path
+                // PaelsWing's SACRIFICE uses. Vanilla's Skip button uses KeepReward (which
+                // leaves the reward claimable later and is gated by the streamer's skip
+                // budget); RemoveReward deletes the reward outright (no re-claim, no
+                // budget interaction), which matches the design intent: chat's #0 vote
+                // is a permanent decline. Without this, two bugs:
+                //   1. Streamer could click "Add a card to your deck" again and re-vote.
+                //   2. When the streamer's skip budget is exhausted, KeepReward's gate
+                //      no-ops the call — chat-skip became a soft-lock until a card was
+                //      picked.
+                TiLog.Info("[SlayTheStreamer2][card-vote] chat voted Skip (#0); removing reward from screen");
                 coordinator.Dispatcher.Post(() => ResumeSkipOnMainThread(screen, runIdAtStart, optionsSig));
                 return;
             }
@@ -427,8 +434,8 @@ internal static class CardRewardVotePatch {
             // (which checks _voteInProgress == 1) doesn't block our own skip call.
             // _resumeInProgress is NOT set here because we are not re-entering SelectCard.
             Interlocked.Exchange(ref _voteInProgress, 0);
-            TiLog.Info("[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected(DismissScreenAndKeepReward)");
-            method.Invoke(screen, new object[] { PostAlternateCardRewardAction.DismissScreenAndKeepReward });
+            TiLog.Info("[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected(DismissScreenAndRemoveReward)");
+            method.Invoke(screen, new object[] { PostAlternateCardRewardAction.DismissScreenAndRemoveReward });
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] skip-resume threw", ex);
         } finally {

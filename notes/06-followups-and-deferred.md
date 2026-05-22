@@ -4,6 +4,40 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Settings UI (resolved 2026-05-22)
+
+First in-game settings UI for the mod. Injects a custom settings panel into the right-hand side of vanilla's `NModInfoContainer` when the player selects Slay the Streamer 2 in the mod manager. Five tunable knobs + an Open-folder button. Hot-reload between runs via `ModSettings.Current`-as-static + a 500ms-debounced atomic writer with `.bak` rolling backup. Vanilla-style row visuals (Kreon font, tickbox atlas icons, slider grabber from `scrollbar_train_large.tres`, dividers).
+
+### Acceptance gate — 9 green, 2 deferred
+
+Per the plan's operator-validation checklist:
+
+- **Step 2 (vote duration applies)** ☑ slider change reflects in next-run vote
+- **Step 3 (`voteOnActVariant` toggle off)** ☑ after hot-reload fix (7.1: read `ModSettings.Current` not captured-once)
+- **Step 4 (`cardSkipAsVoteOption` chat skip)** ☑ after 7.3 (switched to `DismissScreenAndRemoveReward` — fixes the re-click + zero-budget softlock that `KeepReward` introduced)
+- **Step 5 (`showVoteTag` display + parser invariant)** ☑ tag hidden when off; stale `!NN` still dropped
+- **Step 6 (card skips per act `0 strict`)** ☑ after 7.4 (hide `CardSkipCounterLabel` when `LimitThisAct <= 0`)
+- **Step 7 (persistence + unknown-key preservation + Unlimited dropdown)** ☑ after 7.4 (Godot 4's `OptionButton.AddItem(label, id=-1)` treats -1 as auto-assign sentinel; switched to `ItemMetadata`)
+- **Step 8 (write-failure toast)** ☑ after 7.5–7.7 ("Failed to save settings." appears below the file-path row when the JSON is read-only; single shared hide-timer; 4s of quiet to dismiss)
+- **Step 9 (Reveal in Explorer)** ☑ Open-settings-folder button shells out via `OS.ShellOpen`
+- **Step 10 (mid-run inaccessibility)** ☑ confirmed greyed
+- **Step 1 (co-mod interaction with Relics Reborn) — deferred** to release-prep; not part of v1 shipping criteria
+- **Step 11 (full-pool boss vote on a partially-unlocked profile) — deferred** ("document edge cases" task more than pass/fail; the originally-planned `Unlock everything` button was dropped during v3 → README note documents the full-pool behaviour and the dev-console escape hatch `unlock all`)
+
+### Known issues flagged for follow-up
+
+- **Act-variant vote correctness bug (pre-existing, surfaced during op-val).** When chat picks an Act 1 variant (e.g. Overgrowth), the run still loads the other variant (Underdocks). Verified `Lobby.Act1` IS the reader (`StartRunLobby.cs:412` → `GetAct(Act1)`), and our resume DOES set `Lobby.Act1 = winnerKey` and removes the eager finally-restore (7.2). But `NCharacterSelectScreen.OnEmbarkPressed:484` runs `_lobby.Act1 = _actDropdown.CurrentOption` AFTER our prefix returns and our pre-Invoke write — clobbering the chat-chosen variant with the dropdown's default `"random"`. Fix path: write to `_actDropdown._currentOptionIndex` reflectively before re-invoke, OR find an earlier hook. WIP investigation lives in working-tree edits to `src/Game/DecisionVotes/ActVariantVotePatch.cs` at tag time; resume in a fresh session.
+
+### Architectural outcomes
+
+- **Approach B-modified locked.** Inject as a Harmony postfix on `NModInfoContainer.Fill`; the panel renders as a `ScrollContainer` over the description region with `ModImage` hidden + `ModDescription` shrunk-and-repositioned to make room. Avoids scene-tab surgery and the brittle vanilla `_tabs` reflective mutation considered in spec v1 Approach A.
+- **Vanilla styling via theme-injection, not scene instantiation.** `NSettingsSlider` and `NSettingsDropdown` are abstract — can't instantiate. `NSettingsTickbox` has no Label sibling. Solution: hand-rolled plain Godot controls (CheckBox, HSlider, OptionButton, Button) with vanilla theme resources applied via `AddThemeFontOverride` / `AddThemeIconOverride` / `AddThemeStyleboxOverride`. Specific resources used: `kreon_regular_shared.tres` (labels), `kreon_bold_glyph_space_two.tres` (button), `reward_skip_button.png` (button background), `checkbox_ticked.tres` / `checkbox_unticked.tres` AtlasTextures (tickbox icons, downscaled to 40×40), `scrollbar_train_large.tres` AtlasTexture (slider grabber, downscaled aspect-preserved to 36px height). Track + fill use `StyleBoxFlat` with vertical `ContentMargin` rather than vanilla's NinePatchRect because HSlider's `slider` stylebox stretches to the full control height — colours match vanilla `self_modulate` values (`Color(0, 0, 0, 0.361)` for the dark track, `Color(0.361, 0.451, 0.459, 1)` for the teal fill).
+- **`AtlasTexture.GetImage()` returns the full atlas, not the cropped region.** Critical landmine when downscaling vanilla icons — must `GetRegion(atlas.Region)` first, then resize. See `SettingsPanelBuilder.Downscale`. Without this, scaling produces a thumbnail of the entire UI atlas (mostly transparent).
+- **Godot 4 `OptionButton.AddItem(label, id = -1)` sentinel collision.** The default `id = -1` is Godot's "auto-assign from index" sentinel; passing `-1` literally as our Unlimited value got reinterpreted as auto-assign → wrote 5 (the auto-index) instead. Solution: use `ItemMetadata` (Variant, no sentinel interpretation) rather than `ItemId` for value storage.
+- **`CustomMinimumSize` is layout-only, not icon-size.** CheckBox icons render at the texture's native pixel size. To make them visually larger or smaller, downscale the source texture and apply via `AddThemeIconOverride`. `CustomMinimumSize` only affects the control's layout hit-box.
+
+---
+
 ## Plan B.3.2 act-variant vote (resolved 2026-05-18)
 
 Adds a pre-act-1 chat vote between the two Act 1 variants (Underdocks vs Overgrowth), suspending the Embark click until chat picks. Closes the cross-act-variant-boss-pool gap deferred from B.3.1 by giving the streamer's chat a way to steer the variant choice. Covers both Standard runs (`NCharacterSelectScreen`) and Custom mode (`NCustomRunScreen`).

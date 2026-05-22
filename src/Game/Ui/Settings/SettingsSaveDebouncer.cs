@@ -64,10 +64,12 @@ internal sealed partial class SettingsSaveDebouncer : Node {
     }
 
     /// <summary>
-    /// Surface a short-lived status line at the bottom of our settings panel.
-    /// Walks up from this Node to the panel root (Sts2SettingsPanel), then
-    /// adds/reuses a named Label child so repeated failures replace each other
-    /// rather than stacking. Auto-hides after 4 seconds via a one-shot Timer.
+    /// Surface a short-lived status line at the TOP of our settings panel so
+    /// it's always visible regardless of scroll position. Walks up from this
+    /// Node to the panel root (Sts2SettingsPanel), then adds/reuses a named
+    /// Label child (moved to index 0 so it renders above the other rows).
+    /// A single shared hide-timer is reset on each call rather than leaking
+    /// one Timer per burst of failures.
     /// </summary>
     private void ShowToast(string text) {
         Node? cursor = this;
@@ -76,27 +78,36 @@ internal sealed partial class SettingsSaveDebouncer : Node {
         }
         if (cursor is not Container panel) return;
 
-        const string ToastName = "Sts2SettingsToast";
+        const string ToastName     = "Sts2SettingsToast";
+        const string HideTimerName = "Sts2ToastHideTimer";
+
         var toast = panel.GetNodeOrNull<Label>(ToastName);
         if (toast is null) {
             toast = new Label {
                 Name                = ToastName,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                CustomMinimumSize   = new Vector2(0, 28),
+                CustomMinimumSize   = new Vector2(0, 32),
                 Modulate            = new Color(1f, 0.6f, 0.5f, 1f),
             };
             panel.AddChild(toast);
         }
+        panel.MoveChild(toast, 0);
         toast.Text    = text;
         toast.Visible = true;
 
-        var hideTimer = new Timer { Name = "Sts2ToastHideTimer", WaitTime = 4.0, OneShot = true };
-        hideTimer.Timeout += () => {
-            if (GodotObject.IsInstanceValid(toast)) toast.Visible = false;
-            if (GodotObject.IsInstanceValid(hideTimer)) hideTimer.QueueFree();
-        };
-        panel.AddChild(hideTimer);
-        hideTimer.Start();
+        // Reuse a single hide-timer; reset its remaining time on each call so
+        // a burst of failures keeps the toast visible until 4s of quiet.
+        var hideTimer = panel.GetNodeOrNull<Timer>(HideTimerName);
+        if (hideTimer is null) {
+            hideTimer = new Timer { Name = HideTimerName, WaitTime = 4.0, OneShot = true };
+            hideTimer.Timeout += () => {
+                var t = panel.GetNodeOrNull<Label>(ToastName);
+                if (t is not null) t.Visible = false;
+            };
+            panel.AddChild(hideTimer);
+        }
+        hideTimer.Stop();
+        hideTimer.Start(4.0);
     }
 
     public override void _ExitTree() {

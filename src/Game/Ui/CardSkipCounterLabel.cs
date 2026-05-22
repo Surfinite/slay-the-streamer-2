@@ -10,11 +10,13 @@ namespace SlayTheStreamer2.Game.Ui;
 /// no theme overrides) — known to render reliably. For v0.1 diagnostic placement,
 /// anchored just below the vote tally region (top-right). Spatial co-location with
 /// the proceed button is deferred until we have a working baseline rendering.
-/// Hidden when cardSkipsPerAct == -1 (unlimited; nothing to display).
+/// Hidden when cardSkipsPerAct == -1 (unlimited; nothing to display) or
+/// cardSkipsPerAct == 0 (strict; the streamer has no skips this act, so the
+/// "0 card skips remaining" line is just noise — they're never getting any).
 /// </summary>
 public partial class CardSkipCounterLabel : RichTextLabel {
     internal void UpdateText(SkipBudgetSnapshot snap) {
-        if (snap.LimitThisAct < 0) {
+        if (snap.LimitThisAct <= 0) {
             Visible = false;
             return;
         }

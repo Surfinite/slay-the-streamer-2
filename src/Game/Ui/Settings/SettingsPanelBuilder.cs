@@ -96,14 +96,14 @@ internal static class SettingsPanelBuilder {
         // dark transparent. HSlider's `slider` stylebox fills the full control
         // height, so we use a StyleBoxFlat with vertical ContentMargin to
         // visually constrain the dark band to a thin centred line.
-        const int SliderTrackBandHeight = 8;
-        const int SliderFillBandHeight  = 6;
+        const int SliderTrackBandHeight = 25;
+        const int SliderFillBandHeight  = 23;
         _sliderTrackStyle ??= new StyleBoxFlat {
             BgColor                 = new Color(0f, 0f, 0f, 0.361f),
-            CornerRadiusTopLeft     = 3,
-            CornerRadiusTopRight    = 3,
-            CornerRadiusBottomLeft  = 3,
-            CornerRadiusBottomRight = 3,
+            CornerRadiusTopLeft     = 5,
+            CornerRadiusTopRight    = 5,
+            CornerRadiusBottomLeft  = 5,
+            CornerRadiusBottomRight = 5,
             ContentMarginTop        = (SliderGrabberSize - SliderTrackBandHeight) / 2f,
             ContentMarginBottom     = (SliderGrabberSize - SliderTrackBandHeight) / 2f,
         };
@@ -111,10 +111,10 @@ internal static class SettingsPanelBuilder {
         // as _sliderTrackStyle: StyleBoxFlat with corner radius for soft edges.
         _sliderFillStyle ??= new StyleBoxFlat {
             BgColor                 = new Color(0.361f, 0.451f, 0.459f, 1f),
-            CornerRadiusTopLeft     = 2,
-            CornerRadiusTopRight    = 2,
-            CornerRadiusBottomLeft  = 2,
-            CornerRadiusBottomRight = 2,
+            CornerRadiusTopLeft     = 4,
+            CornerRadiusTopRight    = 4,
+            CornerRadiusBottomLeft  = 4,
+            CornerRadiusBottomRight = 4,
             ContentMarginTop        = (SliderGrabberSize - SliderFillBandHeight) / 2f,
             ContentMarginBottom     = (SliderGrabberSize - SliderFillBandHeight) / 2f,
         };
@@ -233,23 +233,30 @@ internal static class SettingsPanelBuilder {
         dropdown.AddThemeFontSizeOverride("font_size", 22);
         dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
 
-        (string Label, int Value)[] entries = {
+        (string Label, int Value)[] entries = [
             ("0  (strict)", 0),
             ("1", 1),
             ("2", 2),
             ("3", 3),
             ("5", 5),
             ("Unlimited", -1)
-        };
+        ];
 
+        // Store the JSON value in ItemMetadata rather than ItemId. Godot 4's
+        // OptionButton.AddItem(label, id=-1) treats id=-1 as the "auto-assign
+        // from index" sentinel — so passing -1 for the Unlimited row collides
+        // and Godot stores the auto-assigned index (5) instead of -1.
         int selectedIdx = -1;
         for (int i = 0; i < entries.Length; i++) {
-            dropdown.AddItem(entries[i].Label, entries[i].Value);
+            dropdown.AddItem(entries[i].Label);
+            dropdown.SetItemMetadata(i, entries[i].Value);
             if (entries[i].Value == current.CardSkipsPerAct) selectedIdx = i;
         }
         if (selectedIdx == -1) {
-            dropdown.AddItem($"Custom ({current.CardSkipsPerAct})", current.CardSkipsPerAct);
-            selectedIdx = dropdown.ItemCount - 1;
+            dropdown.AddItem($"Custom ({current.CardSkipsPerAct})");
+            int customIdx = dropdown.ItemCount - 1;
+            dropdown.SetItemMetadata(customIdx, current.CardSkipsPerAct);
+            selectedIdx = customIdx;
         }
         dropdown.Selected = selectedIdx;
 
@@ -259,8 +266,8 @@ internal static class SettingsPanelBuilder {
         popup.AddThemeFontSizeOverride("font_size", 22);
 
         dropdown.ItemSelected += idx => {
-            var id = (int)dropdown.GetItemId((int)idx);
-            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = id });
+            var value = dropdown.GetItemMetadata((int)idx).AsInt32();
+            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = value });
         };
 
         inner.AddChild(dropdown);

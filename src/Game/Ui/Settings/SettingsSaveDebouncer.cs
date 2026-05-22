@@ -64,12 +64,11 @@ internal sealed partial class SettingsSaveDebouncer : Node {
     }
 
     /// <summary>
-    /// Surface a short-lived status line at the TOP of our settings panel so
-    /// it's always visible regardless of scroll position. Walks up from this
-    /// Node to the panel root (Sts2SettingsPanel), then adds/reuses a named
-    /// Label child (moved to index 0 so it renders above the other rows).
-    /// A single shared hide-timer is reset on each call rather than leaking
-    /// one Timer per burst of failures.
+    /// Surface a short-lived status line at the BOTTOM of our settings panel
+    /// (below the file-path row, where the panel naturally has whitespace).
+    /// Walks up from this Node to the panel root (Sts2SettingsPanel), then
+    /// adds/reuses a named Label child. A single shared hide-timer is reset
+    /// on each call rather than leaking one Timer per burst of failures.
     /// </summary>
     private void ShowToast(string text) {
         Node? cursor = this;
@@ -91,7 +90,6 @@ internal sealed partial class SettingsSaveDebouncer : Node {
             };
             panel.AddChild(toast);
         }
-        panel.MoveChild(toast, 0);
         toast.Text    = text;
         toast.Visible = true;
 

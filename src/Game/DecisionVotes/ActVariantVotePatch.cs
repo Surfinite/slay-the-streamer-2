@@ -80,6 +80,18 @@ internal static partial class ActVariantVotePatch {
     private static readonly Lazy<MethodInfo?> _customRunOnEmbark = new(() =>
         AccessTools.Method(typeof(NCustomRunScreen), "OnEmbarkPressed", new[] { typeof(NButton) }));
 
+    // Reflection handles for compensating vanilla's dropdown clobber inside
+    // NCharacterSelectScreen.OnEmbarkPressed (line 484): `_lobby.Act1 =
+    // _actDropdown.CurrentOption`. Set _actDropdown._currentOptionIndex to
+    // the winner's option-index before re-invoke so vanilla writes the
+    // chat-chosen variant instead of the dropdown's default "random".
+    private static readonly Lazy<FieldInfo?> _actDropdownField = new(() =>
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_actDropdown"));
+    private static readonly Lazy<FieldInfo?> _actDropdownOptionsField = new(() =>
+        AccessTools.Field(typeof(NActDropdown), "_options"));
+    private static readonly Lazy<FieldInfo?> _actDropdownCurrentOptionIndexField = new(() =>
+        AccessTools.Field(typeof(NActDropdown), "_currentOptionIndex"));
+
     static IEnumerable<MethodBase> TargetMethods() {
         var found = new List<MethodBase>(2);
         if (_characterSelectOnEmbark.Value is { } m1) found.Add(m1);
@@ -397,16 +409,21 @@ internal static partial class ActVariantVotePatch {
                 TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: Lobby.Act1 = {winnerKey} (previous: {previousAct1})");
             }
 
+            // Stage the dropdown so vanilla's `_lobby.Act1 = _actDropdown.CurrentOption`
+            // at NCharacterSelectScreen.OnEmbarkPressed line 484 writes our
+            // winnerKey instead of "random". SetReady → BeginRunIfAllPlayersReady
+            // → BeginRunLocally reads Lobby.Act1 synchronously inside Invoke, so
+            // a post-Invoke fixup would be too late. NCustomRunScreen has no
+            // such clobber. Failures here are logged and pass through to the
+            // previous (broken-for-singleplayer) behavior, never throw.
+            if (screen is NCharacterSelectScreen) {
+                TrySyncActDropdownIndex(screen, winnerKey);
+            }
+
             try {
                 // NButton arg is discarded inside vanilla's body — pass null.
                 // _resumeInProgress=1 (set above) ensures our prefix passes
-                // through on this synthetic re-entry. We do NOT restore
-                // Lobby.Act1 after this returns: vanilla reads Lobby.Act1
-                // during run-state construction, which can happen after Invoke
-                // returns to us (verified by godot.log: "Preloading 'Act=...'"
-                // can fire post-Invoke). Restoring previousAct1 in finally
-                // here would race vanilla and reset to "random" before vanilla
-                // commits — producing a random act despite chat's vote.
+                // through on this synthetic re-entry.
                 onEmbarkMethod.Invoke(screen, new object?[] { (NButton?)null });
             } catch (TargetInvocationException tie) {
                 TiLog.Error("[SlayTheStreamer2][act-variant-vote] re-invoke threw; attempting fallback with Act1=random",
@@ -414,6 +431,12 @@ internal static partial class ActVariantVotePatch {
                 needsAct1Restore = true;
                 try {
                     lobby.Act1 = ActVariantVoteResolver.RandomActKey;
+                    // Resync dropdown back to "random" so the retry Invoke's
+                    // line-484 write doesn't re-clobber Lobby.Act1 with the
+                    // (failed) winner index we staged above.
+                    if (screen is NCharacterSelectScreen) {
+                        TrySyncActDropdownIndex(screen, ActVariantVoteResolver.RandomActKey);
+                    }
                     onEmbarkMethod.Invoke(screen, new object?[] { (NButton?)null });
                     needsAct1Restore = false;   // fallback succeeded; leave Act1=random for vanilla
                 } catch (TargetInvocationException fallbackTie) {
@@ -439,6 +462,48 @@ internal static partial class ActVariantVotePatch {
             }
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
+        }
+    }
+
+    /// <summary>
+    /// Reflectively sets NCharacterSelectScreen._actDropdown._currentOptionIndex
+    /// to the slot in _options matching act1Value, so vanilla's line-484 write
+    /// (`_lobby.Act1 = _actDropdown.CurrentOption`) writes our intended value
+    /// rather than the dropdown's default. Never throws; degrades to logged
+    /// no-op (i.e., previous broken behavior — vanilla writes "random") if any
+    /// reflection step fails. _options order is read at runtime so a MegaCrit
+    /// reorder is detected rather than silently misrouted.
+    /// </summary>
+    private static void TrySyncActDropdownIndex(object screen, string act1Value) {
+        try {
+            var dropdownField = _actDropdownField.Value;
+            if (dropdownField is null) {
+                TiLog.Warn("[SlayTheStreamer2][act-variant-vote] _actDropdown field not found on NCharacterSelectScreen; vanilla will clobber Lobby.Act1 with dropdown default");
+                return;
+            }
+            if (dropdownField.GetValue(screen) is not NActDropdown dropdown) {
+                TiLog.Warn("[SlayTheStreamer2][act-variant-vote] _actDropdown on NCharacterSelectScreen is null or wrong type; vanilla will clobber Lobby.Act1");
+                return;
+            }
+            var optionsField = _actDropdownOptionsField.Value;
+            if (optionsField?.GetValue(null) is not string[] options) {
+                TiLog.Warn("[SlayTheStreamer2][act-variant-vote] NActDropdown._options not found or wrong type; cannot sync dropdown index");
+                return;
+            }
+            int targetIndex = Array.IndexOf(options, act1Value);
+            if (targetIndex < 0) {
+                TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] winnerKey '{act1Value}' not found in NActDropdown._options ([{string.Join(",", options)}]); cannot sync dropdown index");
+                return;
+            }
+            var indexField = _actDropdownCurrentOptionIndexField.Value;
+            if (indexField is null) {
+                TiLog.Warn("[SlayTheStreamer2][act-variant-vote] NActDropdown._currentOptionIndex field not found; cannot sync dropdown index");
+                return;
+            }
+            indexField.SetValue(dropdown, targetIndex);
+            TiLog.Info($"[SlayTheStreamer2][act-variant-vote] resume: synced _actDropdown index to {targetIndex} ({act1Value}) so vanilla's line-484 write lands the chat-chosen variant");
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][act-variant-vote] TrySyncActDropdownIndex threw; vanilla may clobber Lobby.Act1", ex);
         }
     }
 

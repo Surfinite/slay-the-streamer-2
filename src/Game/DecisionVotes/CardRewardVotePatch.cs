@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.CardRewardAlternatives;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
@@ -25,6 +26,7 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 internal static class CardRewardVotePatch {
     private static int _voteInProgress;
     private static int _resumeInProgress;
+    private static int _chatSkipResumeInProgress;
     private static int _multiplayerWarnFired;
 
     /// <summary>
@@ -53,8 +55,13 @@ internal static class CardRewardVotePatch {
         new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_cardRow"));
     private static readonly Lazy<MethodInfo?> _selectCardMethod =
         new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "SelectCard", new[] { typeof(NCardHolder) }));
+    // v0.106.1 changed OnAlternateRewardSelected from taking PostAlternateCardRewardAction to
+    // taking int (the index of the chosen alternative button in _extraOptions). See
+    // [decompiled/sts2/MegaCrit.Sts2.Core.Nodes.Screens.CardSelection/NCardRewardSelectionScreen.cs:260].
     private static readonly Lazy<MethodInfo?> _onAlternateRewardSelectedMethod =
-        new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected", new[] { typeof(PostAlternateCardRewardAction) }));
+        new(() => AccessTools.Method(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected", new[] { typeof(int) }));
+    private static readonly Lazy<FieldInfo?> _extraOptionsField =
+        new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_extraOptions"));
 
     /// <summary>
     /// Captures option identity (not holder identity) for reroll detection at resume.
@@ -96,6 +103,21 @@ internal static class CardRewardVotePatch {
         return _optionsField.Value?.GetValue(screen) as IReadOnlyList<CardCreationResult>;
     }
 
+    /// <summary>
+    /// Find the index of the "Skip" alternative in the screen's <c>_extraOptions</c>.
+    /// Always 0 in the default vanilla layout (Skip is added first when CanSkip), but
+    /// resolved dynamically because Hook.ModifyCardRewardAlternatives can mutate the
+    /// list. Returns null if no Skip alt is present (e.g., CanSkip=false rewards).
+    /// </summary>
+    private static int? FindSkipAlternativeIndex(NCardRewardSelectionScreen screen) {
+        var raw = _extraOptionsField.Value?.GetValue(screen);
+        if (raw is not IReadOnlyList<CardRewardAlternative> extras) return null;
+        for (int i = 0; i < extras.Count; i++) {
+            if (extras[i]?.OptionId == "Skip") return i;
+        }
+        return null;
+    }
+
     private static int? TryGetPlayerCount() {
         try {
             return RunManager.Instance?.DebugOnlyGetState()?.Players?.Count;
@@ -123,7 +145,10 @@ internal static class CardRewardVotePatch {
                 return false;
             }
             if (_onAlternateRewardSelectedMethod.Value is null) {
-                TiLog.Warn("[SlayTheStreamer2][card-vote] soft check: OnAlternateRewardSelected(PostAlternateCardRewardAction) not found; chat Skip votes will fall back to streamer-manual");
+                TiLog.Warn("[SlayTheStreamer2][card-vote] soft check: OnAlternateRewardSelected(int) not found; chat Skip votes will fall back to no-op (sub-screen will not auto-dismiss)");
+            }
+            if (_extraOptionsField.Value is null) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] soft check: NCardRewardSelectionScreen._extraOptions field not found; chat Skip votes will fall back to no-op");
             }
 
             // Soft check: run-id accessor. Failure logs Warn but does NOT abort registration.
@@ -428,19 +453,37 @@ internal static class CardRewardVotePatch {
 
             var method = _onAlternateRewardSelectedMethod.Value;
             if (method is null) {
-                TiLog.Warn("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected not found; chat Skip vote ignored — streamer can pick a card or hit Proceed manually");
+                TiLog.Warn("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected(int) not found; chat Skip vote ignored — streamer must dismiss the sub-screen manually");
                 // Intentionally NO SendCancellationReceipt: the vote completed normally (chat got
                 // a "Chat chose #0: Skip" close-receipt). The mechanism is what failed, not the vote;
                 // a cancellation receipt would mislead chat into thinking their vote was invalid.
                 return;
             }
 
-            // Clear _voteInProgress before invoking so the OnAlternateRewardSelected prefix
-            // (which checks _voteInProgress == 1) doesn't block our own skip call.
-            // _resumeInProgress is NOT set here because we are not re-entering SelectCard.
+            // Resolve Skip's index in _extraOptions. Our CardRewardAlternative_Generate_Postfix
+            // flips Skip's AfterSelected to EndSelectionAndCompleteReward so invoking the alt
+            // here consumes the reward outright (sub-screen closes; parent button removed via
+            // vanilla's natural RewardCollectedFrom path). See the class doc-comment on
+            // [CardRewardAlternative_Generate_Postfix] below for full design rationale.
+            var skipIndex = FindSkipAlternativeIndex(screen);
+            if (skipIndex is null) {
+                TiLog.Warn("[SlayTheStreamer2][card-vote] chat-skip resume: no Skip alt in _extraOptions (CanSkip=false reward?); sub-screen not dismissed");
+                return;
+            }
+
+            // Clear _voteInProgress before invoking so the vote-mid-flight branch of the
+            // OnAlternateRewardSelected prefix doesn't fire. Set _chatSkipResumeInProgress
+            // so the prefix's streamer-Skip budget gate (which sees a "normal" non-vote
+            // invocation) knows to PASS without consuming budget — chat-skip is budget-free
+            // by design. _resumeInProgress is NOT set: we're not re-entering SelectCard.
             Interlocked.Exchange(ref _voteInProgress, 0);
-            TiLog.Info("[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected(EndSelectionAndCompleteReward)");
-            method.Invoke(screen, new object[] { PostAlternateCardRewardAction.EndSelectionAndCompleteReward });
+            Interlocked.Exchange(ref _chatSkipResumeInProgress, 1);
+            TiLog.Info($"[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected({skipIndex.Value}) (Skip alt, flipped to EndSelectionAndCompleteReward)");
+            try {
+                method.Invoke(screen, new object[] { skipIndex.Value });
+            } finally {
+                Interlocked.Exchange(ref _chatSkipResumeInProgress, 0);
+            }
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] skip-resume threw", ex);
         } finally {
@@ -511,28 +554,57 @@ internal static class CardRewardVotePatch {
     }
 
     /// <summary>
-    /// Block sub-screen alternate-reward selections (Skip / gold-instead / etc.) while a
-    /// card vote is in progress. Once chat is voting, the streamer's agency has been
-    /// transferred -- they can't see the tally trending the wrong way and bail. Sub-screen
-    /// stays open until the vote completes; resume's SelectCard re-call closes it normally.
-    /// Outside of a vote, alternates work as vanilla intends.
+    /// Three responsibilities, in priority order:
+    ///
+    /// 1. <b>Pass our chat-skip reflective invoke through.</b> When chat votes Skip, the
+    ///    resume code reflectively invokes <c>OnAlternateRewardSelected(skipIndex)</c>
+    ///    with <see cref="_chatSkipResumeInProgress"/> set. Without this branch the
+    ///    streamer-Skip budget gate below would charge the streamer's budget for a
+    ///    chat-side action.
+    ///
+    /// 2. <b>Block sub-screen alt selections (Skip / Reroll / etc.) while a card vote
+    ///    is in progress.</b> Once chat is voting, the streamer's agency has been
+    ///    transferred — they can't see the tally trending the wrong way and bail.
+    ///    Sub-screen stays open until the vote completes; resume's SelectCard re-call
+    ///    closes it normally.
+    ///
+    /// 3. <b>Gate streamer-Skip clicks against the per-act budget.</b> v0.106.1 chat-skip
+    ///    semantics consume the reward outright (our <see cref="CardRewardAlternative_Generate_Postfix"/>
+    ///    flipped Skip's <c>AfterSelected</c> to <c>EndSelectionAndCompleteReward</c>),
+    ///    so a streamer click would also consume the reward. Without this gate the
+    ///    <c>cardSkipsPerAct</c> setting would have no effect on streamer-side clicks.
+    ///    Allowed click → decrement budget + receipt + let vanilla run. Exhausted →
+    ///    return false (no-op; reward stays alive; streamer must engage chat to consume).
     ///
     /// NOTE: this prefix does NOT block reroll on its own. Vanilla wires the reroll
-    /// button click as two statements -- OnAlternateRewardSelected(AfterSelected) AND
+    /// button click as two statements — OnAlternateRewardSelected(rerollIndex) AND
     /// TaskHelper.RunSafely(rewardOption.OnSelect()) (see
-    /// NCardRewardSelectionScreen.RefreshOptions line 209-213). The reroll alternative's
-    /// AfterSelected is None, so vanilla's OnAlternateRewardSelected body is a no-op
-    /// either way -- blocking it changes nothing for reroll. The actual reroll runs in
-    /// OnSelect() which calls CardReward.Reroll(). See CardReward_Reroll_Prefix below
-    /// for the parallel block on that path.
+    /// NCardRewardSelectionScreen.RefreshOptions line 215-225). The Reroll alternative's
+    /// AfterSelected is DoNothing, so vanilla's OnAlternateRewardSelected body is
+    /// essentially a no-op for Reroll either way. The actual reroll runs in OnSelect()
+    /// which calls CardReward.Reroll(). See CardReward_Reroll_Prefix below for the
+    /// parallel block on that path.
     /// </summary>
     [HarmonyPatch(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected")]
     internal static class NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix {
         static bool Prepare() => true;
-        static bool Prefix() {
+        static bool Prefix(NCardRewardSelectionScreen __instance, int index) {
+            // (1) Our chat-skip reflective invoke — pass through, no budget cost.
+            if (_chatSkipResumeInProgress == 1) return true;
+
+            // (2) Vote in progress — streamer cannot bail via alt-select.
             if (_voteInProgress == 1) {
                 TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
-                return false;   // skip vanilla; sub-screen stays open until vote resumes via SelectCard
+                return false;
+            }
+
+            // (3) Streamer-Skip budget gate. Only applies if this click is the Skip alt;
+            // other alts (Reroll, Sacrifice from PaelsWing, future hooks) pass unchanged.
+            var skipIndex = FindSkipAlternativeIndex(__instance);
+            if (skipIndex.HasValue && index == skipIndex.Value) {
+                if (!CardRewardSkipGatePatch.TryConsumeStreamerSkip(__instance)) {
+                    return false;   // budget exhausted (or gate inactive in a way that blocks); silent no-op
+                }
             }
             return true;
         }
@@ -565,4 +637,58 @@ internal static class CardRewardVotePatch {
             return true;
         }
     }
+
+    /// <summary>
+    /// Re-targets the vanilla "Skip" alternative's <c>AfterSelected</c> from
+    /// <c>EndSelectionAndDoNotCompleteReward</c> (vanilla "skip but keep reward
+    /// claimable") to <c>EndSelectionAndCompleteReward</c> (consume reward outright,
+    /// remove from parent NRewardsScreen via vanilla's natural RewardCollectedFrom
+    /// path). This is the v0.106.1 replacement for the old chat-skip mechanism — old
+    /// vanilla let us pass an action enum directly via OnAlternateRewardSelected;
+    /// new vanilla decodes the int result against the locally-Generate'd list and
+    /// reads the alt's AfterSelected. By flipping the existing Skip entry in place
+    /// (no addition) we stay within the 2-alternatives cap that
+    /// <see cref="CardRewardAlternative.Generate"/> enforces at line 53-55.
+    ///
+    /// Streamer interaction: the Skip *button* is hidden by the sibling
+    /// <see cref="NCardRewardSelectionScreen_Ready_HideSkipButton_Postfix"/>, and
+    /// changing AfterSelected to <c>EndSelectionAndCompleteReward</c> also reassigns
+    /// the alt's hotkey away from <c>MegaInput.cancel</c> (per CardRewardAlternative
+    /// ctor line 34), so Escape no longer triggers Skip either. Escape falls through
+    /// to NOverlayStack pop → <c>_completionSource = null</c> → <c>rewardComplete =
+    /// false</c> → reward stays alive on parent (streamer can re-open under
+    /// mandatory-look).
+    ///
+    /// Multi-pick caveat: <see cref="Hook.ShouldAllowSelectingMoreCardRewards"/> has
+    /// zero overrides in v0.106.1, so this design is correct for every current
+    /// reward. If a future build ships a multi-pick relic, chat-skip on any pick will
+    /// terminate the whole reward (one chat-skip vote ends multi-pick early) —
+    /// matches old <c>DismissScreenAndRemoveReward</c> semantics.
+    /// </summary>
+    [HarmonyPatch(typeof(CardRewardAlternative), nameof(CardRewardAlternative.Generate))]
+    internal static class CardRewardAlternative_Generate_Postfix {
+        static bool Prepare() => true;
+
+        static void Postfix(ref IReadOnlyList<CardRewardAlternative> __result) {
+            try {
+                // Vanilla Generate() builds a List<>. Downcast to mutate in place; if a
+                // future build returns a different IReadOnlyList implementation, fall back
+                // to copying into a new List and assigning __result.
+                if (__result is not List<CardRewardAlternative> list) {
+                    list = __result.ToList();
+                    __result = list;
+                }
+                for (int i = 0; i < list.Count; i++) {
+                    if (list[i]?.OptionId == "Skip" &&
+                        list[i].AfterSelected == PostAlternateCardRewardAction.EndSelectionAndDoNotCompleteReward) {
+                        list[i] = new CardRewardAlternative("Skip", PostAlternateCardRewardAction.EndSelectionAndCompleteReward);
+                        return;
+                    }
+                }
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] Generate postfix (Skip alt flip) failed", ex);
+            }
+        }
+    }
+
 }

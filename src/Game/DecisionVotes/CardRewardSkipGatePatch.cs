@@ -4,10 +4,11 @@ using System.Linq;
 using System.Reflection;
 using Godot;
 using HarmonyLib;
-using MegaCrit.Sts2.Core.Nodes.Rewards;       // NRewardButton (spike-corrected namespace)
-using MegaCrit.Sts2.Core.Nodes.CommonUi;      // NProceedButton
-using MegaCrit.Sts2.Core.Nodes.Screens;       // NRewardsScreen
-using MegaCrit.Sts2.Core.Rewards;             // CardReward, Reward
+using MegaCrit.Sts2.Core.Nodes.Rewards;                  // NRewardButton (spike-corrected namespace)
+using MegaCrit.Sts2.Core.Nodes.CommonUi;                 // NProceedButton
+using MegaCrit.Sts2.Core.Nodes.Screens;                  // NRewardsScreen
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;    // NCardRewardSelectionScreen (for TryConsumeStreamerSkip signature)
+using MegaCrit.Sts2.Core.Rewards;                        // CardReward, Reward
 using MegaCrit.Sts2.Core.Runs;                // RunManager, RunState
 using SlayTheStreamer2.Game.Bootstrap;        // SettingsResult, ChatSettings
 using SlayTheStreamer2.Game.Ui;               // CardSkipCounterLabel
@@ -259,6 +260,61 @@ internal static class CardRewardSkipGatePatch {
         if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
         string text = $"Card skips reset to {actLimit} for Act {humanActNumber}";
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
+    }
+
+    /// <summary>
+    /// Called by <c>CardRewardVotePatch.NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix</c>
+    /// when the streamer clicks the (visible) Skip alternative on a card-reward sub-screen.
+    ///
+    /// Returns <c>true</c> if vanilla should be allowed to run (sub-screen closes, parent
+    /// reward button is removed via vanilla's natural <c>RewardCollectedFrom</c> path —
+    /// the Skip alt's <c>AfterSelected</c> was flipped to <c>EndSelectionAndCompleteReward</c>
+    /// by <c>CardRewardVotePatch.CardRewardAlternative_Generate_Postfix</c>).
+    /// Returns <c>false</c> to silently no-op when the per-act skip budget is exhausted —
+    /// the streamer must engage chat instead.
+    ///
+    /// Gate-inactive states (chat in terminal-failure, vote patch unprepared, MP run,
+    /// unlimited budget) all return <c>true</c> without touching the tracker —
+    /// vanilla-like behavior preserved.
+    ///
+    /// Per-run / per-act resets are handled by the existing <c>NRewardsScreen_Ready_Postfix</c>
+    /// when the parent rewards screen first opens, so this method does not re-run
+    /// <c>ObserveRunAndAct</c>.
+    /// </summary>
+    internal static bool TryConsumeStreamerSkip(NCardRewardSelectionScreen subScreen) {
+        try {
+            if (!ShouldEnforceSkipGate()) return true;
+
+            var runState = TryGetRunState();
+            if (runState is null) return true;
+
+            // MP bail — mirrors NRewardsScreen_Ready_Postfix's MP guard. In MP the budget
+            // feature is disabled and streamer-Skip works as vanilla intends.
+            try {
+                if (runState.Players?.Count is int n && n > 1) return true;
+            } catch { /* swallow — proceed without MP bail if accessor failed */ }
+
+            int actLimit = BootstrapModSettings.Current?.CardSkipsPerAct ?? 1;
+            if (actLimit < 0) return true;   // unlimited — no gating
+
+            if (_tracker.ActSkipsUsed >= actLimit) {
+                TiLog.Info($"[SlayTheStreamer2][card-skip-gate] streamer-Skip click blocked: budget exhausted ({_tracker.ActSkipsUsed}/{actLimit})");
+                return false;
+            }
+
+            _tracker.RecordSkip();
+            TiLog.Info($"[SlayTheStreamer2][card-skip-gate] streamer-Skip click consumed: {_tracker.ActSkipsUsed}/{actLimit}");
+
+            if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
+                _activeLabel.UpdateText(_tracker.Snapshot(actLimit));
+            }
+
+            SendSkipReceipt(actLimit);
+            return true;
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-skip-gate] TryConsumeStreamerSkip failed; allowing click to fall through to vanilla", ex);
+            return true;
+        }
     }
 
     // v0.106.1 retargeted SetRewards → _Ready. Vanilla removed the standalone

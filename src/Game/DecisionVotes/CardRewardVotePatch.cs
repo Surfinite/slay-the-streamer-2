@@ -283,16 +283,21 @@ internal static class CardRewardVotePatch {
 
             if (cardIndex is null) {
                 // Chat voted Skip (#0 with includeSkip = true). Use
-                // OnAlternateRewardSelected(DismissScreenAndRemoveReward) — the same path
-                // PaelsWing's SACRIFICE uses. Vanilla's Skip button uses KeepReward (which
-                // leaves the reward claimable later and is gated by the streamer's skip
-                // budget); RemoveReward deletes the reward outright (no re-claim, no
-                // budget interaction), which matches the design intent: chat's #0 vote
-                // is a permanent decline. Without this, two bugs:
+                // OnAlternateRewardSelected(EndSelectionAndCompleteReward) — the same
+                // path PaelsWing's SACRIFICE uses. Vanilla's Skip button uses
+                // EndSelectionAndDoNotCompleteReward (leaves the reward claimable later
+                // and is gated by the streamer's skip budget); CompleteReward marks the
+                // reward consumed outright (no re-claim, no budget interaction), which
+                // matches the design intent: chat's #0 vote is a permanent decline.
+                // Without this, two bugs:
                 //   1. Streamer could click "Add a card to your deck" again and re-vote.
-                //   2. When the streamer's skip budget is exhausted, KeepReward's gate
-                //      no-ops the call — chat-skip became a soft-lock until a card was
-                //      picked.
+                //   2. When the streamer's skip budget is exhausted, the "do not
+                //      complete" path's gate no-ops the call — chat-skip became a
+                //      soft-lock until a card was picked.
+                // (v0.106.1 renamed DismissScreenAndKeepReward → EndSelectionAndDoNot-
+                // CompleteReward and DismissScreenAndRemoveReward → EndSelectionAnd-
+                // CompleteReward; vanilla CardReward.cs maps CompleteReward to
+                // rewardComplete=true, identical pre-rename semantics.)
                 TiLog.Info("[SlayTheStreamer2][card-vote] chat voted Skip (#0); removing reward from screen");
                 coordinator.Dispatcher.Post(() => ResumeSkipOnMainThread(screen, runIdAtStart, optionsSig));
                 return;
@@ -434,8 +439,8 @@ internal static class CardRewardVotePatch {
             // (which checks _voteInProgress == 1) doesn't block our own skip call.
             // _resumeInProgress is NOT set here because we are not re-entering SelectCard.
             Interlocked.Exchange(ref _voteInProgress, 0);
-            TiLog.Info("[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected(DismissScreenAndRemoveReward)");
-            method.Invoke(screen, new object[] { PostAlternateCardRewardAction.DismissScreenAndRemoveReward });
+            TiLog.Info("[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected(EndSelectionAndCompleteReward)");
+            method.Invoke(screen, new object[] { PostAlternateCardRewardAction.EndSelectionAndCompleteReward });
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] skip-resume threw", ex);
         } finally {
@@ -544,19 +549,17 @@ internal static class CardRewardVotePatch {
     /// gets a misleading "we voted but it was ignored" rather than the simpler "you
     /// can't reroll mid-vote".
     ///
-    /// Patching an `async Task`-returning method: Harmony's Prefix runs synchronously
-    /// before the async state machine spins up. Returning false skips vanilla; setting
-    /// `__result = Task.CompletedTask` keeps any caller-side `await` from NREing on a
-    /// null Task. TaskHelper.RunSafely is the typical caller and tolerates failures,
-    /// but a completed Task is cleaner.
+    /// v0.106.1: Reroll() changed from `async Task` to `void`. The Prefix loses its
+    /// `__result` parameter — Harmony rejects ref-__result on void methods with
+    /// "Cannot get result from void method". Returning false still suppresses vanilla;
+    /// no caller can await a void return anyway, so nothing else needs adjustment.
     /// </summary>
     [HarmonyPatch(typeof(CardReward), nameof(CardReward.Reroll))]
     internal static class CardReward_Reroll_Prefix {
         static bool Prepare() => true;
-        static bool Prefix(ref System.Threading.Tasks.Task __result) {
+        static bool Prefix() {
             if (_voteInProgress == 1) {
                 TiLog.Info("[SlayTheStreamer2][card-vote] CardReward.Reroll blocked: vote in progress");
-                __result = System.Threading.Tasks.Task.CompletedTask;
                 return false;
             }
             return true;

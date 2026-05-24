@@ -41,7 +41,7 @@ internal static class CardRewardSkipGatePatch {
     /// Per-rewards-screen tracking of which NRewardButton instances had their card
     /// sub-screen opened. Populated by the NRewardButton.OnRelease prefix for
     /// CardReward / SpecialCardReward buttons; consulted by OnProceedButtonPressed
-    /// to enforce mandatory-look. Cleared in SetRewards postfix (fresh rewards
+    /// to enforce mandatory-look. Cleared in _Ready postfix (fresh rewards
     /// screen → fresh tracking) and AfterOverlayClosed postfix (defensive cleanup).
     /// </summary>
     private static readonly HashSet<ulong> _openedCardRewardButtonIds = new();
@@ -53,7 +53,7 @@ internal static class CardRewardSkipGatePatch {
 
     /// <summary>
     /// Dev-console hook: zero the per-act counter and refresh the on-screen label if
-    /// it's currently mounted. Preserves run/act memory so the next SetRewards
+    /// it's currently mounted. Preserves run/act memory so the next rewards-screen
     /// observation doesn't fire a spurious "reset" chat receipt.
     /// </summary>
     internal static int ResetBudgetForDevConsole() {
@@ -261,20 +261,25 @@ internal static class CardRewardSkipGatePatch {
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
     }
 
-    // Patches SetRewards (NOT _Ready) — vanilla NRewardsScreen._Ready does not populate
-    // _rewardButtons; it just wires UI nodes. _rewardButtons is filled by SetRewards
-    // called later from RunManager / NCombatRoom. Operator-validation Step 1 caught
-    // this: a _Ready postfix saw empty _rewardButtons → silent early-return.
-    [HarmonyPatch(typeof(NRewardsScreen), "SetRewards")]
-    internal static class NRewardsScreen_SetRewards_Postfix {
+    // v0.106.1 retargeted SetRewards → _Ready. Vanilla removed the standalone
+    // SetRewards(IEnumerable<Reward>) method; ShowScreen(RewardsSet,...) now
+    // pre-assigns _rewardsSet on the instance, and _Ready inlines the loop that
+    // builds _rewardButtons from _rewardsSet.Rewards. So _Ready is the new single
+    // population point per rewards-screen lifetime. Our postfix runs synchronously
+    // after vanilla's _Ready returns — at that point _rewardButtons is fully
+    // populated and HasUnclaimedCardReward / CountPendingCardRewards observe the
+    // correct state. (Vanilla's UpdateScreenState is CallDeferred at the tail of
+    // _Ready, but we don't depend on that having run.)
+    [HarmonyPatch(typeof(NRewardsScreen), "_Ready")]
+    internal static class NRewardsScreen_Ready_Postfix {
         static bool Prepare() => PrepareHardChecks();
 
         static void Postfix(NRewardsScreen __instance) {
             try {
-                // Fresh rewards screen → fresh mandatory-look tracking. The old buttons
-                // were QueueFreed by RemoveButton in vanilla SetRewards; their instance
-                // IDs can never recur on the new buttons, but clearing keeps the set
-                // bounded.
+                // Fresh rewards screen → fresh mandatory-look tracking. ShowScreen
+                // always Instantiates a new NRewardsScreen, so each _Ready is a
+                // one-and-only population for that instance; clearing keeps the set
+                // bounded across screens.
                 _openedCardRewardButtonIds.Clear();
 
                 if (!ShouldEnforceSkipGate()) return;
@@ -300,18 +305,18 @@ internal static class CardRewardSkipGatePatch {
                 }
 
                 if (!HasUnclaimedCardReward(__instance)) return;
-                // NOTE: Model 2 deliberately omits the SetRewards-time DisallowSkipping
+                // NOTE: Model 2 deliberately omits a population-time DisallowSkipping
                 // call. The OnProceedButtonPressed prefix below is the single source of
                 // truth for whether Proceed is allowed (mandatory-look + budget check).
-                // Calling DisallowSkipping here would set _skipDisallowed=true on the
-                // vanilla side and persist for the screen's lifetime — bad if the
-                // streamer claims cards mid-screen and the remaining budget would now
-                // allow a skip. The streamer will see clicks no-op silently when
-                // blocked; counter label gives visual feedback. v0.2 polish: live
-                // DisallowSkipping/AllowSkipping toggling as state changes.
+                // Setting _skipDisallowed=true here would persist for the screen's
+                // lifetime — bad if the streamer claims cards mid-screen and the
+                // remaining budget would now allow a skip. The streamer will see
+                // clicks no-op silently when blocked; counter label gives visual
+                // feedback. v0.2 polish: live DisallowSkipping/AllowSkipping toggling
+                // as state changes.
                 AttachOrUpdateLabel(__instance, BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
             } catch (Exception ex) {
-                TiLog.Error("[SlayTheStreamer2][card-skip-gate] SetRewards postfix failed", ex);
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] _Ready postfix failed", ex);
             }
         }
     }
@@ -360,15 +365,15 @@ internal static class CardRewardSkipGatePatch {
         static void Postfix() {
             // Label is parented under SceneTree.Root (commit 17cb1d7) so it doesn't
             // auto-free with the rewards screen. Free it explicitly here, then null
-            // the static so the next SetRewards postfix builds a fresh one.
+            // the static so the next _Ready postfix builds a fresh one.
             if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
                 _activeLabel.QueueFree();
             }
             _activeLabel = null;
 
-            // Defensive — SetRewards postfix clears, but if a screen tears down without
-            // a subsequent SetRewards (e.g., abandon-run mid-screen), this keeps the
-            // set bounded.
+            // Defensive — _Ready postfix clears, but if a screen tears down before
+            // any further rewards screen is shown (e.g., abandon-run mid-screen),
+            // this keeps the set bounded.
             _openedCardRewardButtonIds.Clear();
         }
     }

@@ -23,6 +23,11 @@ internal static class AncientVotePatch {
     private static int _voteInProgress;
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;
+
+    /// <summary>True while an ancient-event vote is in flight. Read by the global
+    /// map-button guard (<c>TopBarMapButtonGuardPatch</c>) so the streamer can't
+    /// bypass an active vote by clicking Map / pressing M.</summary>
+    internal static bool VoteInProgress => _voteInProgress == 1;
     private static readonly Lazy<FieldInfo?> _eventField =
         new(() => AccessTools.Field(typeof(NEventRoom), "_event"));
 

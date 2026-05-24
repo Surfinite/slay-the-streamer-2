@@ -39,6 +39,34 @@ internal static class CardRewardSkipGatePatch {
     private static CardSkipCounterLabel? _activeLabel;
 
     /// <summary>
+    /// Reference to the currently-open NRewardsScreen. Set by the _Ready postfix when
+    /// the rewards screen mounts; nulled by the AfterOverlayClosed postfix when it
+    /// tears down. Read by <see cref="IsRewardsScreenActive"/> for the map-button
+    /// guard — Map (and its M hotkey) is blocked whenever this is alive, preventing
+    /// the streamer from navigating away from the rewards flow before engaging the
+    /// vote system (the parent NRewardsScreen's Proceed gate would normally enforce
+    /// this, but Map bypasses Proceed entirely).
+    /// </summary>
+    private static NRewardsScreen? _activeRewardsScreen;
+
+    /// <summary>
+    /// True while a rewards screen is mounted on the overlay stack. Used by the
+    /// global map-button guard; see field doc-comment on
+    /// <see cref="_activeRewardsScreen"/>. Defensive: clears the stored reference
+    /// if the Godot side has freed the screen via an unexpected path.
+    /// </summary>
+    internal static bool IsRewardsScreenActive {
+        get {
+            if (_activeRewardsScreen is null) return false;
+            if (!GodotObject.IsInstanceValid(_activeRewardsScreen)) {
+                _activeRewardsScreen = null;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Per-rewards-screen tracking of which NRewardButton instances had their card
     /// sub-screen opened. Populated by the NRewardButton.OnRelease prefix for
     /// CardReward / SpecialCardReward buttons; consulted by OnProceedButtonPressed
@@ -338,6 +366,12 @@ internal static class CardRewardSkipGatePatch {
                 // bounded across screens.
                 _openedCardRewardButtonIds.Clear();
 
+                // Track the active rewards screen for the map-button guard. Set this
+                // unconditionally (before ShouldEnforceSkipGate), so Map is blocked
+                // even in chat-degraded states — the streamer shouldn't be able to
+                // navigate away from rewards regardless of chat availability.
+                _activeRewardsScreen = __instance;
+
                 if (!ShouldEnforceSkipGate()) return;
 
                 var runState = TryGetRunState();
@@ -418,7 +452,7 @@ internal static class CardRewardSkipGatePatch {
     [HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
     internal static class NRewardsScreen_AfterOverlayClosed_Postfix {
         static bool Prepare() => true;
-        static void Postfix() {
+        static void Postfix(NRewardsScreen __instance) {
             // Label is parented under SceneTree.Root (commit 17cb1d7) so it doesn't
             // auto-free with the rewards screen. Free it explicitly here, then null
             // the static so the next _Ready postfix builds a fresh one.
@@ -431,6 +465,14 @@ internal static class CardRewardSkipGatePatch {
             // any further rewards screen is shown (e.g., abandon-run mid-screen),
             // this keeps the set bounded.
             _openedCardRewardButtonIds.Clear();
+
+            // Release the map-button guard. Only clear if this instance is the one
+            // we're tracking — defensive against races where a fresh _Ready may have
+            // already replaced the reference (shouldn't happen for the rewards-screen
+            // lifecycle but cheap to guard).
+            if (ReferenceEquals(_activeRewardsScreen, __instance)) {
+                _activeRewardsScreen = null;
+            }
         }
     }
 

@@ -33,6 +33,11 @@ internal static class BossVotePatch {
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;
 
+    /// <summary>True while a boss vote is in flight. Read by the global map-button
+    /// guard (<c>TopBarMapButtonGuardPatch</c>) so the streamer can't bypass an
+    /// active vote by clicking Map / pressing M.</summary>
+    internal static bool VoteInProgress => _voteInProgress == 1;
+
     // Per-(run, act) marker set after each completed boss-vote resume.
     // Prevents the vote from re-triggering on subsequent NTreasureRoom.OnProceedButtonPressed
     // clicks within the same run+act, which can happen via:

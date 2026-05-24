@@ -32,6 +32,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardSkipGatePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\BossVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\ActVariantVotePatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\TopBarMapButtonGuardPatch.cs" />
   </ItemGroup>
 
   <ItemGroup>

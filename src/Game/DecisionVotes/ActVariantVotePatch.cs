@@ -65,6 +65,14 @@ internal static partial class ActVariantVotePatch {
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;   // intentional process-lifetime suppression — once-per-process is the right cadence
 
+    /// <summary>True while an act-variant vote is in flight. Read by the global
+    /// map-button guard (<c>TopBarMapButtonGuardPatch</c>) so the streamer can't
+    /// bypass an active vote by clicking Map / pressing M. (Act-variant votes
+    /// happen on the character-select screen, where the top-bar Map button isn't
+    /// shown — but the probe is exposed for uniformity in case future flows
+    /// change.)</summary>
+    internal static bool VoteInProgress => _voteInProgress == 1;
+
     /// <summary>
     /// Shared cancellation/no-votes flag state for one active vote.
     /// Allocated locally in PrefixContinue (Task 9); not a static singleton.

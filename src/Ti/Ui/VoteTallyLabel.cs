@@ -7,21 +7,45 @@ using SlayTheStreamer2.Ti.Voting;
 namespace SlayTheStreamer2.Ti.Ui;
 
 public sealed partial class VoteTallyLabel : RichTextLabel {
+    // CanvasLayer index above the boss-vote / act-variant popups (Layer=100), so this
+    // tally text renders in front of those full-screen overlays.
+    private const int CanvasLayerIndex = 110;
+
+    // Vanilla default body font. Loaded via ResourceLoader so a missing resource
+    // degrades silently to Godot's default font (preserves the Ti/ seam — a fork
+    // for another host game with no Kreon asset just renders unstyled text).
+    private const string FontPath = "res://themes/kreon_regular_shared.tres";
+
     private VoteSession? _session;
+    private CanvasLayer? _canvasLayer;
     private EventHandler<VoteSession>? _closedHandler;
     private EventHandler<VoteSession>? _cancelledHandler;
+    /// <summary>
+    /// Optional probe returning true when the active run has died mid-vote
+    /// (abandoned, game-over, save-quit-to-main-menu). When true, the label
+    /// cancels the session so the Cancelled-event handler frees the wrapper
+    /// canvas promptly — without it, the label persists until the vote timer
+    /// expires, blocking subsequent runs from starting their own votes.
+    /// Game-agnostic seam: <see cref="Func{Boolean}"/> only, no MegaCrit refs.
+    /// </summary>
+    private Func<bool>? _isRunDying;
 
     // Cache-invalidation triggers — rebuild Text only when one of these changes.
     private int _cachedSecondsLeft = -1;
     private int _cachedTallyVersion = -1;
     private bool _cachedVoteEchoActive;
 
-    public static void AttachTo(VoteSession session) {
+    public static void AttachTo(VoteSession session, Func<bool>? isRunDying = null) {
         var tree = (Engine.GetMainLoop() as SceneTree);
         if (tree?.Root is null) {
             TiLog.Warn("[vote-tally-label] no SceneTree.Root available; skipping UI attach");
             return;
         }
+
+        var canvasLayer = new CanvasLayer {
+            Name = "VoteTallyLabelCanvasLayer",
+            Layer = CanvasLayerIndex,
+        };
 
         var label = new VoteTallyLabel { Name = "VoteTallyLabel" };
         label.BbcodeEnabled = true;
@@ -29,15 +53,26 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
         // Anchor top-right by default; Surfinite will adjust positioning during polish.
         label.AnchorLeft = 0.6f; label.AnchorTop = 0.05f;
         label.AnchorRight = 0.98f; label.AnchorBottom = 0.4f;
+        ApplyKreonFont(label);
         label._session = session;
+        label._canvasLayer = canvasLayer;
+        label._isRunDying = isRunDying;
         label._closedHandler = (_, _) => label.SafeQueueFree();
         label._cancelledHandler = (_, _) => label.SafeQueueFree();
         session.Closed += label._closedHandler;
         session.Cancelled += label._cancelledHandler;
 
-        // Direct attachment under root. If z-order issues surface in operator-validation,
-        // switch to creating/finding a CanvasLayer named "SlayTheStreamerOverlayLayer" under root and attaching there instead.
-        tree.Root.AddChild(label);
+        canvasLayer.AddChild(label);
+        tree.Root.AddChild(canvasLayer);
+    }
+
+    private static void ApplyKreonFont(RichTextLabel label) {
+        var font = ResourceLoader.Load<Font>(FontPath);
+        if (font is null) return;
+        label.AddThemeFontOverride("normal_font", font);
+        label.AddThemeFontOverride("bold_font", font);
+        label.AddThemeFontOverride("italics_font", font);
+        label.AddThemeFontOverride("bold_italics_font", font);
     }
 
     /// <summary>
@@ -50,6 +85,18 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
         if (_session.State is VoteSessionState.Closed
                               or VoteSessionState.Cancelled
                               or VoteSessionState.Disposed) return;
+
+        // Cancel the session immediately if the run died mid-vote. Without this
+        // the label hangs around until the vote timer expires, blocking the next
+        // run from starting its own vote. session.Cancel triggers Cancelled →
+        // _cancelledHandler → SafeQueueFree → wrapper canvas freed at next frame.
+        bool runDying = false;
+        try { runDying = _isRunDying?.Invoke() ?? false; }
+        catch { /* probe must never crash _Process */ }
+        if (runDying) {
+            try { _session.Cancel(); } catch { /* swallow — session may already be closing */ }
+            return;
+        }
 
         var secondsLeft = Math.Max(0, (int)_session.TimeRemaining.TotalSeconds);
         var tallyVersion = _session.TallyVersion;
@@ -135,6 +182,15 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
     }
 
     private void SafeQueueFree() {
+        // Free the CanvasLayer wrapper — freeing the layer cascades to its label child.
+        // Falls back to freeing just the label if the wrapper isn't tracked (e.g. legacy
+        // direct-attach path).
+        if (_canvasLayer is not null
+                && GodotObject.IsInstanceValid(_canvasLayer)
+                && !_canvasLayer.IsQueuedForDeletion()) {
+            _canvasLayer.QueueFree();
+            return;
+        }
         if (GodotObject.IsInstanceValid(this) && !IsQueuedForDeletion()) {
             QueueFree();
         }

@@ -343,6 +343,11 @@ internal static partial class ActVariantVotePatch {
             VoteCoordinator coordinator,
             PendingActVariantVote pending) {
         try {
+            // No isRunDying probe here: act-variant vote runs PRE-run on Embark, before
+            // BeginRunLocally creates the RunState. RunLiveness.IsRunDying treats a null
+            // RunState as "dying" and would cancel the session immediately. The popup's
+            // own ESC handler cancels the session on user-bail and the label tears down
+            // via its Cancelled subscription, so no extra probe is needed here.
             coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
 
             int? winnerIndex = null;

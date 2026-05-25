@@ -293,7 +293,7 @@ internal static class CardRewardVotePatch {
         string? runIdAtStart,
         bool includeSkip) {
         try {
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying));
 
             int winnerIndex;
             try {

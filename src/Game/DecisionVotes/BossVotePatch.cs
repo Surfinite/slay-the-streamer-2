@@ -209,26 +209,11 @@ internal static class BossVotePatch {
     /// for the vote timer to expire — long enough that the streamer ends up
     /// on the game-over screen (or main menu after save-quit) with the popup
     /// still rendered on top, blocking the Continue / Main Menu buttons.
-    /// Triggers on: RunManager.Instance null, IsAbandoned, runState null,
-    /// or IsGameOver. Pure probe — the save-quit-Continue marker-staleness
-    /// fix lives in PrefixContinue's idempotency check (compares the marker
-    /// against current Act.BossEncounter.Id to detect rolled-back swaps).
-    /// Fail-safe defaults to false — a transient null/throw during normal
-    /// play shouldn't kill an active vote.
+    /// The save-quit-Continue marker-staleness fix lives separately in
+    /// PrefixContinue's idempotency check (compares the marker against
+    /// current Act.BossEncounter.Id to detect rolled-back swaps).
     /// </summary>
-    private static bool IsRunDying() {
-        try {
-            var rm = RunManager.Instance;
-            if (rm is null) return true;
-            if (rm.IsAbandoned) return true;
-            var state = rm.DebugOnlyGetState();
-            if (state is null) return true;
-            if (state.IsGameOver) return true;
-            return false;
-        } catch {
-            return false;
-        }
-    }
+    private static bool IsRunDying() => RunLiveness.IsRunDying();
 
     /// <summary>
     /// Builds and starts a boss vote: samples candidates, pre-warms visuals,
@@ -646,7 +631,7 @@ internal static class BossVotePatch {
         string? runIdAtStart,
         int gen) {
         try {
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying));
 
             int? winnerIndex;
             try {

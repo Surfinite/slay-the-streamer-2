@@ -164,7 +164,7 @@ internal static class AncientVotePatch {
                                               VoteSession session, IReadOnlyList<EventOption> snapshot,
                                               int playerClickIndex, string? runIdAtStart) {
         try {
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying));
 
             int winnerIndex;
             try {

@@ -24,5 +24,5 @@ public static class TiLog {
     public static void Warn(string msg) => Sink(LogLevel.Warn, Scrub(msg), null);
     public static void Error(string msg, Exception? ex = null) => Sink(LogLevel.Error, Scrub(msg), ex);
 
-    private static string Scrub(string msg) => OauthPattern.Replace(msg, "oauth:<REDACTED>");
+    public static string Scrub(string msg) => OauthPattern.Replace(msg, "oauth:<REDACTED>");
 }

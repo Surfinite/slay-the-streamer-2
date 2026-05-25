@@ -79,7 +79,7 @@ public static class ModEntry {
             // 5. Plan A logging passthrough (verified thread-safe in notes/03).
             TiLog.Sink = (level, msg, ex) => {
                 switch (level) {
-                    case SlayTheStreamer2.Ti.Internal.LogLevel.Error: Log.Error(ex is null ? msg : $"{msg} :: {ex}"); break;
+                    case SlayTheStreamer2.Ti.Internal.LogLevel.Error: Log.Error(ex is null ? msg : $"{msg} :: {TiLog.Scrub(ex.ToString())}"); break;
                     case SlayTheStreamer2.Ti.Internal.LogLevel.Warn:  Log.Warn(msg); break;
                     default:             Log.Info(msg); break;
                 }

@@ -26,15 +26,19 @@ internal sealed partial class BossVotePopup : Control {
     public const int LAYER_INDEX = 100;
 
     /// <summary>
-    /// Slot size for each per-column animated portrait. Bumped twice during B.3.1:
+    /// Slot size for each per-column animated portrait. Layered evolution:
     ///   - 256×256 (B.3 PNG era, static portraits)
     ///   - 384×384 (B.3.1 Round 1 — 9-reviewer consensus that 256 felt cramped)
     ///   - 448×448 (B.3.1 gate-1 follow-up — operator validation confirmed plenty
     ///     of horizontal room on standard widescreen, 3 × 448 = 1344 px with
     ///     ~580 px breathing room at 1920 wide; only 4:3 test windows feel tight
     ///     and nobody plays at 4:3).
+    ///   - 448×640 (v0.106.1-compat tuning, 2026-05-25 — taller slot to suit
+    ///     bosses whose visible body is tall-narrow rather than square; the
+    ///     extra vertical room also gives the safety margin below more headroom,
+    ///     letting it return to the original 0.92 multiplier).
     /// </summary>
-    private static readonly Vector2 PortraitSlotSize = new(448, 448);
+    private static readonly Vector2 PortraitSlotSize = new(448, 640);
 
     private readonly IReadOnlyList<BossVotePopupOption> _options;
     private readonly VoteSession _session;
@@ -125,7 +129,7 @@ internal sealed partial class BossVotePopup : Control {
         // Backdrop — full-screen 60%-opaque black, stops mouse input.
         var backdrop = new ColorRect {
             Name = "Backdrop",
-            Color = new Color(0, 0, 0, 0.6f),
+            Color = new Color(0, 0, 0, 0.75f),
             MouseFilter = MouseFilterEnum.Stop,
             AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
         };
@@ -270,12 +274,15 @@ internal sealed partial class BossVotePopup : Control {
                 new System.Numerics.Vector2(fitSlot.X, fitSlot.Y));
 
             // Safety margin: idle animations can oscillate beyond the rest-pose Bounds
-            // measurement (Soul Fysh is the observed case in B.3.1 operator validation).
-            // 0.88 inset (6% per side) eliminates the animation clip — bumped from 0.92
-            // after gate-1 follow-up showed Soul Fysh still grazed the slot edge at 4%.
-            // Combined with the PortraitSlotSize bump to 448, gives ~27 px absolute
-            // margin per side (vs ~15 px at the original 384 × 0.92).
-            fit *= 0.88f;
+            // measurement. B.3.1 operator validation set this to 0.88 after Soul Fysh
+            // grazed the slot edge at 0.92 — that grazing turned out to come from the
+            // wrong animation playing (B.3.1 was setting "idle_loop" unconditionally;
+            // Soul Fysh's bestiary idle has a tighter rest pose). v0.106.1-compat fixed
+            // the animation routing so each boss plays its correct bestiary idle, and
+            // 0.92 is comfortable again — confirmed Soul Fysh fits 2026-05-25. The
+            // taller 448×640 slot also gives more vertical headroom for the small
+            // residual oscillation, so 4% inset per side is plenty.
+            fit *= 0.92f;
 
             ApplyScaleAndHue(visuals, fit);
 

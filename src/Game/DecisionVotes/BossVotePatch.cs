@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Combat;   // NCreatureVisuals
 using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
@@ -478,6 +479,17 @@ internal static class BossVotePatch {
     /// (HasSpineAnimation == false), skips animator wiring; static pose renders.
     /// </summary>
     private static Func<Node2D>? BuildVisualsFactory(EncounterModel encounter) {
+        // Kaiser Crab special case: the per-claw monster scenes (crusher.tscn,
+        // rocket.tscn) are placeholder Sprite2D nodes with no texture and
+        // Visible=false — the actual visual is a unified Spine scene at
+        // creature_visuals/kaiser_crab_boss.tscn that ships in v0.106.1. Bypass
+        // PickPrimaryMonster + NCreatureVisuals entirely and load the unified
+        // scene directly; it's a plain Node2D + SpineSprite (no NCreatureVisuals
+        // script), so the SetUpSkin / per-monster animator path doesn't apply.
+        if (encounter.Id?.Entry == "KAISER_CRAB_BOSS") {
+            return BuildKaiserCrabVisualsFactory(encounter);
+        }
+
         var monsters = encounter.AllPossibleMonsters.ToList();
         var monster = PickPrimaryMonster(encounter, monsters);
         if (monster is null) {
@@ -492,16 +504,138 @@ internal static class BossVotePatch {
         }
         return () => {
             var visuals = monster.CreateVisuals();
-            if (visuals.HasSpineAnimation) {
-                monster.GenerateAnimator(visuals.SpineBody);
-                visuals.SetUpSkin(monster);
-                // Verified shape: NCreatureVisuals.SetUpSkin(MonsterModel) at NCreatureVisuals.cs:178.
-                // Defensive ?. on GetAnimationState() — should be non-null when HasSpineAnimation is true,
-                // but guard for potatoes.
-                visuals.SpineBody.GetAnimationState()?.SetAnimation("idle_loop");
-            }
+            // SpineBody is populated by NCreatureVisuals._Ready (line 149 of
+            // decompiled NCreatureVisuals.cs), which doesn't fire until the
+            // visuals are added to the SceneTree — i.e., AFTER the popup's
+            // slot.AddChild(visuals) call below. Checking HasSpineAnimation in
+            // the factory body is therefore always false; the bestiary diag log
+            // captured 2026-05-24 confirms this (zero [anim-diag] boss-vote
+            // lines emitted because the if-block was skipped every column).
+            //
+            // Subscribe to the Ready signal so the animator setup runs at the
+            // same lifecycle point that NCreature._Ready does it in the
+            // bestiary — by then SpineBody is populated and GenerateAnimator's
+            // SetNextState(initialState) writes the right initial animation to
+            // track 0. No explicit SetAnimation override: matching the bestiary
+            // exactly is the design intent (e.g., The Insatiable's bestiary
+            // entry plays "intro_loop" — what looks like a still image, that's
+            // vanilla art — and our previous explicit SetAnimation("idle_loop")
+            // was forcing a deviation from that reference).
+            var encounterId = encounter.Id?.Entry;
+            var monsterId = monster.Id?.Entry;
+            visuals.Ready += () => ApplyMonsterAnimationAfterReady(visuals, monster, encounterId, monsterId);
             return visuals;
         };
+    }
+
+    /// <summary>
+    /// Runs after <c>NCreatureVisuals._Ready</c> has populated <c>SpineBody</c>.
+    /// Mirrors the shape of <c>NCreature._Ready</c> (decompiled line 299-310):
+    /// <c>GenerateAnimator</c> sets the CreatureAnimator's initial state on
+    /// track 0; <c>SetUpSkin</c> applies per-monster skin variants. The
+    /// initial state per monster matches what the bestiary shows, which is the
+    /// design intent.
+    /// </summary>
+    private static void ApplyMonsterAnimationAfterReady(NCreatureVisuals visuals, MonsterModel monster, string? encounterId, string? monsterId) {
+        try {
+            if (!GodotObject.IsInstanceValid(visuals)) return;
+            if (!visuals.HasSpineAnimation) return;
+            monster.GenerateAnimator(visuals.SpineBody);
+            visuals.SetUpSkin(monster);
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] deferred animation setup failed for encounter={encounterId} monster={monsterId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Kaiser Crab uses a unified Spine scene at
+    /// <c>res://scenes/creature_visuals/kaiser_crab_boss.tscn</c> — root Node2D
+    /// with a SpineSprite child named "Visuals" using
+    /// <c>kaiser_crab_skeleton_data.tres</c>. Per-claw scenes (crusher / rocket)
+    /// are placeholder no-texture sprites; loading them gives an empty popup
+    /// column. We bypass <c>NCreatureVisuals</c> entirely for this encounter.
+    ///
+    /// Animation setup happens in <see cref="ApplyKaiserCrabAnimationAfterReady"/>
+    /// — kaiser_crab.skel uses a three-track namespaced animation layout
+    /// (<c>body/idle_loop</c>, <c>left/idle_loop</c>, <c>right/idle_loop</c>)
+    /// rather than the per-monster flat <c>idle_loop</c> convention, so we set
+    /// all three tracks the same way vanilla combat does (see
+    /// <c>NKaiserCrabBossBackground.cs:86-88</c>).
+    /// </summary>
+    private static Func<Node2D>? BuildKaiserCrabVisualsFactory(EncounterModel encounter) {
+        const string scenePath = "res://scenes/creature_visuals/kaiser_crab_boss.tscn";
+        var encounterId = encounter.Id?.Entry;
+        return () => {
+            try {
+                var scene = PreloadManager.Cache.GetScene(scenePath);
+                var root = scene.Instantiate<Node2D>(PackedScene.GenEditState.Disabled);
+
+                // The unified scene's Visuals SpineSprite ships at scale (0.5, 0.5)
+                // sized for the combat backdrop — far too big for the popup column.
+                // ApplyPortraitFit can't auto-measure this scene because it isn't an
+                // NCreatureVisuals (no Bounds Control), so fit falls back to 1.0.
+                // Apply a static scale here. 0.16 was operator-tuned 2026-05-25 to
+                // fit the body + both claws inside the popup column's 448×640 slot
+                // with room to breathe; tweak the multiplier if a future PortraitSlot
+                // size change wants the crab bigger or smaller.
+                root.Scale = new Vector2(0.16f, 0.16f);
+
+                // Defer SpineSprite setup (HasAnimation / SetAnimation / diag log)
+                // until after the scene is in the tree and the SpineSprite has
+                // initialized its skeleton. Same lifecycle reason as the regular
+                // monster path — the Spine bindings NRE if called before the
+                // scene's _Ready cycle runs.
+                root.Ready += () => ApplyKaiserCrabAnimationAfterReady(root, encounterId);
+                return root;
+            } catch (Exception ex) {
+                TiLog.Error($"[SlayTheStreamer2][boss-vote] Kaiser Crab unified scene load failed; column will render empty", ex);
+                // Match the contract — visuals factory may return any Node2D, but on
+                // catastrophic failure we'd prefer to render nothing rather than
+                // crash. Return a bare empty Node2D so the column has *something* in
+                // the SceneTree.
+                return new Node2D();
+            }
+        };
+    }
+
+    /// <summary>
+    /// Runs after the Kaiser Crab unified scene's root has entered the tree.
+    /// At that point the SpineSprite child is fully initialized and the Spine
+    /// bindings (GetAnimationState / SetAnimation) are safe to call.
+    /// kaiser_crab.skel doesn't follow the per-monster flat-name convention
+    /// (idle_loop / idle_loop1); animations live under <c>body/</c>,
+    /// <c>left/</c>, <c>right/</c> sub-namespaces with a separate track per
+    /// piece. We mirror vanilla's combat-entry setup at
+    /// <c>NKaiserCrabBossBackground.cs:86-88</c> and assign all three tracks
+    /// directly.
+    /// </summary>
+    private static void ApplyKaiserCrabAnimationAfterReady(Node2D root, string? encounterId) {
+        try {
+            if (!GodotObject.IsInstanceValid(root)) return;
+            if (root.GetNodeOrNull("Visuals") is not Node spineNode) {
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab: unified scene missing 'Visuals' SpineSprite child; column renders unanimated");
+                return;
+            }
+            var spine = new MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaSprite(spineNode);
+
+            // kaiser_crab.skel uses three-track namespaced animations rather
+            // than the conventional flat "idle_loop". Vanilla's
+            // NKaiserCrabBossBackground.cs:86-88 sets all three on combat
+            // entry; we mirror that so body + both claws idle together.
+            //   track 0: body/idle_loop
+            //   track 1: left/idle_loop
+            //   track 2: right/idle_loop
+            var state = spine.GetAnimationState();
+            if (state is null) {
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab: GetAnimationState returned null; column renders unanimated");
+                return;
+            }
+            state.SetAnimation("body/idle_loop",  loop: true, trackId: 0);
+            state.SetAnimation("left/idle_loop",  loop: true, trackId: 1);
+            state.SetAnimation("right/idle_loop", loop: true, trackId: 2);
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab deferred setup failed for encounter={encounterId}: {ex.Message}");
+        }
     }
 
     private static async Task HandleVoteAsync(

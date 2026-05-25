@@ -33,6 +33,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\BossVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\ActVariantVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\TopBarMapButtonGuardPatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\AncientRelicExclusionPatches.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -279,12 +279,13 @@ internal static class CardRewardSkipGatePatch {
     /// Fires once at the moment the tracker detects a run change or act change. Lets
     /// chat know the budget reset without them having to infer from the running-skip
     /// receipts (which only fire on actual skips). Suppressed for unlimited
-    /// (actLimit &lt; 0) — no meaningful reset to announce. Also suppressed if act
-    /// detection failed (humanActNumber &lt;= 0); the reset still happened internally
-    /// but we don't want to send "Act 0".
+    /// (actLimit &lt; 0) and zero (actLimit == 0) — no meaningful reset to announce
+    /// in either case ("reset to 0" is just noise; the streamer can't skip at all).
+    /// Also suppressed if act detection failed (humanActNumber &lt;= 0); the reset
+    /// still happened internally but we don't want to send "Act 0".
     /// </summary>
     private static void SendBudgetResetReceipt(int actLimit, int humanActNumber) {
-        if (actLimit < 0) return;
+        if (actLimit <= 0) return;
         if (humanActNumber <= 0) return;
         var coordinator = Voter.Default;
         if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;

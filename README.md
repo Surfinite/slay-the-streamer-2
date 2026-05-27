@@ -1,161 +1,245 @@
-# slay-the-streamer-2
+# Slay the Streamer 2
 
-A Slay the Spire 2 mod that lets chat (Twitch and optionally YouTube)
-vote on the streamer's in-game decisions. Inspired by [Tempus's StS1
-Slay the Streamer](https://github.com/Tempus/SlayTheStreamer) (Steam
-Workshop [1610759491](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)).
+A **Slay the Spire 2** mod that lets your Twitch chat (and optionally YouTube
+chat) vote on the choices you make during a run — Neow blessings, card
+rewards, Ancient relics, the act boss, and the Act 1 variant.
 
-**Status**: v0.1 in active development, with v0.2 multi-platform chat operationally validated.
+Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer).
 
-- **B.1 Neow vote** shipped 2026-05-10 (`plan-b-1-complete` tag) — chat votes on Neow's blessing end-to-end with real Twitch IRC.
-- **B.2.1 card reward vote** shipped 2026-05-11 (`plan-b-2-1-complete` tag) — chat votes on which of the typically-3 cards the streamer adds to deck; mandatory-look skip gate prevents skipping-without-engaging; per-act skip budget (default `cardSkipsPerAct: 1`) caps how often the streamer can override chat.
-- **v0.2 YouTube chat parallel integration** landed 2026-05-12 — optional `youtubeChannelId` setting wires a read-only YouTube live-chat reader alongside Twitch via a `MultiChatService` aggregator. Votes from both platforms merge into a single tally; in-game label renders per-platform rows when YT is configured. Chat receipts continue to fire on Twitch only (YouTube posting requires Google verification / OAuth, intentionally not pursued). Per-vote nonce (`!NN` suffix, optional opt-in) lets stream-delayed YT viewers vote precisely on a specific vote ID without colliding with back-to-back votes; bare `#N` still works, with option numbers stable across votes (no Noita-style alternation) so chat doesn't have to remember a shifting numbering scheme. End-to-end validated 2026-05-12 against a real live YouTube broadcast (chain: discovery → page-parse → poll → JSON-extract → vote-regex → tally → UI rendering → game-state apply).
-- **B.2.2 ancient vote** shipped 2026-05-14 (`plan-b-2-2-complete` tag) — chat votes on the Ancient-rarity relic offered by mid-run Ancient events: Pael, Tezcatara, Orobas (Act 2), Nonupeipe, Tanx, Vakuu (Act 3), and Darv (cross-act via `AllSharedAncients`). Implemented as predicate-widening on the B.1 Neow patch (renamed `NeowBlessingVotePatch` → `AncientVotePatch`) — the patch now bails to vanilla unless the event model is `AncientEventModel and not DeprecatedAncientEvent`, so future ancients MegaCrit ships will auto-work. Neow's vote title regresses cosmetically from "Neow's Bonus" to "Neow's Offering" as the auto-derivation trade-off.
-- **B.3 act boss vote** shipped 2026-05-15 (`plan-b-3-complete` tag) — chat votes on the upcoming act boss every chest-room exit. Up to 3 candidates sampled from `runState.Act.AllBossEncounters` via a stable FNV-1a-32 seed of `(StringSeed, ActIndex)` so save-reload shows the same options; A10+ DoubleBoss runs exclude the pre-rolled second boss from the candidate pool. Resolved via `MapCmd.SetBossEncounter` through the established two-flag suspend-and-resume pattern. First slice to ship a modal `CanvasLayer` popup: portrait + title + live tally per column, hides on dev-console / pause-menu open (preserving access to all vanilla overlays), cancels promptly on mid-vote run-death. Idempotency-with-verification handles Golden Compass's two-chest map, the map-screen back-arrow, and StS2 save-quit rollback (silently re-applies the original chat-picked boss instead of re-voting).
-- **B.3.1 combat-idle boss portraits** shipped 2026-05-16 (`plan-b-3-1-complete` tag) — replaces B.3's static PNG portraits with animated combat-idle sprites rendered via `MonsterModel.CreateVisuals()`, fixing the empty-column bug for Spine-only bosses (Ceremonial Beast was the canary; future Spine-only bosses inherit the fix). Bounds-aware centering anchors each sprite correctly regardless of native origin convention. Pre-warm Stopwatch telemetry shows 76–82ms cold-load per vote — within "harmless" envelope. Pause-menu / dev-console occlusion freezes Spine playback via Godot-native `ProcessMode.Disabled` cascade (no `SetTimeScale` API contact). Multi-monster encounter handling picks the visual primary (`THE_KIN_BOSS → KIN_PRIEST`; `QUEEN_BOSS`, `KAISER_CRAB_BOSS` use index 0). New `rerollvote` dev console command re-opens the current vote with a fresh sample for fast iteration; generation-tracking guarantees the cancelled session's stale resume bails cleanly. Public-interface MegaCrit-free seam preserved with two `private static` casts localized to `BossVotePopup`. `PortraitFit.ComputeFitScale` carved out as a pure-math unit-testable helper.
-- **B.3.2 act-variant vote** shipped 2026-05-18 (`plan-b-3-2-complete` tag) — chat votes between the two Act 1 variants (Underdocks vs Overgrowth) on Embark, before the run starts. Implemented as a Harmony prefix on `OnEmbarkPressed` rather than the downstream `BeginRunLocally`, so the vanilla UI-mutation sequence (`Disable` embark/back/character buttons → `SetReady(true)`) never runs on cancel — popup teardown + ESC backout become clean no-ops, no UI restoration code path needed. `TargetMethods()` covers both `NCharacterSelectScreen` (Standard mode) and `NCustomRunScreen` (Custom mode + Sealed-deck / Draft modifier runs) from one patch class with a small type-dispatch. The 50/50 split popup pre-warms each variant's full layered combat scene via `BackgroundAssets` + `NCombatBackground.Create`, parented under a Center-anchored zero-size Control to mirror vanilla's `BgContainer` framing (FullRect anchoring shifts the texture's center off-screen — surfaced and fixed mid-validation). Title bands use Spectral Bold gold over a dim `ColorRect` strip styled from vanilla's `act_banner.tscn`; countdown timer occupies the "Act N" slot above. On confirm, the patch sets `Lobby.Act1` and reflectively re-invokes the same `OnEmbarkPressed` with a synthetic-resume flag so vanilla's full body runs unmodified. Operator validation surfaced and resolved four real bugs (popup leaked on `VoteSession.Cancelled` because it only listened to `Closed`; popup Control was never added to the scene tree so `_Process`/`_Input` never fired; backgrounds rendered top-half-only from FullRect anchoring; Custom mode missed because the patch was single-target on `NCharacterSelectScreen`) — all four are now CLAUDE.md Tier-4 landmines for future maintainers.
+---
 
-Remaining v0.1 slices: B.2.4 in-game settings UI. **Not yet for end users** — installation requires manual JSON config and the modded save is its own profile (no unlock progression yet).
+## ▶️ Demo
 
-## Repo layout
+**[Watch the v0.1 demo on Twitch →](https://www.twitch.tv/videos/2782265574)**
 
-What's in the repo:
+---
+
+## ⬇️ Download
+
+**[Get the latest release →](https://github.com/Surfinite/slay-the-streamer-2/releases/latest)**
+
+Grab the `slay_the_streamer_2-vX.Y.Z.zip` asset from the release page.
+
+---
+
+## 🛠 Install
+
+1. Open your Steam Slay the Spire 2 folder. (Steam → right-click the game → Manage → Browse local files.)
+2. Inside it, open the `mods` folder (create it if it isn't there).
+3. Extract the zip from above into `mods/` so you end up with:
+   ```
+   Slay the Spire 2/
+     mods/
+       slay_the_streamer_2/
+         slay_the_streamer_2.dll
+         slay_the_streamer_2.json
+         slay_the_streamer_2.json.example
+   ```
+4. Launch the game.
+
+If the game can't see the mod, check the log at `%APPDATA%\SlayTheSpire2\logs\godot.log` — you should see a line that starts with `[slay_the_streamer_2]`.  DM me (Surfinite) on Discord if you encounter problems.
+
+---
+
+## 🔌 Connect your Twitch chat
+
+Open the file `mods/slay_the_streamer_2/slay_the_streamer_2.json` in any text editor. You'll see:
+
+```json
+{
+  "schemaVersion": 1,
+  "channel": "your_twitch_channel",
+  "username": "your_twitch_bot_username",
+  "oauthToken": "oauth:your_30_character_lowercase_alphanumeric_token",
+  "youtubeChannelId": null,
+  ...
+}
+```
+
+Fill in three fields:
+
+- **`channel`** — your Twitch channel name in lowercase (e.g. `"surfinite"`).
+- **`username`** — the account that will post chat receipts ("Vote opened…", "Chat picked X"). Most solo streamers use their own account here, or the same bot account they already use for other tools.
+- **`oauthToken`** — a chat token for the `username` account. It needs the `chat:read` and `chat:edit` scopes, and must be prefixed with `oauth:` (e.g. `"oauth:abc123…"`).
+
+**Already have a chat bot?** If you've already got a Twitch bot set up (Nightbot, StreamElements, your own, etc.), you can reuse its credentials — just paste the existing OAuth token (with the `oauth:` prefix) and the bot's username here.
+
+**New to this?** The fastest path is a token generator like [twitchtokengenerator.com](https://twitchtokengenerator.com/) — pick "Bot Chat Token", log in as the bot account, copy the Access Token, paste it with the `oauth:` prefix. For the official Twitch documentation on chat scopes and OAuth flows, see [dev.twitch.tv/docs/authentication](https://dev.twitch.tv/docs/authentication/) and [dev.twitch.tv/docs/irc/authenticate-bot](https://dev.twitch.tv/docs/irc/authenticate-bot/).
+
+Save the file and (re)launch the game. You should see chat-side messages when votes open and close, and the in-game tally overlay during votes.
+
+### 🎥 (Optional) Also read YouTube chat
+
+If you stream to YouTube as well, set `youtubeChannelId` to your YouTube channel ID — a string that starts with `UC` followed by 22 characters (e.g. `"UCabcdefghijklmnopqrstuv"`). The mod will read your YouTube live chat in parallel — votes from YT and Twitch are merged into a single tally.
+
+**Finding your YouTube channel ID:**
+
+YouTube now displays your channel via your `@handle` rather than the channel ID, so the ID isn't shown in the URL anymore on most channels. To look it up:
+
+1. Sign in at [studio.youtube.com](https://studio.youtube.com/) as the YouTube account that streams.
+2. Click **Settings** (gear icon, bottom-left of the sidebar).
+3. In the popup, pick **Channel** → **Advanced settings**.
+4. Copy the value labelled **Channel ID** (starts with `UC`).
+
+Official Google reference: [Find your channel's user ID & channel ID](https://support.google.com/youtube/answer/3250431).
+
+**Note:** YouTube is read-only. Chat receipts ("Vote opened…", etc.) still only post in Twitch chat because posting to YT chat requires Google verification.
+
+---
+
+## 🗳 How chat votes
+
+When a vote opens, chat types one of:
+
+- `#0`, `#1`, `#2`, ... — pick the corresponding option.
+- `#0` is the **skip** option for card rewards (when chat-skip is enabled).
+- Bare numbers (`0`, `1`, `2`, ...) also work, but `#1` is the established convention from the original Slay the Streamer mod and the format chat is most likely to recognise.
+- `#1!42` — vote precisely for vote ID `42`. Useful for stream-delayed YT viewers if back-to-back votes might collide.
+
+The tally renders in chat (Twitch only) at vote open, periodically during the vote, and at close. It also appears on screen as a small overlay during the vote.
+
+Votes time out after 30 seconds by default (configurable, 10–120s).
+
+---
+
+## ✨ What chat votes on (v0.1)
+
+| Decision | Description |
+|---|---|
+| **Card rewards** | After each fight, chat picks which of the 3 cards is added to your deck. Chat can also skip if you enable it. |
+| **Ancient relics** | When you encounter an Ancient event (Pael, Tezcatara, Orobas, Nonupeipe, Tanx, Vakuu, Darv), chat picks the relic. |
+| **Act boss** | When you click "Proceed" out of a treasure chest, chat picks which of 3 candidate bosses you'll face at the end of the act. Bosses get animated combat-idle portraits. |
+| **Act 1 variant** | When you click "Embark", chat picks Underdocks vs Overgrowth before the run starts. (Toggleable.) |
+
+The mod also plays nicely with two vanilla Custom Mode modifiers:
+
+- **Sealed Deck** — **you** draft your starting 10 cards from a 30-card grid (chat does *not* vote on this draft). Once the run begins, chat votes on every card reward that follows, exactly like a normal run.
+- **Draft** — the run starts with 10 sequential pick-1-of-3 screens. Because these reuse the standard card-reward UI, **chat votes on every pick** — i.e. chat fully drafts your starting deck.
+
+`SealedDeck` and `Draft` are mutually exclusive in Custom Mode. Note: vanilla Custom Mode is locked behind 3 standard-mode wins (or unlock everything on the modded save via `unlock all` in the dev console, as in the caveats below).
+
+---
+
+## 🤝 Mod compatibility
+
+- **Slay the Relics reborn** (appears as `SlayTheRelicsExporter` in the in-game mod list) — tested side-by-side and they play fine together. The two mods do disjoint things: Slay the Relics pushes your run state to a Twitch extension overlay (viewers hover relics/cards on the stream), and this mod reads chat votes. No known conflicts.
+
+---
+
+## ⚙️ In-game settings
+
+Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list. You'll see:
+
+- **Vote duration** — 10 to 120 seconds (default 30s).
+- **Vote on Act 1 variant** — turn the pre-run Underdocks/Overgrowth vote on or off.
+- **Allow chat to skip** — when on, chat can vote `#0` to skip a card reward.
+- **Show vote tag** — show the `[NN]` vote-ID tag in chat receipts and the on-screen tally. Helpful if your YT chat has stream delay.
+- **Card skips per act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
+- **Settings file** — read-only path with an Open-folder button to reveal `%APPDATA%\SlayTheSpire2\` in Explorer.
+
+The settings panel is disabled mid-run — change settings between runs. Changes save automatically.
+
+**Twitch credentials and the YouTube channel ID stay in the JSON file** — they're not in the in-game UI to keep them off-screen during stream.
+
+---
+
+## ⚠️ Known caveats for v0.1
+
+- **Modded save is its own profile** — your unmodded progress is untouched, and modded runs don't count toward unlocks. The boss vote samples the act-variant's full boss pool, so chat may pick bosses that aren't unlocked on your unmodded save. If you want to also unlock things on the modded save, open the dev console (`~`) and run `unlock all`.
+- **Twitch chat receipts can get rate-limited** under heavy back-to-back voting (Twitch caps regular accounts at 20 messages per 30 seconds). The vote still works, but some "Vote opened…" / "Chat picked X" messages may not appear in chat.
+
+---
+
+## 🙏 Credits
+
+- Concept and design inspired by [**Tempus**'s original StS1 Slay the Streamer mod](https://github.com/Tempus/SlayTheStreamer) ([Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)). No code from that repo is incorporated; this is a from-scratch StS2 implementation that derives from the *concept*.
+- MIT licensed — see [LICENSE](LICENSE).
+
+---
+
+## 🧰 For developers / contributors
+
+Everything below is for poking at the code. Streamers can stop reading here.
+
+The mod is split into two namespaces:
+
+- `src/Ti/` — extractable, game-agnostic chat-integration layer (Twitch IRC, YouTube chat scraper, voting state machine, UI). No `MegaCrit.Sts2.*` references.
+- `src/Game/` — StS2-specific Harmony patches + settings loader. Depends on `Ti/` and on `sts2.dll`.
+
+### Repo layout
 
 ```
 slay-the-streamer-2/
-  README.md                  this file
-  LICENSE                    MIT
-  src/                       the mod
-    Ti/                        extractable multi-platform chat-integration core (no Godot, no sts2.dll refs)
-      Chat/                      IChatConsumer / IChatService surface
-                                 TwitchIrcChatService (IRC client + chat message + send queue)
-                                 MultiChatService (N-platform aggregator)
-                                 YouTubeChat/  read-only youtubei scraper (discovery + poller)
-      Voting/                    VoteSession / VoteCoordinator / Voter / EnglishReceipts
-                                   per-platform tally side-dict; vote-nonce (!NN) parsing
-      Internal/                  IClock / ITimerScheduler / IMainThreadDispatcher / TiLog + fakes
-      Ui/                        Godot UI (VoteTallyLabel — split per-platform rendering)
-      Godot/                     GodotMainThreadDispatcher + DispatcherAutoload
-    Game/                      StS2-specific glue (Harmony patches, settings)
-      Bootstrap/                 ModSettings (JSON config reader)
-      DecisionVotes/             Harmony patches per voted decision
-    ModEntry.cs                [ModInitializer] entry point
+  README.md                 this file
+  LICENSE                   MIT
+  CLAUDE.md                 project workflow rules + landmines (for AI-assisted dev)
+  src/                      the mod
+    Ti/                       extractable multi-platform chat-integration core
+      Chat/                     IChatConsumer / IChatService surface
+                                TwitchIrcChatService (IRC client + send queue)
+                                MultiChatService (N-platform aggregator)
+                                YouTubeChat/  read-only youtubei scraper
+      Voting/                   VoteSession / VoteCoordinator / Voter / EnglishReceipts
+                                per-platform tally side-dict; vote-nonce (!NN) parsing
+      Internal/                 IClock / ITimerScheduler / IMainThreadDispatcher / TiLog + fakes
+      Ui/                       Ti-side Godot UI (VoteTallyLabel — split per-platform rendering)
+    Godot/                    GodotMainThreadDispatcher + DispatcherAutoload
+    Game/                     StS2-specific glue (Harmony patches, settings, popups)
+      Bootstrap/                ModEntry init + ModSettings (JSON config reader)
+      DecisionVotes/            Harmony patches per voted decision
+      DevCommands/              dev-console commands (rerollvote, resetskips, votenow)
+      Ui/                       per-vote popups (BossVotePopup, ActVariantVotePopup,
+                                CardRewardVotePopup, AncientVotePopup, CardSkipCounterLabel,
+                                in-game Settings panel)
+    ModEntry.cs               [ModInitializer] entry point
     slay_the_streamer_2.csproj
-    slay_the_streamer_2.json   mod manifest
-  tests/                     xUnit test project (source-referenced, no DLL refs)
-  docs/superpowers/          specs + implementation plans + meta-reviews (the build-out story)
-  notes/                     research notes, hook-point inventory, follow-ups
-  build.ps1                  refresh DLLs from game install -> dotnet publish -> dotnet test -> assemble dist/
-  install.ps1                copy dist/ to <game-install>/mods/
-  uninstall.ps1              remove from <game-install>/mods/
+    slay_the_streamer_2.json  mod manifest
+    slay_the_streamer_2.json.example  template config (mod loader skips .json.example)
+    icon.svg, project.godot   needed for Godot.NET.Sdk compilation
+  tests/                    xUnit test project (source-referenced, no DLL refs)
+  docs/superpowers/         specs + implementation plans + meta-reviews (the build-out story)
+  notes/                    research notes, hook-point inventory, follow-ups
+  build.ps1                 refresh DLLs from game install → dotnet publish → dotnet test → assemble dist/
+  install.ps1               copy dist/ to <game-install>/mods/
+  uninstall.ps1             remove from <game-install>/mods/
 ```
 
-Not in the repo — gitignored, created locally by the "Setting up a fresh workspace" steps below:
+Not in the repo — gitignored, created locally:
 
 ```
-  references/                cloned reference repos (not our code; redistributing isn't ok)
-    SlayTheStreamer-sts1/      original StS1 mod, Java/LibGDX, feature reference only
-    STS2FirstMod/              jiegec's StS2 example mod
-  decompiled/sts2/           output of ILSpy on sts2.dll (MegaCrit's source, regenerable)
-  src/sts2.dll               copied per-build from the game install
-  src/0Harmony.dll           copied per-build from the game install
-  dist/                      build artefacts
+  references/               reference repos cloned per workspace (not redistributable)
+    SlayTheStreamer-sts1/     Tempus's StS1 original, feature reference only
+    STS2FirstMod/             jiegec's StS2 example mod
+  decompiled/sts2/          ILSpy output on sts2.dll (regenerable)
+  src/sts2.dll              copied per-build from the game install
+  src/0Harmony.dll          copied per-build from the game install
+  dist/                     build artefacts
 ```
 
-## Scope (v0.1 MVP)
+### Build + install from source
 
-Chat votes on the **core decisions**:
+Requires .NET 9 SDK, Godot 4.5.1 Mono (for the `Godot.NET.Sdk` csproj), and a Slay the Spire 2 install. Then:
 
-- Neow blessings (✅ shipped in B.1, 2026-05-10)
-- Card rewards (✅ shipped in B.2.1, 2026-05-11)
-- Start-of-act Ancient-rarity relic picks via Pael / Tezcatara / etc. — StS2's replacement for StS1's boss relics (✅ shipped in B.2.2, 2026-05-14)
-- Act boss (✅ shipped in B.3, 2026-05-15; combat-idle animated portraits in B.3.1, 2026-05-16; pre-run Act-1 variant pick in B.3.2, 2026-05-18)
+```powershell
+pwsh -File build.ps1     # publish + run tests + assemble dist/
+pwsh -File install.ps1   # copy dist/ → <game>/mods/
+```
 
-Works via vanilla Custom Mode with no mod-side code:
-- **Sealed-deck draft start** — vanilla StS2 already ships a `SealedDeck` modifier in Custom Mode. Streamer ticks it on the Custom Run screen, picks the character, embarks. The Neow event becomes a single "Sealed Deck" option that opens a 30-card grid; the streamer drafts 10 from 30 (vanilla numbers, hardcoded). Run continues from there with our existing B.2.1 card-reward / Ancients / etc. voting intact. Tempus's StS1 mod had a streamer-drafted sealed deck and then chat antagonised via subsequent voting; vanilla StS2's Custom Mode produces the same experience without any mod-side draft screen of our own. See [`notes/08`](notes/08-sealed-deck-custom-mode-investigation.md) for the full investigation. Note: vanilla Custom Mode is locked behind 3 standard-mode wins.
-- **Chat-controlled deck construction** — the sibling `Draft` modifier (mutually exclusive with `SealedDeck`) opens 10 sequential pick-1-of-3 reward screens for the streamer to build the run's deck. Because those screens are exactly the surface our B.2.1 card-reward voting hooks, ticking `Draft` in Custom Mode produces a fully chat-controlled deck construction with zero new code from us.
+`build.ps1` copies `sts2.dll` and `0Harmony.dll` from your game install each run; they're not redistributed in the repo.
 
-Deferred to v0.2 as new-design problems:
-- Event choice voting
-- Shop purchase voting
-- Chat bubbles on monsters
-- Custom monster names
-- Map path selection
-
-Out of scope entirely:
-- Twitch Extension overlays
-- Sending data back to Twitch beyond outgoing chat receipts
-
-Twitch direction is **read-only IRC + outgoing chat receipts**.
-YouTube (optional, v0.2) is **read-only scraping** via the public
-`youtubei` internal endpoint (no quota, no OAuth) — receipts never
-fire on YouTube; YT viewers see the in-game tally label only. The
-streamer's screen is the shared display; viewers type vote commands
-like `#0`, `#1`, `#2` in chat (or `#1!42` for vote-ID-precise voting
-when stream delay risks landing on the wrong vote). Vote tally is
-rendered both in chat (periodic + open + close receipts, Twitch
-only) and in-game (small overlay label; per-platform rows when YT
-is configured).
-
-## Setting up a fresh workspace
-
-`references/` and `decompiled/` are gitignored. To recreate them:
+### Recreating gitignored workspace dirs
 
 ```sh
-# Reference repos
 git clone https://github.com/Tempus/SlayTheStreamer.git references/SlayTheStreamer-sts1
 git clone https://github.com/jiegec/STS2FirstMod.git    references/STS2FirstMod
 
-# Decompiled game source (requires ILSpy CLI - see Toolchain below)
+# Requires ILSpy CLI (ilspycmd 9.x)
 ilspycmd "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64\sts2.dll" \
   -o decompiled/sts2 --nested-directories -p
 ```
 
-## Toolchain
+### Design notes
 
-- Windows 11
-- Git
-- .NET 9 SDK (`9.0.313`)
-- ILSpy CLI (`ilspycmd 9.1.0.7988`) for decompiling `sts2.dll`
-- Godot 4.5.1 Mono at `C:\Tools\Godot_4.5.1_mono\` — required for the build pipeline (`Godot.NET.Sdk` csproj)
-- VS Code with Claude Code extension
-- StS2 install at `C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\`
-- Game DLL at `data_sts2_windows_x86_64\sts2.dll`
-
-## Working notes
-
-See `notes/` for the running research log, hook-point inventory,
-and any open questions.
-
-## In-game settings UI
-
-Open the mod manager from the Settings screen and select **Slay the Streamer 2**. The right-hand panel now exposes:
-
-- **Vote duration** — 10–120s slider (default 30s)
-- **Vote on Act 1 variant** — toggle the Act-1 variant chat vote
-- **Allow chat to skip** — when on, chat votes `#0` to skip a card reward (cards become `#1`, `#2`, …); default on
-- **Show vote tag** — show the `[NN]`-style vote tag in chat receipts and the on-screen tally; default off for Twitch-only, on if YouTube is configured
-- **Card skips per act** — number of card-reward skips the **streamer** can use per act (0 / 1 / 2 / 3 / 5 / Unlimited)
-- **Settings file** — read-only path with an Open-folder button to reveal `%APPDATA%\SlayTheSpire2\` in Explorer
-
-Changes save automatically (debounced 500ms). The mod-manager screen is disabled mid-run; configure settings between runs.
-
-### JSON-only fields
-
-These stay in `%APPDATA%\SlayTheSpire2\slay_the_streamer_2.json` to avoid stream-side visibility:
-
-- `channel`, `username`, `oauthToken` — Twitch credentials
-- `youtubeChannelId` — optional YouTube channel ID
-- `schemaVersion`, `forceL3PopupFallback` — internal
-
-### Boss-vote and unlock state
-
-Slay the Streamer 2 was developed and tested on a modded save with all content unlocked. The boss vote samples from the act's full boss pool, so chat may vote for — and the run may end on — bosses you haven't unlocked through vanilla progression. This is the intended behaviour; chat gets the full pool to pick from. Boss unlocks come early in vanilla play, so this is rarely a lasting issue. If you want your boss codex / progression to match what chat is seeing in-run, open the dev console and run `unlock all` at any time.
-
-## Licence
-
-[MIT](LICENSE) — do whatever you want with this code as long as the
-licence + copyright stays attached. The original StS1 mod (Tempus's
-[Slay the Streamer](https://github.com/Tempus/SlayTheStreamer)) has no
-declared licence, so this project derives from its *concept* only — no
-code from that repo is incorporated.
+- Architecture, slice plans, and meta-reviews live under `docs/superpowers/`.
+- Research notes, hook-point inventory, and follow-ups live under `notes/`.
+- Per-project workflow rules and landmines live in `CLAUDE.md`.

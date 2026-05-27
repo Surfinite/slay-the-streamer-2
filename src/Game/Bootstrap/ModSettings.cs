@@ -46,6 +46,23 @@ public static class ModSettings {
     public static void UpdateCurrent(ChatSettings settings) =>
         System.Threading.Volatile.Write(ref _current, settings);
 
+    /// <summary>
+    /// Display name used in user-visible strings ("X has N card skips remaining
+    /// this act", "X skipped a card reward", etc.). Falls back to the literal
+    /// "Streamer" if no Twitch channel is configured — future-proofing for a
+    /// build where Twitch becomes optional alongside YouTube-only chat. Today
+    /// <see cref="ChatSettings.Channel"/> is required and always populated.
+    /// </summary>
+    public static string GetStreamerDisplayName() {
+        var channel = Current?.Channel;
+        if (string.IsNullOrWhiteSpace(channel)) return "Streamer";
+        // Channel is lower-cased during Load (Twitch URL convention); title-case the
+        // first letter so user-visible text reads like a name rather than a handle.
+        // Only first-letter — we don't know the streamer's preferred internal casing
+        // (e.g. "FrostPrime" vs "Frostprime"), so this is the safest minimal touch.
+        return char.ToUpperInvariant(channel[0]) + channel.Substring(1);
+    }
+
     public static SettingsResult Load(string path) {
         if (!File.Exists(path)) return new SettingsResult.Missing(path);
 

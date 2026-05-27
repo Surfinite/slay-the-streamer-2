@@ -236,11 +236,13 @@ internal static class CardRewardSkipGatePatch {
     }
 
     /// <summary>
-    /// Ensure a CardSkipCounterLabel is attached to the rewards screen and shows
-    /// the current committed snapshot. Hidden when actLimit &lt; 0 (unlimited).
-    /// IsInstanceValid guards against the static pointing at a freed node.
+    /// Ensure a CardSkipCounterLabel is attached as a child of the choose-a-card
+    /// screen and shows the current committed snapshot. Hidden when
+    /// <paramref name="actLimit"/> &lt; 0 (unlimited).
+    /// Parenting under the screen means Godot's natural scene-tree teardown frees
+    /// the label when the screen closes — no explicit cleanup patch needed.
     /// </summary>
-    private static void AttachOrUpdateLabel(NRewardsScreen screen, int actLimit) {
+    private static void AttachOrUpdateLabel(Node parent, Control? skipButton, int actLimit) {
         if (actLimit < 0) {
             if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
                 _activeLabel.Visible = false;
@@ -249,9 +251,8 @@ internal static class CardRewardSkipGatePatch {
         }
 
         if (_activeLabel is null || !GodotObject.IsInstanceValid(_activeLabel)) {
-            var proceedButton = _proceedButtonField.Value?.GetValue(screen) as Control;
             try {
-                _activeLabel = CardSkipCounterLabel.AttachTo(screen, proceedButton);
+                _activeLabel = CardSkipCounterLabel.AttachTo(parent, skipButton);
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] label attach failed", ex);
                 return;
@@ -261,9 +262,10 @@ internal static class CardRewardSkipGatePatch {
     }
 
     private static string FormatSkipReceipt(int actUsed, int actLimit) {
-        if (actLimit < 0) return "Streamer skipped a card reward.";
+        string streamerName = BootstrapModSettings.GetStreamerDisplayName();
+        if (actLimit < 0) return $"{streamerName} skipped a card reward.";
         int remaining = Math.Max(0, actLimit - actUsed);
-        return $"Streamer skipped a card reward. {remaining} remaining this act";
+        return $"{streamerName} skipped a card reward. {remaining} remaining this act";
     }
 
     private static void SendSkipReceipt(int actLimit) {
@@ -394,7 +396,6 @@ internal static class CardRewardSkipGatePatch {
                     TiLog.Info($"[SlayTheStreamer2][card-skip-gate] budget reset ({resetReason}); Act {(actIndex.HasValue ? humanAct.ToString() : "?")}");
                 }
 
-                if (!HasUnclaimedCardReward(__instance)) return;
                 // NOTE: Model 2 deliberately omits a population-time DisallowSkipping
                 // call. The OnProceedButtonPressed prefix below is the single source of
                 // truth for whether Proceed is allowed (mandatory-look + budget check).
@@ -404,7 +405,12 @@ internal static class CardRewardSkipGatePatch {
                 // clicks no-op silently when blocked; counter label gives visual
                 // feedback. v0.2 polish: live DisallowSkipping/AllowSkipping toggling
                 // as state changes.
-                AttachOrUpdateLabel(__instance, BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
+                //
+                // CardSkipCounterLabel is no longer attached here — it now mounts
+                // under the choose-a-card sub-screen (NCardRewardSelectionScreen)
+                // so it appears only when the streamer is actually choosing a card,
+                // not the whole time the rewards overview is up. See the postfix
+                // on NCardRewardSelectionScreen._Ready below.
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] _Ready postfix failed", ex);
             }
@@ -449,16 +455,54 @@ internal static class CardRewardSkipGatePatch {
         }
     }
 
+    /// <summary>
+    /// Attach the streamer-skip counter label as a child of the choose-a-card
+    /// screen. Parenting under the screen means Godot's scene-tree teardown
+    /// auto-frees the label when the streamer dismisses the screen — no
+    /// explicit cleanup patch needed. _Ready fires once per screen instance
+    /// (each ShowScreen instantiates fresh), so this is a one-and-only attach.
+    /// Hidden during votes via CardSkipCounterLabel._Process polling
+    /// CardRewardVotePatch.VoteInProgress.
+    /// </summary>
+    [HarmonyPatch(typeof(NCardRewardSelectionScreen), "_Ready")]
+    internal static class NCardRewardSelectionScreen_Ready_LabelAttach_Postfix {
+        static bool Prepare() => PrepareHardChecks();
+
+        static void Postfix(NCardRewardSelectionScreen __instance) {
+            try {
+                if (!ShouldEnforceSkipGate()) return;
+                var runState = TryGetRunState();
+                if (runState is null) return;
+                try {
+                    if (runState.Players?.Count is int n && n > 1) return;
+                } catch { /* swallow — proceed without MP bail if accessor failed */ }
+
+                // Resolve the Skip alternative button (always added first per vanilla
+                // CardRewardAlternative.Generate ordering) so the label can poll its
+                // GlobalPosition to track aspect-ratio changes. Null is tolerated —
+                // the label falls back to a fixed viewport-Y anchor.
+                Control? skipButton = null;
+                try {
+                    skipButton = __instance.GetNodeOrNull<Control>("UI/RewardAlternatives")?.GetChild(0) as Control;
+                } catch (Exception ex) {
+                    TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] skip-button lookup threw: {ex.Message}");
+                }
+
+                AttachOrUpdateLabel(__instance, skipButton, BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-skip-gate] choose-a-card _Ready postfix failed", ex);
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(NRewardsScreen), "AfterOverlayClosed")]
     internal static class NRewardsScreen_AfterOverlayClosed_Postfix {
         static bool Prepare() => true;
         static void Postfix(NRewardsScreen __instance) {
-            // Label is parented under SceneTree.Root (commit 17cb1d7) so it doesn't
-            // auto-free with the rewards screen. Free it explicitly here, then null
-            // the static so the next _Ready postfix builds a fresh one.
-            if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
-                _activeLabel.QueueFree();
-            }
+            // Label is parented under the choose-a-card screen now, so it auto-frees
+            // when that screen closes (which happens before / independent of this
+            // top-level rewards-screen close). Clear the static reference here as a
+            // safety net for the next rewards-screen lifecycle.
             _activeLabel = null;
 
             // Defensive — _Ready postfix clears, but if a screen tears down before

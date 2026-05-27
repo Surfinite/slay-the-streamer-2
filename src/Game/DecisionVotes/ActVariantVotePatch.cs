@@ -297,7 +297,7 @@ internal static partial class ActVariantVotePatch {
                 dispatcher: coordinator.Dispatcher,
                 shouldCancel: IsRunStartAbandoned,
                 onUserAbandoned: () => Interlocked.Exchange(ref pending.Cancelled, 1),
-                isOccludingOverlayVisible: IsOccludingOverlayVisible);
+                isOccludingOverlayVisible: OverlayOcclusion.IsOccludingOverlayVisible);
             coordinator.Dispatcher.Post(() => popup.Open());
 
             _ = HandleVoteAsync(screen, onEmbarkMethod, lobby, session, candidates, coordinator, pending);
@@ -308,22 +308,6 @@ internal static partial class ActVariantVotePatch {
             return true;
         }
         return false;  // suspend vanilla
-    }
-
-    /// <summary>
-    /// Probe passed to ActVariantVotePopup so the popup hides itself while the
-    /// dev console (or other vanilla overlay we don't want to cover) is up.
-    /// At run-start, NRun.Instance is null until BeginRunLocally completes, so
-    /// the submenu-stack arm BossVotePatch uses isn't relevant here — only
-    /// NDevConsole is. Mirrors BossVotePatch.IsOccludingOverlayVisible's defensive
-    /// shape so future code can fold in pause-menu detection without rework.
-    /// </summary>
-    private static bool IsOccludingOverlayVisible() {
-        try {
-            return NDevConsole.Instance?.Visible ?? false;
-        } catch {
-            return false;
-        }
     }
 
     private static bool IsRunStartAbandoned() {
@@ -348,7 +332,7 @@ internal static partial class ActVariantVotePatch {
             // RunState as "dying" and would cancel the session immediately. The popup's
             // own ESC handler cancels the session on user-bail and the label tears down
             // via its Cancelled subscription, so no extra probe is needed here.
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session));
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, placeOnLeft: ModSettings.Current?.VoteTallyOnLeft ?? false, isOccludingOverlayVisible: OverlayOcclusion.IsOccludingOverlayVisible));
 
             int? winnerIndex = null;
             try {

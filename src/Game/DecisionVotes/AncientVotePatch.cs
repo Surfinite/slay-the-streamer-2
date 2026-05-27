@@ -11,6 +11,8 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using SlayTheStreamer2.Game.Bootstrap;
+using SlayTheStreamer2.Game.Ui;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Ui;
@@ -164,7 +166,14 @@ internal static class AncientVotePatch {
                                               VoteSession session, IReadOnlyList<EventOption> snapshot,
                                               int playerClickIndex, string? runIdAtStart) {
         try {
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying));
+            coordinator.Dispatcher.Post(() => {
+                VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying, ModSettings.Current?.VoteTallyOnLeft ?? false, OverlayOcclusion.IsOccludingOverlayVisible);
+                try {
+                    new AncientVotePopup(session, coordinator.Dispatcher, room, RunLiveness.IsRunDying, OverlayOcclusion.IsOccludingOverlayVisible).Show();
+                } catch (Exception ex) {
+                    TiLog.Warn($"[SlayTheStreamer2][ancient-vote] popup attach failed; corner tally still active: {ex.Message}");
+                }
+            });
 
             int winnerIndex;
             try {

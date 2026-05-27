@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
 using SlayTheStreamer2.Game.Bootstrap;
+using SlayTheStreamer2.Game.Ui;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Ui;
@@ -89,7 +90,14 @@ internal static class CardRewardVotePatch {
     private static IReadOnlyList<NCardHolder>? GetCurrentHolders(NCardRewardSelectionScreen screen) {
         var host = _cardRowField.Value?.GetValue(screen) as Node;
         if (host is null) return null;
-        return host.GetChildren().OfType<NCardHolder>().ToList();
+        // Sort by Position.X so list-order matches visual left-to-right order, which is
+        // also the order options[] is in. Vanilla NGridCardHolder.OnFocus calls
+        // MoveToFrontSafely(), reordering Godot's child list whenever a card gets focus
+        // — without this sort, GetChildren() returns scrambled order and the
+        // option-index → holder mapping breaks (chat votes would resolve to the wrong
+        // card). Tweens to the final 350*i position complete in 0.5s on screen show,
+        // well before any user click could trigger this code path.
+        return host.GetChildren().OfType<NCardHolder>().OrderBy(h => h.Position.X).ToList();
     }
 
     private static int? FindHolderIndex(IReadOnlyList<NCardHolder> holders, NCardHolder target) {
@@ -293,7 +301,14 @@ internal static class CardRewardVotePatch {
         string? runIdAtStart,
         bool includeSkip) {
         try {
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying));
+            coordinator.Dispatcher.Post(() => {
+                VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying, ModSettings.Current?.VoteTallyOnLeft ?? false, OverlayOcclusion.IsOccludingOverlayVisible);
+                try {
+                    new CardRewardVotePopup(session, coordinator.Dispatcher, screen, includeSkip, RunLiveness.IsRunDying, OverlayOcclusion.IsOccludingOverlayVisible).Show();
+                } catch (Exception ex) {
+                    TiLog.Warn($"[SlayTheStreamer2][card-vote] popup attach failed; corner tally still active: {ex.Message}");
+                }
+            });
 
             int winnerIndex;
             try {

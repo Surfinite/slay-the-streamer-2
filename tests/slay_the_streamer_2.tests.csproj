@@ -35,6 +35,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\TopBarMapButtonGuardPatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\AncientRelicExclusionPatches.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RunLiveness.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\OverlayOcclusion.cs" />
   </ItemGroup>
 
   <ItemGroup>

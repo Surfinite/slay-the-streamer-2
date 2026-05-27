@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes.Combat;
@@ -25,6 +24,16 @@ internal sealed partial class BossVotePopup : Control {
     /// </summary>
     public const int LAYER_INDEX = 100;
 
+    // Vanilla default body font + variants used for per-label theming.
+    private const string FontPath = "res://themes/kreon_regular_shared.tres";
+    private const string TitleFontPath = "res://themes/kreon_bold_shared.tres";
+    private const string TimerFontPath = "res://themes/kreon_regular_glyph_space_one.tres";
+    // Match ActVariantVotePopup's countdown timer light-blue color.
+    private static readonly Color TimerColor = new(0.529f, 0.808f, 0.921f, 1f);
+    // Warm cream used by vanilla body text (top bar, settings, vfx damage/heal numbers,
+    // proceed button, etc.). Softer than pure white against dark backdrops.
+    private static readonly Color BodyTextColor = new(1f, 0.964706f, 0.886275f, 1f);
+
     /// <summary>
     /// Slot size for each per-column animated portrait. Layered evolution:
     ///   - 256×256 (B.3 PNG era, static portraits)
@@ -39,6 +48,20 @@ internal sealed partial class BossVotePopup : Control {
     ///     letting it return to the original 0.92 multiplier).
     /// </summary>
     private static readonly Vector2 PortraitSlotSize = new(448, 640);
+
+    /// <summary>
+    /// Gap (in px) between the portrait slot bottom and the first text line (#N).
+    /// Negative pulls the text up into the slot's lower transparent area, bringing
+    /// the label block visually closer to the animated boss.
+    /// </summary>
+    private const int PortraitToTextGap = -60;
+
+    /// <summary>
+    /// Gap (in px) between each of the three per-column text lines (#N / boss
+    /// name / tally count). Negative pulls them together; 0 is tight stacking
+    /// driven only by each Label's intrinsic font line-height.
+    /// </summary>
+    private const int TextLineSpacing = 8;
 
     private readonly IReadOnlyList<BossVotePopupOption> _options;
     private readonly VoteSession _session;
@@ -63,8 +86,8 @@ internal sealed partial class BossVotePopup : Control {
     private readonly Func<bool>? _isRunDying;
 
     private CanvasLayer? _canvasLayer;
-    private RichTextLabel? _timerLabel;
-    private readonly List<RichTextLabel> _tallyLabels = new();
+    private Label? _timerLabel;
+    private readonly List<Label> _tallyLabels = new();
 
     /// <summary>
     /// Slot Controls (one per column) — Godot type only, no MegaCrit refs.
@@ -138,24 +161,35 @@ internal sealed partial class BossVotePopup : Control {
         // Content root — VBox centered with title, timer, columns.
         var content = new VBoxContainer {
             Name = "Content",
-            AnchorLeft = 0.1f, AnchorTop = 0.15f, AnchorRight = 0.9f, AnchorBottom = 0.85f,
+            AnchorLeft = 0.1f, AnchorTop = 0.1f, AnchorRight = 0.9f, AnchorBottom = 0.85f,
         };
         _canvasLayer.AddChild(content);
 
-        var title = new RichTextLabel {
+        // ShowTag prefixes the title with the live vote ID so YT viewers (who don't
+        // see Twitch receipts) can disambiguate against the currently-open vote.
+        // The literal "Type #N" instruction was dropped after chat-moderator
+        // feedback that repeating it every vote turned into a parroted joke
+        // ("I typed #N and nothing happened"). Newcomers still see the syntax
+        // in the persistent corner VoteTallyLabel.
+        string voteHint = _session.ShowTag
+            ? $"[{_session.VoteId:D2}] — "
+            : "";
+        var title = new Label {
             Name = "Title",
-            BbcodeEnabled = true,
-            FitContent = true,
-            Text = $"[b]ACT {actNumberOneBased} BOSS VOTE[/b]",
+            Text = $"{voteHint}Pick the deadliest Act {actNumberOneBased} boss.",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
         };
+        ApplyTitleTheme(title);
         content.AddChild(title);
 
-        _timerLabel = new RichTextLabel {
+        _timerLabel = new Label {
             Name = "Timer",
-            BbcodeEnabled = true,
-            FitContent = true,
             Text = $"{(int)_session.TimeRemaining.TotalSeconds}s left",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
         };
+        ApplyTimerTheme(_timerLabel);
         content.AddChild(_timerLabel);
 
         var columns = new HBoxContainer {
@@ -170,6 +204,9 @@ internal sealed partial class BossVotePopup : Control {
                 Name = $"Column{opt.Index}",
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
             };
+            // Outer separation: gap between portrait slot and the text block below.
+            // Negative pulls the text up into the slot's transparent lower area.
+            col.AddThemeConstantOverride("separation", PortraitToTextGap);
             columns.AddChild(col);
 
             // Portrait slot: sized Control parents the factory-produced Node2D.
@@ -180,6 +217,14 @@ internal sealed partial class BossVotePopup : Control {
                 Name = "PortraitSlot",
                 CustomMinimumSize = PortraitSlotSize,
                 ClipContents = true,
+                // Hold the slot at PortraitSlotSize.X (448) and center it within the
+                // column. Without ShrinkCenter the slot would Fill the column width,
+                // and ApplyPortraitFit's centering math (which uses PortraitSlotSize
+                // as the reference frame, not slot.Size) would anchor the portrait
+                // at column-LEFT — visually misaligning it with the column-centered
+                // labels on wide aspect ratios / fewer-column votes (e.g. A10+ acts
+                // where the boss vote drops to 2 columns).
+                SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             };
             col.AddChild(slot);
             _portraitSlots.Add(slot);
@@ -197,21 +242,41 @@ internal sealed partial class BossVotePopup : Control {
                 }
             }
 
-            var nameLabel = new RichTextLabel {
-                Name = "Name",
-                BbcodeEnabled = true,
-                FitContent = true,
-                Text = $"#{opt.Index} {opt.Title}",
+            // Inner VBox holds the three text lines so they can have their own
+            // line-to-line separation independent of the outer portrait→text gap.
+            var textBlock = new VBoxContainer {
+                Name = "TextBlock",
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
             };
-            col.AddChild(nameLabel);
+            textBlock.AddThemeConstantOverride("separation", TextLineSpacing);
+            col.AddChild(textBlock);
 
-            var tally = new RichTextLabel {
-                Name = "Tally",
-                BbcodeEnabled = true,
-                FitContent = true,
-                Text = "0",
+            var indexLabel = new Label {
+                Name = "Index",
+                Text = $"#{opt.Index}",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
             };
-            col.AddChild(tally);
+            ApplyIndexTheme(indexLabel);
+            textBlock.AddChild(indexLabel);
+
+            var nameLabel = new Label {
+                Name = "Name",
+                Text = opt.Title,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            };
+            ApplyNameTheme(nameLabel);
+            textBlock.AddChild(nameLabel);
+
+            var tally = new Label {
+                Name = "Tally",
+                Text = "0",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            };
+            ApplyTallyTheme(tally);
+            textBlock.AddChild(tally);
             _tallyLabels.Add(tally);
         }
 
@@ -318,6 +383,49 @@ internal sealed partial class BossVotePopup : Control {
         if (visuals is NCreatureVisuals cv) cv.SetScaleAndHue(scale, 0f);
     }
 
+    private static void ApplyTitleTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(TitleFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", BodyTextColor);
+        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
+        label.AddThemeConstantOverride("shadow_offset_x", 3);
+        label.AddThemeConstantOverride("shadow_offset_y", 2);
+        label.AddThemeFontSizeOverride("font_size", 40);
+    }
+
+    private static void ApplyTimerTheme(Label label) {
+        // Mirrors ActVariantVotePopup.ApplyActNumberTheme — Kreon glyph_space_one,
+        // light-blue color, faint drop shadow, size 40.
+        var font = ResourceLoader.Load<Font>(TimerFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", TimerColor);
+        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.05f));
+        label.AddThemeConstantOverride("shadow_offset_x", 3);
+        label.AddThemeConstantOverride("shadow_offset_y", 2);
+        label.AddThemeFontSizeOverride("font_size", 40);
+    }
+
+    private static void ApplyIndexTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(FontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", BodyTextColor);
+        label.AddThemeFontSizeOverride("font_size", 32);
+    }
+
+    private static void ApplyNameTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(FontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", new Color(0.937f, 0.784f, 0.5f, 1f));
+        label.AddThemeFontSizeOverride("font_size", 24);
+    }
+
+    private static void ApplyTallyTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(FontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", BodyTextColor);
+        label.AddThemeFontSizeOverride("font_size", 30);
+    }
+
     public override void _Process(double delta) {
         if (_session.State is VoteSessionState.Closed
                               or VoteSessionState.Cancelled
@@ -374,9 +482,7 @@ internal sealed partial class BossVotePopup : Control {
         for (int i = 0; i < _options.Count; i++) {
             var opt = _options[i];
             _session.Tallies.TryGetValue(opt.Index, out int count);
-            var bar = new StringBuilder();
-            for (int b = 0; b < count && b < 20; b++) bar.Append('▮');
-            _tallyLabels[i].Text = $"{bar} {count}";
+            _tallyLabels[i].Text = count.ToString();
         }
     }
 

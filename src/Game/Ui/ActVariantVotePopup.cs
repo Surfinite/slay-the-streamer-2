@@ -31,7 +31,9 @@ internal sealed partial class ActVariantVotePopup : Control {
     private readonly Func<bool>? _isOccludingOverlayVisible;
 
     private CanvasLayer? _canvasLayer;
+    private Label[] _indexLabels = Array.Empty<Label>();
     private Label[] _tallyLabels = Array.Empty<Label>();
+    private Label? _voteTitleLabel;
     private Label? _timerLabel;
     private bool _userAbandoned;   // Task 11 will set this; declared here so the fields are stable
     private int _cachedTallyVersion = -1;   // -1 sentinel — first poll always updates labels
@@ -48,13 +50,33 @@ internal sealed partial class ActVariantVotePopup : Control {
     // Vanilla act-banner styling (decompiled/sts2-assets/scenes/ui/act_banner.tscn).
     // Kept as field-style constants so the values are easy to spot-check against
     // a fresh decompile after a game update.
-    private const string TitleFontPath = "res://themes/spectral_bold_shared.tres";
+    // "BannerTitle" = the per-column act-variant name (Underdocks / Overgrowth);
+    // "VoteTitle"   = the top-of-screen "Vote on the act variant" header that mirrors
+    //                 the other vote popups (boss / card-reward / ancient).
+    private const string BannerTitleFontPath = "res://themes/spectral_bold_shared.tres";
     private const string ActNumberFontPath = "res://themes/kreon_regular_glyph_space_one.tres";
-    private static readonly Color TitleColor = new(0.937f, 0.784f, 0.318f, 1f);    // gold
+    private const string TallyFontPath = "res://themes/kreon_regular_shared.tres";
+    private const string VoteTitleFontPath = "res://themes/kreon_bold_shared.tres";
+    private static readonly Color BannerTitleColor = new(0.937f, 0.784f, 0.318f, 1f);    // gold
     private static readonly Color ActNumberColor = new(0.529f, 0.808f, 0.921f, 1f); // light blue
     private static readonly Color BannerStripColor = new(0f, 0f, 0f, 0.25f);
+    private static readonly Color BodyTextColor = new(1f, 0.964706f, 0.886275f, 1f);
     private const float BannerAnchorTop = 0.398f;
     private const float BannerAnchorBottom = 0.583f;
+
+    // ---- Easy-to-tweak positioning + sizing knobs ----
+    // Vote title (top-of-screen "Vote on the act variant" header) — y offset
+    // from viewport top.
+    private const float VoteTitleOffsetY = 160f;
+    private const int VoteTitleFontSize = 40;
+
+    // Per-column #N + tally — both anchored to each column's CenterBottom;
+    // negative Y offsets move them upward toward the column center. Tweak
+    // these two numbers to shift the index/count pair vertically.
+    private const float ColumnIndexOffsetY = -400f;
+    private const float ColumnTallyOffsetY = -300f;
+    private const int IndexFontSize = 40;
+    private const int TallyFontSize = 32;
 
     public ActVariantVotePopup(
             IReadOnlyList<ActVariantOption> candidates,
@@ -129,12 +151,35 @@ internal sealed partial class ActVariantVotePopup : Control {
         hbox.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         layer.AddChild(hbox);
 
+        _indexLabels = new Label[_options.Count];
         _tallyLabels = new Label[_options.Count];
 
         for (int i = 0; i < _options.Count; i++) {
             var column = BuildColumn(_options[i], _factories[i], i);
             hbox.AddChild(column);
         }
+
+        // Vote title — top-of-screen header mirroring the other vote popups.
+        // ShowTag prefixes the title with the live vote ID so YT viewers (who
+        // don't see Twitch receipts) can disambiguate against the open vote.
+        // "Type #N" instruction dropped after moderator feedback — see the
+        // matching comment in BossVotePopup.Show().
+        string voteHint = _session.ShowTag
+            ? $"[{_session.VoteId:D2}] — "
+            : "";
+        _voteTitleLabel = new Label {
+            Text = $"{voteHint}Pick the most difficult act variant.",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        _voteTitleLabel.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterTop);
+        _voteTitleLabel.OffsetLeft = -500;
+        _voteTitleLabel.OffsetRight = 500;
+        _voteTitleLabel.OffsetTop = VoteTitleOffsetY;
+        _voteTitleLabel.OffsetBottom = VoteTitleOffsetY + 60;
+        ApplyVoteTitleTheme(_voteTitleLabel);
+        layer.AddChild(_voteTitleLabel);
 
         // Countdown timer — full-screen-centered text positioned just above the
         // banner strip, occupying the same on-screen slot the vanilla act banner
@@ -211,18 +256,32 @@ internal sealed partial class ActVariantVotePopup : Control {
         // and have no horizontal padding.
         AddBanner(free, option.Title);
 
-        // Tally label — text is updated by _Process tally-version polling.
-        // Left at default theme until the polish pass; readability gate met
-        // because the bottom-of-column area is unoccupied (no scene foreground
-        // collides with the text).
+        // Two stacked labels per column: #N on top, count beneath. Both anchored
+        // to the column's CenterBottom; tune ColumnIndexOffsetY / ColumnTallyOffsetY
+        // (top of file) to nudge their vertical positions.
+        var indexLabel = new Label {
+            Text = $"#{option.Index}",
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        indexLabel.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterBottom);
+        indexLabel.OffsetTop = ColumnIndexOffsetY;
+        indexLabel.OffsetBottom = ColumnIndexOffsetY + 50;
+        indexLabel.OffsetLeft = -150;
+        indexLabel.OffsetRight = 150;
+        ApplyIndexTheme(indexLabel);
+        free.AddChild(indexLabel);
+        _indexLabels[columnIndex] = indexLabel;
+
         var tally = new Label {
-            Text = $"#{option.Index} — 0 votes",
+            Text = "0",
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         tally.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterBottom);
-        tally.OffsetTop = -80;
+        tally.OffsetTop = ColumnTallyOffsetY;
+        tally.OffsetBottom = ColumnTallyOffsetY + 50;
         tally.OffsetLeft = -150;
         tally.OffsetRight = 150;
+        ApplyTallyTheme(tally);
         free.AddChild(tally);
         _tallyLabels[columnIndex] = tally;
 
@@ -270,21 +329,41 @@ internal sealed partial class ActVariantVotePopup : Control {
         label.OffsetRight = 0;
         label.OffsetTop = 0;
         label.OffsetBottom = 0;
-        ApplyTitleTheme(label);
+        ApplyBannerTitleTheme(label);
         parent.AddChild(label);
     }
 
-    private static void ApplyTitleTheme(Label label) {
-        // Mirror vanilla act_banner.tscn _actName styling. Font size scaled down
-        // from vanilla's 120 to 80 — each column is half-screen wide, so 120
-        // would overflow on narrow windows.
-        var font = ResourceLoader.Load<Font>(TitleFontPath);
+    private static void ApplyBannerTitleTheme(Label label) {
+        // Mirror vanilla act_banner.tscn _actName styling for each act-variant
+        // banner (Underdocks / Overgrowth). Font size scaled down from vanilla's
+        // 120 to 80 — each column is half-screen wide, so 120 would overflow on
+        // narrow windows.
+        var font = ResourceLoader.Load<Font>(BannerTitleFontPath);
         if (font is not null) label.AddThemeFontOverride("font", font);
-        label.AddThemeColorOverride("font_color", TitleColor);
+        label.AddThemeColorOverride("font_color", BannerTitleColor);
         label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.05f));
         label.AddThemeConstantOverride("shadow_offset_x", 4);
         label.AddThemeConstantOverride("shadow_offset_y", 3);
         label.AddThemeFontSizeOverride("font_size", 80);
+    }
+
+    private static void ApplyVoteTitleTheme(Label label) {
+        // Mirrors the other vote popups (BossVotePopup / CardRewardVotePopup /
+        // AncientVotePopup) — Kreon Bold, cream body color, soft drop shadow.
+        var font = ResourceLoader.Load<Font>(VoteTitleFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", BodyTextColor);
+        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
+        label.AddThemeConstantOverride("shadow_offset_x", 3);
+        label.AddThemeConstantOverride("shadow_offset_y", 2);
+        label.AddThemeFontSizeOverride("font_size", VoteTitleFontSize);
+    }
+
+    private static void ApplyIndexTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(TallyFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", BodyTextColor);
+        label.AddThemeFontSizeOverride("font_size", IndexFontSize);
     }
 
     private static void ApplyActNumberTheme(Label label) {
@@ -297,6 +376,13 @@ internal sealed partial class ActVariantVotePopup : Control {
         label.AddThemeConstantOverride("shadow_offset_x", 3);
         label.AddThemeConstantOverride("shadow_offset_y", 2);
         label.AddThemeFontSizeOverride("font_size", 40);
+    }
+
+    private static void ApplyTallyTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(TallyFontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        label.AddThemeColorOverride("font_color", BodyTextColor);
+        label.AddThemeFontSizeOverride("font_size", TallyFontSize);
     }
 
     private static Color ParseHex(string rrggbb) {
@@ -353,7 +439,7 @@ internal sealed partial class ActVariantVotePopup : Control {
                 var tallies = _session.Tallies;
                 for (int i = 0; i < _options.Count && i < _tallyLabels.Length; i++) {
                     int count = tallies.TryGetValue(_options[i].Index, out var c) ? c : 0;
-                    _tallyLabels[i].Text = $"#{_options[i].Index} — {count} votes";
+                    _tallyLabels[i].Text = count.ToString();
                 }
             } catch (Exception ex) {
                 TiLog.Warn($"[SlayTheStreamer2][act-variant-vote] tally update threw: {ex.Message}");

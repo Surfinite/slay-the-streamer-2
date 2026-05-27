@@ -25,12 +25,13 @@ public static class SettingsWriter {
             json = new JsonObject { ["schemaVersion"] = CurrentSchemaVersion };
         }
 
-        // Overwrite the five UI-managed keys.
+        // Overwrite the UI-managed keys.
         json["voteDurationSeconds"] = settings.VoteDurationSeconds;
         json["voteOnActVariant"] = settings.VoteOnActVariant;
         json["cardSkipAsVoteOption"] = settings.CardSkipAsVoteOption;
         json["showVoteTag"] = settings.ShowVoteTag;
         json["cardSkipsPerAct"] = settings.CardSkipsPerAct;
+        json["voteTallyOnLeft"] = settings.VoteTallyOnLeft;
 
         WriteAtomic(path, json);
     }

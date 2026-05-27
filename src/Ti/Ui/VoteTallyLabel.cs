@@ -16,8 +16,24 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
     // for another host game with no Kreon asset just renders unstyled text).
     private const string FontPath = "res://themes/kreon_regular_shared.tres";
 
+    // Panel anchor — corner-pinned to one viewport edge at TopAnchor's Y position;
+    // the panel auto-sizes to the label content and grows inward + downward from
+    // the anchor point. ScreenEdgePadding nudges the panel a few px off the literal
+    // screen edge so the backdrop has visible breathing room.
+    private const float TopAnchor = 0.15f;
+    private const float ScreenEdgePadding = 8f;
+
+    // Backdrop stylebox values — semi-transparent dark, soft rounded corners,
+    // small internal padding so the text doesn't touch the box edge.
+    private static readonly Color BackdropColor = new(0f, 0f, 0f, 0.55f);
+    private const int BackdropCornerRadius = 6;
+    private const int BackdropPaddingX = 12;
+    private const int BackdropPaddingY = 6;
+
     private VoteSession? _session;
     private CanvasLayer? _canvasLayer;
+    private bool _placeOnLeft;
+    private Func<bool>? _isOccludingOverlayVisible;
     private EventHandler<VoteSession>? _closedHandler;
     private EventHandler<VoteSession>? _cancelledHandler;
     /// <summary>
@@ -33,9 +49,8 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
     // Cache-invalidation triggers — rebuild Text only when one of these changes.
     private int _cachedSecondsLeft = -1;
     private int _cachedTallyVersion = -1;
-    private bool _cachedVoteEchoActive;
 
-    public static void AttachTo(VoteSession session, Func<bool>? isRunDying = null) {
+    public static void AttachTo(VoteSession session, Func<bool>? isRunDying = null, bool placeOnLeft = false, Func<bool>? isOccludingOverlayVisible = null) {
         var tree = (Engine.GetMainLoop() as SceneTree);
         if (tree?.Root is null) {
             TiLog.Warn("[vote-tally-label] no SceneTree.Root available; skipping UI attach");
@@ -47,22 +62,63 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
             Layer = CanvasLayerIndex,
         };
 
+        // Backdrop panel auto-sizes to the label content and grows inward from the
+        // chosen screen edge. Solves readability issues where varied game art
+        // (sun-flares, bright VFX, mid-luma silhouettes) defeat plain text shadows.
+        var panel = new PanelContainer { Name = "VoteTallyPanel" };
+        var bg = new StyleBoxFlat {
+            BgColor                 = BackdropColor,
+            CornerRadiusTopLeft     = BackdropCornerRadius,
+            CornerRadiusTopRight    = BackdropCornerRadius,
+            CornerRadiusBottomLeft  = BackdropCornerRadius,
+            CornerRadiusBottomRight = BackdropCornerRadius,
+            ContentMarginLeft       = BackdropPaddingX,
+            ContentMarginRight      = BackdropPaddingX,
+            ContentMarginTop        = BackdropPaddingY,
+            ContentMarginBottom     = BackdropPaddingY,
+        };
+        panel.AddThemeStyleboxOverride("panel", bg);
+        panel.AnchorTop = TopAnchor;
+        panel.AnchorBottom = TopAnchor;
+        panel.OffsetTop = 0;
+        panel.OffsetBottom = 0;
+        panel.GrowVertical = Control.GrowDirection.End;
+        if (placeOnLeft) {
+            panel.AnchorLeft = 0;
+            panel.AnchorRight = 0;
+            panel.OffsetLeft = ScreenEdgePadding;
+            panel.OffsetRight = ScreenEdgePadding;
+            panel.GrowHorizontal = Control.GrowDirection.End;
+        } else {
+            panel.AnchorLeft = 1;
+            panel.AnchorRight = 1;
+            panel.OffsetLeft = -ScreenEdgePadding;
+            panel.OffsetRight = -ScreenEdgePadding;
+            panel.GrowHorizontal = Control.GrowDirection.Begin;
+        }
+
         var label = new VoteTallyLabel { Name = "VoteTallyLabel" };
         label.BbcodeEnabled = true;
         label.FitContent = true;
-        // Anchor top-right by default; Surfinite will adjust positioning during polish.
-        label.AnchorLeft = 0.6f; label.AnchorTop = 0.05f;
-        label.AnchorRight = 0.98f; label.AnchorBottom = 0.4f;
+        // Disable wrapping so the label's natural width = longest single-line content;
+        // PanelContainer then sizes the backdrop to hug that width exactly.
+        label.AutowrapMode = TextServer.AutowrapMode.Off;
         ApplyKreonFont(label);
+        // Slight breathing room between table cells. Defaults are 0 — text touches.
+        label.AddThemeConstantOverride("table_h_separation", 14);
+        label.AddThemeConstantOverride("table_v_separation", 2);
         label._session = session;
         label._canvasLayer = canvasLayer;
+        label._placeOnLeft = placeOnLeft;
         label._isRunDying = isRunDying;
+        label._isOccludingOverlayVisible = isOccludingOverlayVisible;
         label._closedHandler = (_, _) => label.SafeQueueFree();
         label._cancelledHandler = (_, _) => label.SafeQueueFree();
         session.Closed += label._closedHandler;
         session.Cancelled += label._cancelledHandler;
 
-        canvasLayer.AddChild(label);
+        panel.AddChild(label);
+        canvasLayer.AddChild(panel);
         tree.Root.AddChild(canvasLayer);
     }
 
@@ -98,19 +154,27 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
             return;
         }
 
+        // Yield the screen to an occluding overlay (pause menu, dev console,
+        // settings submenu). Hide the wrapper CanvasLayer; the vote keeps
+        // running and chat votes still tally — only the visual is suppressed.
+        bool occluded = false;
+        try { occluded = _isOccludingOverlayVisible?.Invoke() ?? false; }
+        catch { /* probe must never crash _Process */ }
+        if (_canvasLayer is not null && _canvasLayer.Visible == occluded) {
+            _canvasLayer.Visible = !occluded;
+        }
+        if (occluded) return;   // skip text rebuild while hidden
+
         var secondsLeft = Math.Max(0, (int)_session.TimeRemaining.TotalSeconds);
         var tallyVersion = _session.TallyVersion;
-        var echoActive = ComputeEchoActive();
 
         if (secondsLeft == _cachedSecondsLeft &&
-            tallyVersion == _cachedTallyVersion &&
-            echoActive == _cachedVoteEchoActive) {
+            tallyVersion == _cachedTallyVersion) {
             return;
         }
 
         _cachedSecondsLeft = secondsLeft;
         _cachedTallyVersion = tallyVersion;
-        _cachedVoteEchoActive = echoActive;
 
         var sb = new StringBuilder();
         // Vote-ID in header so YT viewers (who don't see Twitch receipts) can use the !NN syntax.
@@ -122,49 +186,60 @@ public sealed partial class VoteTallyLabel : RichTextLabel {
 
         var perPlatform = _session.TalliesByPlatform;
         if (perPlatform is null) {
-            // Single-platform — original rendering path.
+            // Single-platform — keep the original prose rendering with option names.
+            // No table needed for a single tally column.
             for (int i = 0; i < _session.Options.Count; i++) {
                 _session.Tallies.TryGetValue(i, out var count);
                 sb.AppendLine($"#{i} {_session.Options[i].Label}: {count}");
             }
         } else {
-            // Multi-platform — iterate ConfiguredPlatforms in registration order so configured-but-silent
-            // platforms still render their zero rows (no mid-vote rendering snap).
-            foreach (var platform in _session.ConfiguredPlatforms) {
-                sb.Append($"{Capitalize(platform)}: ");
-                for (int i = 0; i < _session.Options.Count; i++) {
-                    perPlatform.TryGetValue((platform, i), out var count);
-                    if (i > 0) sb.Append(", ");
-                    sb.Append($"{i}={count}");
-                }
-                if (IsVoteEchoVisible(platform)) {
-                    sb.Append(" ◀ just now");
-                }
-                sb.AppendLine();
+            // Multi-platform — BBCode [table] for fixed-column alignment. Columns:
+            //   [option index] [platform 1] [platform 2] ...
+            // ConfiguredPlatforms drives the column count; absent platforms (no YT
+            // connection) naturally drop their column.
+            var platforms = _session.ConfiguredPlatforms;
+            int numCols = 1 + platforms.Count;
+            sb.Append($"[table={numCols}]");
+            // Header row: empty index cell, then platform abbreviations.
+            sb.Append("[cell][/cell]");
+            foreach (var platform in platforms) {
+                sb.Append($"[cell]{AbbreviatePlatform(platform)}[/cell]");
             }
+            // Body rows: #N + count per platform.
+            for (int i = 0; i < _session.Options.Count; i++) {
+                sb.Append($"[cell]#{i}[/cell]");
+                foreach (var platform in platforms) {
+                    perPlatform.TryGetValue((platform, i), out var count);
+                    sb.Append($"[cell]{count}[/cell]");
+                }
+            }
+            sb.Append("[/table]");
         }
-        Text = sb.ToString();
+        // The PanelContainer auto-sizes to the WIDEST line — usually the header
+        // ("Chat voting [01] — Xs left, type #N ..."). Narrower lines (the
+        // BBCode table) then float left within that wider box. When the panel
+        // is anchored to the right side of the screen, the table looks like
+        // it's drifted away from the panel's right edge — fix is to right-align
+        // the whole content via BBCode wrap so every row hugs the panel's
+        // right edge. Left-side placement keeps default left alignment.
+        Text = _placeOnLeft ? sb.ToString() : $"[right]{sb}[/right]";
     }
 
-    private bool ComputeEchoActive() {
-        if (_session is null) return false;
-        foreach (var platform in _session.ConfiguredPlatforms) {
-            if (IsVoteEchoVisible(platform)) return true;
-        }
-        return false;
-    }
-
-    private bool IsVoteEchoVisible(string platform) {
-        if (_session is null) return false;
-        return _session.LastVoteByPlatform.TryGetValue(platform, out var lastVote)
-               && DateTimeOffset.UtcNow - lastVote < TimeSpan.FromSeconds(3);
-    }
-
-    private static string Capitalize(string s) {
-        if (string.IsNullOrEmpty(s)) return s;
-        if (char.IsUpper(s[0])) return s;
-        return char.ToUpperInvariant(s[0]) + s.Substring(1);
-    }
+    /// <summary>
+    /// Short header label for a platform in the multi-platform table. Known
+    /// platforms get curated abbreviations; unknown platforms fall back to
+    /// the first two characters Title-Cased so future platform additions
+    /// degrade to something readable without a code change.
+    /// </summary>
+    private static string AbbreviatePlatform(string platform) => platform switch {
+        "twitch" => "Tw",
+        "youtube" => "YT",
+        _ => platform.Length switch {
+            0 => "",
+            1 => platform.ToUpperInvariant(),
+            _ => char.ToUpperInvariant(platform[0]) + platform.Substring(1, 1),
+        },
+    };
 
     public override void _ExitTree() {
         if (_session is not null) {

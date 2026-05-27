@@ -133,12 +133,14 @@ internal static class SettingsPanelBuilder {
         AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));
         AddDivider(root);
+        AddCardSkipsDropdown(root, current, debouncer);
+        AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
+        AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
         AddHelpText(root, "Displays and increments a tag for each vote, e.g.  [b][14][/b]\nChat can vote with [b]#0!14[/b] so delayed votes don't land in the wrong tally.\nCould be useful to combat lag on YT, (might just be confusing).");
         AddDivider(root);
-        AddCardSkipsDropdown(root, current, debouncer);
-        AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
+        AddVoteTallySideDropdown(root, current, debouncer);
         AddDivider(root);
         AddFilePathRow(root);
 
@@ -268,6 +270,50 @@ internal static class SettingsPanelBuilder {
         dropdown.ItemSelected += idx => {
             var value = dropdown.GetItemMetadata((int)idx).AsInt32();
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = value });
+        };
+
+        inner.AddChild(dropdown);
+        parent.AddChild(row);
+    }
+
+    private static void AddVoteTallySideDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
+
+        inner.AddChild(MakeRowLabel("Vote tally side"));
+
+        var dropdown = new OptionButton {
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(115, 0),
+        };
+        if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
+        dropdown.AddThemeFontSizeOverride("font_size", 22);
+        dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
+
+        // Bool-backed setting presented as a Left/Right dropdown. Metadata holds the
+        // bool so ItemSelected can recover the setting value directly (mirrors
+        // AddCardSkipsDropdown's pattern for the same reason: id=-1 collides with
+        // Godot's auto-assign sentinel, so we use metadata, not item-ids).
+        (string Label, bool Value)[] entries = [
+            ("Left",  true),
+            ("Right", false),
+        ];
+
+        int selectedIdx = 0;
+        for (int i = 0; i < entries.Length; i++) {
+            dropdown.AddItem(entries[i].Label);
+            dropdown.SetItemMetadata(i, entries[i].Value);
+            if (entries[i].Value == current.VoteTallyOnLeft) selectedIdx = i;
+        }
+        dropdown.Selected = selectedIdx;
+
+        var popup = dropdown.GetPopup();
+        if (_kreonRegular != null) popup.AddThemeFontOverride("font", _kreonRegular);
+        popup.AddThemeFontSizeOverride("font_size", 22);
+
+        dropdown.ItemSelected += idx => {
+            var value = dropdown.GetItemMetadata((int)idx).AsBool();
+            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { VoteTallyOnLeft = value });
         };
 
         inner.AddChild(dropdown);

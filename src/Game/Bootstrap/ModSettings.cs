@@ -16,7 +16,8 @@ public sealed record ChatSettings(
     bool ForceL3PopupFallback = false,
     int VoteDurationSeconds = 30,
     bool CardSkipAsVoteOption = true,
-    bool ShowVoteTag = false);
+    bool ShowVoteTag = false,
+    bool VoteTallyOnLeft = false);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -175,9 +176,16 @@ public static class ModSettings {
                 else warnings.Add("showVoteTag is not a boolean; using conditional default (true if YouTube configured, else false)");
             }
 
+            bool voteTallyOnLeft = false;
+            if (root.TryGetProperty("voteTallyOnLeft", out var tallyLeftProp)) {
+                if (tallyLeftProp.ValueKind == JsonValueKind.True) voteTallyOnLeft = true;
+                else if (tallyLeftProp.ValueKind == JsonValueKind.False) voteTallyOnLeft = false;
+                else warnings.Add("voteTallyOnLeft is not a boolean; using default (false = right side)");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft),
                 warnings);
         }
     }

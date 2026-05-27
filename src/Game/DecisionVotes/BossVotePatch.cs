@@ -17,6 +17,7 @@ using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Game.Ui;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
@@ -176,32 +177,8 @@ internal static class BossVotePatch {
         }
     }
 
-    /// <summary>
-    /// Probe passed to BossVotePopup so it hides its CanvasLayer while any
-    /// vanilla overlay we don't want to occlude is visible. Currently covers:
-    ///   - Dev console (NDevConsole.Instance.Visible).
-    ///   - Pause menu / settings / abandon-confirm modal / any other vanilla
-    ///     submenu — detected via NRun.Instance.GlobalUi.SubmenuStack.Stack.SubmenusOpen.
-    ///     GlobalUi.SubmenuStack is an NCapstoneSubmenuStack which wraps the
-    ///     actual NRunSubmenuStack at .Stack; NRunSubmenuStack inherits
-    ///     NSubmenuStack which exposes the count-based SubmenusOpen bool.
-    ///     Pause menu opens via NRun.Instance.GlobalUi.SubmenuStack.ShowScreen
-    ///     per NTopBarPauseButton.cs:75 — same code path through this stack.
-    /// Note: SceneTree.Paused is NOT a viable probe here — StS2 uses
-    /// RunManager.ActionExecutor.Pause() for combat pausing, not Godot's
-    /// SceneTree.Paused, so the latter never goes true via the pause menu.
-    /// Kept in the patch (not the popup) so BossVotePopup stays MegaCrit-free.
-    /// Defensive: any exception in either probe is swallowed and returns false.
-    /// </summary>
-    private static bool IsOccludingOverlayVisible() {
-        try {
-            if (NDevConsole.Instance?.Visible ?? false) return true;
-            if (NRun.Instance?.GlobalUi?.SubmenuStack?.Stack?.SubmenusOpen ?? false) return true;
-            return false;
-        } catch {
-            return false;
-        }
-    }
+    // Occlusion probe now lives in the shared OverlayOcclusion helper so the
+    // other vote popups + the corner VoteTallyLabel can use the same logic.
 
     /// <summary>
     /// Probe passed to BossVotePopup so it can detect mid-vote run death and
@@ -268,7 +245,7 @@ internal static class BossVotePatch {
                 dtos,
                 session,
                 coordinator.Dispatcher,
-                isOccludingOverlayVisible: IsOccludingOverlayVisible,
+                isOccludingOverlayVisible: OverlayOcclusion.IsOccludingOverlayVisible,
                 isRunDying: IsRunDying);
             coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
         } catch {
@@ -631,7 +608,7 @@ internal static class BossVotePatch {
         string? runIdAtStart,
         int gen) {
         try {
-            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying));
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying, ModSettings.Current?.VoteTallyOnLeft ?? false, OverlayOcclusion.IsOccludingOverlayVisible));
 
             int? winnerIndex;
             try {

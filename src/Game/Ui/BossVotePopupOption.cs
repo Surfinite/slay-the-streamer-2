@@ -14,5 +14,10 @@ namespace SlayTheStreamer2.Game.Ui;
 /// portrait slot. Lazy invocation: if Show() is never called (e.g., the
 /// session is cancelled mid-construction), no NCreatureVisuals instances
 /// are created — nothing to leak.
+///
+/// MarkPriorWinner is set only on the A10 second-boss round when the
+/// "allow same boss twice" setting (task 2b) re-offers the round-1 winner:
+/// the popup renders a "won round 1" badge on that column so chat understands
+/// that re-picking it means fighting the same boss twice.
 /// </summary>
-internal sealed record BossVotePopupOption(int Index, string Title, Func<Node2D>? VisualsFactory);
+internal sealed record BossVotePopupOption(int Index, string Title, Func<Node2D>? VisualsFactory, bool MarkPriorWinner = false);

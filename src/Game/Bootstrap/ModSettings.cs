@@ -17,7 +17,8 @@ public sealed record ChatSettings(
     int VoteDurationSeconds = 30,
     bool CardSkipAsVoteOption = true,
     bool ShowVoteTag = false,
-    bool VoteTallyOnLeft = false);
+    bool VoteTallyOnLeft = false,
+    bool AllowSameBossTwice = false);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -200,9 +201,16 @@ public static class ModSettings {
                 else warnings.Add("voteTallyOnLeft is not a boolean; using default (false = right side)");
             }
 
+            bool allowSameBossTwice = false;
+            if (root.TryGetProperty("allowSameBossTwice", out var sameBossProp)) {
+                if (sameBossProp.ValueKind == JsonValueKind.True) allowSameBossTwice = true;
+                else if (sameBossProp.ValueKind == JsonValueKind.False) allowSameBossTwice = false;
+                else warnings.Add("allowSameBossTwice is not a boolean; using default (false)");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice),
                 warnings);
         }
     }

@@ -58,6 +58,11 @@ internal static class BossVotePatch {
     private static string? _lastSwapRunId;
     private static int _lastSwapActIndex = -1;
     private static ModelId? _lastSwappedBossId;
+    // A10 DoubleBoss only: the second boss chat picked in round 2 (or auto-assigned),
+    // tracked alongside _lastSwappedBossId so the save-quit idempotency check can
+    // verify+restore BOTH swaps. Null when no second boss was set (non-A10 act, or
+    // round 2 left vanilla's pick).
+    private static ModelId? _lastSwappedSecondBossId;
 
     /// <summary>
     /// Last NTreasureRoom captured in PrefixContinue. The rerollvote dev command
@@ -69,11 +74,11 @@ internal static class BossVotePatch {
 
     /// <summary>
     /// Monotonic counter incremented each time a vote (fresh or rerolled) goes
-    /// "live". HandleVoteAsync captures the generation at start; ResumeOnMainThread
-    /// compares its captured generation against the current value and bails if
-    /// stale (i.e., a reroll superseded this resume). Prevents the cancelled-old-
-    /// session's resume from applying a swap or firing the synthetic Proceed
-    /// re-click on top of the fresh popup.
+    /// "live". HandleVoteAsync/HandleRound2Async capture the generation at start; the
+    /// round-1 and round-2 resume steps compare their captured generation against the
+    /// current value and bail if stale (i.e., a reroll superseded this resume). Prevents
+    /// the cancelled-old-session's resume from applying a swap or firing the synthetic
+    /// Proceed re-click on top of the fresh popup.
     /// </summary>
     private static int _voteGeneration;
 
@@ -94,6 +99,17 @@ internal static class BossVotePatch {
     /// </summary>
     internal static Action<IRunState, EncounterModel> ApplyBossSwap { get; set; }
         = (rs, boss) => MapCmd.SetBossEncounter(rs, boss);
+
+    /// <summary>
+    /// Runtime override hook for the A10 second-boss swap (task 2a/2b). Defaults to
+    /// ActModel.SetSecondBossEncounter — there is no MapCmd helper because the second
+    /// boss is not shown on the map (it's the hidden A10 DoubleBoss follow-up fight),
+    /// so no top-bar/map refresh is needed. SetSecondBossEncounter validates only
+    /// RoomType == Boss (not distinctness from the primary), which is exactly what
+    /// lets 2b set the same boss for both slots.
+    /// </summary>
+    internal static Action<IRunState, EncounterModel> ApplySecondBossSwap { get; set; }
+        = (rs, boss) => rs.Act.SetSecondBossEncounter(boss);
 
     private static readonly Lazy<MethodInfo?> _proceedMethod =
         new(() => AccessTools.Method(typeof(NTreasureRoom), "OnProceedButtonPressed", new[] { typeof(NButton) }));
@@ -206,15 +222,17 @@ internal static class BossVotePatch {
             string? runIdAtStart,
             int salt,
             int gen) {
-        // Materialize pool once; exclude SecondBossEncounter if A10+ DoubleBoss.
+        // Materialize the full boss pool. Round 1 now picks the PRIMARY boss from
+        // ALL bosses (task 2a) — we no longer exclude the vanilla-rolled second boss,
+        // because at A10 DoubleBoss a second round (HandleVoteAsync) votes the second
+        // boss too. Below A10 there is no second boss and this is a single round.
         var pool = runState.Act.AllBossEncounters.ToList();
-        if (runState.Act.HasSecondBoss) {
-            var secondId = runState.Act.SecondBossEncounter?.Id;
-            if (secondId is not null) pool.RemoveAll(e => e.Id == secondId);
-        }
         if (pool.Count <= 1) {
+            // Guard against a pick-1-of-1 (or empty) vote: bail to vanilla. Matches the
+            // "never trigger a 1-of-1 vote" rule shared with the card/ancient paths.
             throw new InvalidOperationException($"degenerate pool (count={pool.Count}); cannot start vote");
         }
+        bool isDoubleBoss = runState.Act.HasSecondBoss;
 
         // Stable deterministic seed + per-reroll salt for dev re-rolls.
         int seed = BossVoteSeed.Stable(runState.Rng?.StringSeed, runState.CurrentActIndex) + salt;
@@ -232,13 +250,19 @@ internal static class BossVotePatch {
             VisualsFactory: BuildVisualsFactory(e))).ToList();
         var labels = dtos.Select(d => d.Title).ToList();
 
+        int actNum = runState.CurrentActIndex + 1;
         var label = salt == 0
-            ? $"Act {runState.CurrentActIndex + 1} boss vote"
-            : $"Act {runState.CurrentActIndex + 1} boss vote (reroll #{salt})";
+            ? $"Act {actNum} boss vote"
+            : $"Act {actNum} boss vote (reroll #{salt})";
         var settings = SlayTheStreamer2.Game.Bootstrap.ModSettings.Current;
         var voteDuration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
         var showTag = settings?.ShowVoteTag ?? false;
         var session = coordinator.Start(label, labels, voteDuration, showTag);
+
+        // Round-1 title: at A10 DoubleBoss it's the first of two votes, so signal "(1 of 2)".
+        string coreTitle = isDoubleBoss
+            ? $"Pick the deadliest Act {actNum} boss (1 of 2)."
+            : $"Pick the deadliest Act {actNum} boss.";
 
         try {
             var popup = new BossVotePopup(
@@ -247,13 +271,13 @@ internal static class BossVotePatch {
                 coordinator.Dispatcher,
                 isOccludingOverlayVisible: OverlayOcclusion.IsOccludingOverlayVisible,
                 isRunDying: IsRunDying);
-            coordinator.Dispatcher.Post(() => popup.Show(runState.CurrentActIndex + 1));
+            coordinator.Dispatcher.Post(() => popup.Show(coreTitle));
         } catch {
             try { session.Cancel(); } catch { /* swallow */ }
             throw;
         }
 
-        _ = HandleVoteAsync(coordinator, room, session, sample, runIdAtStart, gen);
+        _ = HandleVoteAsync(coordinator, room, session, sample, runIdAtStart, gen, isDoubleBoss);
         return sample;
     }
 
@@ -269,7 +293,7 @@ internal static class BossVotePatch {
         //   - Map-screen back-arrow: returns the streamer to the chest after exit.
         // Without this guard, the second Proceed click would re-fire the vote with
         // identical candidates (seed is per-run-per-act). Marker is set in
-        // ResumeOnMainThread after the synthetic re-call completes.
+        // FinalizeOnMainThread after the synthetic re-call completes.
         //
         // BUT: also verify the swap survived. StS2's save-quit snapshot can
         // predate our mid-room swap (the save was made before the runState
@@ -285,6 +309,9 @@ internal static class BossVotePatch {
                 || (currentBossId is not null && currentBossId == _lastSwappedBossId);
             if (swapStillInPlace) {
                 TiLog.Info($"[SlayTheStreamer2][boss-vote] Act {runState.CurrentActIndex + 1} already had a boss vote this run; skipping subsequent chest click (Golden Compass or map back-arrow)");
+                // The second boss (A10) can be rolled back independently of the primary
+                // by a save-quit snapshot; re-assert it if needed before skipping.
+                ReassertSecondBossIfNeeded(runState);
                 Interlocked.Exchange(ref _voteInProgress, 0);
                 return true;
             }
@@ -300,6 +327,7 @@ internal static class BossVotePatch {
                     if (restoredBoss is not null) {
                         TiLog.Info($"[SlayTheStreamer2][boss-vote] Act {runState.CurrentActIndex + 1} marker matched but Act.BossEncounter is {currentBossId}; save-quit rolled back the swap — silently restoring {_lastSwappedBossId} (chat already voted)");
                         ApplyBossSwap(runState, restoredBoss);
+                        ReassertSecondBossIfNeeded(runState);
                         Interlocked.Exchange(ref _voteInProgress, 0);
                         return true;
                     }
@@ -313,6 +341,7 @@ internal static class BossVotePatch {
             _lastSwapRunId = null;
             _lastSwapActIndex = -1;
             _lastSwappedBossId = null;
+            _lastSwappedSecondBossId = null;
         }
 
         // Capture room + reset reroll salt + bump generation BEFORE BuildAndStartVote
@@ -587,9 +616,13 @@ internal static class BossVotePatch {
             //   track 0: body/idle_loop
             //   track 1: left/idle_loop
             //   track 2: right/idle_loop
-            var state = spine.GetAnimationState();
+            // v0.107.0 changed MegaSprite.GetAnimationState() to THROW when the
+            // skeleton hasn't finished initializing; TryGetAnimationState() (added in
+            // v0.107.0) restores the graceful null path so a cold scene degrades to a
+            // static portrait rather than a caught exception.
+            var state = spine.TryGetAnimationState();
             if (state is null) {
-                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab: GetAnimationState returned null; column renders unanimated");
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab: animation state not ready; column renders unanimated");
                 return;
             }
             state.SetAnimation("body/idle_loop",  loop: true, trackId: 0);
@@ -604,32 +637,21 @@ internal static class BossVotePatch {
         VoteCoordinator coordinator,
         NTreasureRoom room,
         VoteSession session,
-        IReadOnlyList<EncounterModel> sample,
+        IReadOnlyList<EncounterModel> slate,
         string? runIdAtStart,
-        int gen) {
+        int gen,
+        bool isDoubleBoss) {
         try {
             coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session, RunLiveness.IsRunDying, ModSettings.Current?.VoteTallyOnLeft ?? false, OverlayOcclusion.IsOccludingOverlayVisible));
 
-            int? winnerIndex;
-            try {
-                int idx = await session.AwaitWinnerAsync();
-                if (idx < 0 || idx >= sample.Count) {
-                    TiLog.Warn($"[SlayTheStreamer2][boss-vote] winnerIndex {idx} out of range [0, {sample.Count}); no swap will be applied");
-                    winnerIndex = null;
-                } else {
-                    winnerIndex = idx;
-                }
-            } catch (Exception ex) {
-                TiLog.Error("[SlayTheStreamer2][boss-vote] AwaitWinnerAsync threw; no swap will be applied", ex);
-                winnerIndex = null;
-            }
+            int? winnerIndex = await AwaitValidatedWinnerAsync(session, slate.Count, "round 1");
 
-            TiLog.Info($"[SlayTheStreamer2][boss-vote] resume: dispatching with winnerIndex={(winnerIndex?.ToString() ?? "null")}");
-            coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, sample, winnerIndex, runIdAtStart, gen));
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] round 1 resume: dispatching with winnerIndex={(winnerIndex?.ToString() ?? "null")}");
+            coordinator.Dispatcher.Post(() => ResolveRound1OnMainThread(coordinator, room, slate, winnerIndex, runIdAtStart, gen, isDoubleBoss));
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][boss-vote] HandleVoteAsync threw; attempting no-winner fallback resume", ex);
             try {
-                coordinator.Dispatcher.Post(() => ResumeOnMainThread(room, sample, winnerIndex: null, runIdAtStart, gen));
+                coordinator.Dispatcher.Post(() => ResolveRound1OnMainThread(coordinator, room, slate, null, runIdAtStart, gen, isDoubleBoss));
             } catch (Exception postEx) {
                 TiLog.Error("[SlayTheStreamer2][boss-vote] fallback resume Post itself threw; resetting flags", postEx);
                 Interlocked.Exchange(ref _resumeInProgress, 0);
@@ -638,91 +660,300 @@ internal static class BossVotePatch {
         }
     }
 
-    private static void ResumeOnMainThread(
+    /// <summary>
+    /// Awaits a vote session's winner and bounds-checks it against the option count.
+    /// Returns null (treat as no-winner) if the vote produced no in-range index or
+    /// AwaitWinnerAsync threw/cancelled. Shared by both rounds.
+    /// </summary>
+    private static async Task<int?> AwaitValidatedWinnerAsync(VoteSession session, int optionCount, string roundLabel) {
+        try {
+            int idx = await session.AwaitWinnerAsync();
+            if (idx < 0 || idx >= optionCount) {
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] {roundLabel} winnerIndex {idx} out of range [0, {optionCount}); treating as no-winner");
+                return null;
+            }
+            return idx;
+        } catch (Exception ex) {
+            TiLog.Error($"[SlayTheStreamer2][boss-vote] {roundLabel} AwaitWinnerAsync threw; treating as no-winner", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Round-1 resume (main thread): applies the chat-chosen PRIMARY boss, then either
+    /// finalizes (single-boss act / no winner) or — at A10 DoubleBoss — plans and starts
+    /// the second-boss round (task 2a/2b). Does not fire the synthetic Proceed until the
+    /// whole vote sequence is done (FinalizeOnMainThread), so the chest stays suspended
+    /// across both rounds and _voteInProgress remains acquired throughout.
+    /// </summary>
+    private static void ResolveRound1OnMainThread(
+            VoteCoordinator coordinator,
             NTreasureRoom room,
-            IReadOnlyList<EncounterModel> sample,
-            int? winnerIndex,
+            IReadOnlyList<EncounterModel> slate,
+            int? winner1Index,
             string? runIdAtStart,
-            int gen) {
-        // Generation guard: if this resume is from a session that was superseded by
-        // a rerollvote, bail without applying any swap or firing the synthetic
-        // Proceed re-click. _voteInProgress stays acquired (the fresh vote owns it).
+            int gen,
+            bool isDoubleBoss) {
         if (gen != _voteGeneration) {
-            TiLog.Info($"[SlayTheStreamer2][boss-vote] resume from stale generation {gen} (current={_voteGeneration}); rerollvote superseded — discarding");
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] round 1 resume from stale generation {gen} (current={_voteGeneration}); rerollvote superseded — discarding");
             return;
         }
-        Interlocked.Exchange(ref _resumeInProgress, 1);
-        try {
-            if (!GodotObject.IsInstanceValid(room)) {
-                TiLog.Warn("[SlayTheStreamer2][boss-vote] resume: room no longer valid; dropping");
-                SendIgnoredResultReceipt();
-                return;
-            }
+        if (!TryBeginResume(room, runIdAtStart, out var currentState)) return;
 
-            // Liveness checks (mirror AncientVotePatch / CardRewardVotePatch).
-            IRunState? currentState;
-            try {
-                var rm = RunManager.Instance;
-                if (rm is null) {
-                    TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: RunManager.Instance is null");
-                    SendIgnoredResultReceipt();
-                    return;
-                }
-                if (rm.IsAbandoned) {
-                    TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run was abandoned during vote");
-                    SendIgnoredResultReceipt();
-                    return;
-                }
-                currentState = rm.DebugOnlyGetState();
-                if (currentState is null) {
-                    TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run state is gone");
-                    SendIgnoredResultReceipt();
-                    return;
-                }
-                if (currentState.IsGameOver) {
-                    TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run is over (player dead)");
-                    SendIgnoredResultReceipt();
-                    return;
-                }
-                if (runIdAtStart is not null) {
-                    string? currentRunId = currentState.Rng?.StringSeed;
-                    if (currentRunId != runIdAtStart) {
-                        TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run changed during vote");
-                        SendIgnoredResultReceipt();
-                        return;
-                    }
-                }
-            } catch (Exception ex) {
-                TiLog.Warn($"[SlayTheStreamer2][boss-vote] resume aborted: liveness check threw ({ex.Message})");
-                SendIgnoredResultReceipt();
-                return;
-            }
+        ModelId? primaryId = ApplyPrimarySwap(slate, winner1Index, currentState);
 
-            // Apply boss swap if we have a valid winner.
-            // Track the actually-applied boss ID so the idempotency check in
-            // PrefixContinue can verify the swap survived save-quit (StS2's save
-            // snapshot may predate our mid-room mutation).
-            ModelId? swappedBossId = null;
-            if (winnerIndex.HasValue) {
+        // Single-boss act, or no round-1 winner: no second round — finalize now.
+        if (!isDoubleBoss || winner1Index is null) {
+            FinalizeOnMainThread(room, currentState, primaryId, secondId: null);
+            return;
+        }
+
+        bool allowSame = ModSettings.Current?.AllowSameBossTwice ?? false;
+        var plan = SecondBossRoundPlanner.Plan(slate.Count, winner1Index.Value, allowSame);
+
+        if (!plan.RunVote) {
+            // Degenerate slate (no real 2nd-vote possible): auto-assign or keep vanilla.
+            ModelId? secondId = null;
+            if (plan.AutoAssignSlateIndex >= 0) {
                 try {
-                    var winnerEncounter = BossVoteResolver.ResolveWinner(sample, winnerIndex.Value);
-                    TiLog.Info($"[SlayTheStreamer2][boss-vote] resume: applying boss swap to {winnerEncounter.Id}");
-                    ApplyBossSwap(currentState, winnerEncounter);
-                    swappedBossId = winnerEncounter.Id;
+                    var secondBoss = slate[plan.AutoAssignSlateIndex];
+                    ApplySecondBossSwap(currentState, secondBoss);
+                    secondId = secondBoss.Id;
+                    TiLog.Info($"[SlayTheStreamer2][boss-vote] second boss auto-assigned (no 2nd vote needed): {secondId}");
                 } catch (Exception ex) {
-                    TiLog.Error("[SlayTheStreamer2][boss-vote] ApplyBossSwap threw; preserving vanilla boss", ex);
+                    TiLog.Error("[SlayTheStreamer2][boss-vote] auto-assign second boss threw; preserving vanilla second boss", ex);
                 }
             } else {
-                TiLog.Info("[SlayTheStreamer2][boss-vote] resume: no winner; preserving vanilla boss");
+                TiLog.Info("[SlayTheStreamer2][boss-vote] no distinct second boss available; preserving vanilla second boss");
+            }
+            FinalizeOnMainThread(room, currentState, primaryId, secondId);
+            return;
+        }
+
+        // A real second-boss round is needed. We're already on the main thread, so the
+        // round-1 session has closed (its winner resolved) and CurrentSession is free to
+        // start round 2.
+        StartSecondRound(coordinator, room, slate, plan, primaryId, currentState.CurrentActIndex + 1, runIdAtStart, gen, allowSame);
+    }
+
+    /// <summary>
+    /// Builds and starts the A10 second-boss vote (round 2). The round-2 options are a
+    /// subset of the round-1 slate (already pre-warmed), so no re-prewarm is needed. The
+    /// round-1 winner is marked when re-offered (2b). On any failure, finalizes with the
+    /// primary swap only so the chest is never left suspended.
+    /// </summary>
+    private static void StartSecondRound(
+            VoteCoordinator coordinator,
+            NTreasureRoom room,
+            IReadOnlyList<EncounterModel> slate,
+            SecondBossRoundPlan plan,
+            ModelId? primaryId,
+            int actNumberOneBased,
+            string? runIdAtStart,
+            int gen,
+            bool allowSame) {
+        try {
+            var round2Encounters = new List<EncounterModel>(plan.OptionSlateIndices.Count);
+            var dtos = new List<BossVotePopupOption>(plan.OptionSlateIndices.Count);
+            for (int optIdx = 0; optIdx < plan.OptionSlateIndices.Count; optIdx++) {
+                var enc = slate[plan.OptionSlateIndices[optIdx]];
+                round2Encounters.Add(enc);
+                dtos.Add(new BossVotePopupOption(
+                    Index: optIdx,
+                    Title: enc.Title.GetFormattedText(),
+                    VisualsFactory: BuildVisualsFactory(enc),
+                    MarkPriorWinner: optIdx == plan.PriorWinnerOptionIndex));
             }
 
+            var labels = dtos.Select(d => d.Title).ToList();
+            var settings = SlayTheStreamer2.Game.Bootstrap.ModSettings.Current;
+            var voteDuration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
+            var showTag = settings?.ShowVoteTag ?? false;
+            var session2 = coordinator.Start($"Act {actNumberOneBased} second-boss vote", labels, voteDuration, showTag);
+
+            string coreTitle = allowSame
+                ? $"Pick the second Act {actNumberOneBased} boss — same boss allowed (2 of 2)."
+                : $"Pick the second Act {actNumberOneBased} boss (2 of 2).";
+
+            var sampledIds = string.Join(", ", dtos.Select((d, i) => $"#{i}={d.Title}{(d.MarkPriorWinner ? " (R1 winner)" : "")}"));
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] opening round 2 (second boss); allowSameBossTwice={allowSame}; options: {sampledIds}");
+
+            try {
+                var popup = new BossVotePopup(
+                    dtos,
+                    session2,
+                    coordinator.Dispatcher,
+                    isOccludingOverlayVisible: OverlayOcclusion.IsOccludingOverlayVisible,
+                    isRunDying: IsRunDying);
+                coordinator.Dispatcher.Post(() => popup.Show(coreTitle));
+            } catch {
+                try { session2.Cancel(); } catch { /* swallow */ }
+                throw;
+            }
+
+            _ = HandleRound2Async(coordinator, room, session2, round2Encounters, primaryId, runIdAtStart, gen);
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][boss-vote] StartSecondRound threw; finalizing with primary boss only", ex);
+            var st = RunManager.Instance?.DebugOnlyGetState();
+            if (st is not null) FinalizeOnMainThread(room, st, primaryId, secondId: null);
+            else AbortAndReset(sendReceipt: false);
+        }
+    }
+
+    private static async Task HandleRound2Async(
+            VoteCoordinator coordinator,
+            NTreasureRoom room,
+            VoteSession session2,
+            IReadOnlyList<EncounterModel> round2Encounters,
+            ModelId? primaryId,
+            string? runIdAtStart,
+            int gen) {
+        try {
+            coordinator.Dispatcher.Post(() => VoteTallyLabel.AttachTo(session2, RunLiveness.IsRunDying, ModSettings.Current?.VoteTallyOnLeft ?? false, OverlayOcclusion.IsOccludingOverlayVisible));
+
+            int? winner2Index = await AwaitValidatedWinnerAsync(session2, round2Encounters.Count, "round 2");
+
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] round 2 resume: dispatching with winnerIndex={(winner2Index?.ToString() ?? "null")}");
+            coordinator.Dispatcher.Post(() => ResolveRound2OnMainThread(room, round2Encounters, winner2Index, primaryId, runIdAtStart, gen));
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][boss-vote] HandleRound2Async threw; attempting primary-only finalize", ex);
+            try {
+                coordinator.Dispatcher.Post(() => ResolveRound2OnMainThread(room, round2Encounters, null, primaryId, runIdAtStart, gen));
+            } catch (Exception postEx) {
+                TiLog.Error("[SlayTheStreamer2][boss-vote] round 2 fallback Post itself threw; resetting flags", postEx);
+                Interlocked.Exchange(ref _resumeInProgress, 0);
+                Interlocked.Exchange(ref _voteInProgress, 0);
+            }
+        }
+    }
+
+    private static void ResolveRound2OnMainThread(
+            NTreasureRoom room,
+            IReadOnlyList<EncounterModel> round2Encounters,
+            int? winner2Index,
+            ModelId? primaryId,
+            string? runIdAtStart,
+            int gen) {
+        if (gen != _voteGeneration) {
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] round 2 resume from stale generation {gen} (current={_voteGeneration}); superseded — discarding");
+            return;
+        }
+        if (!TryBeginResume(room, runIdAtStart, out var currentState)) return;
+
+        ModelId? secondId = null;
+        if (winner2Index.HasValue) {
+            try {
+                var secondBoss = BossVoteResolver.ResolveWinner(round2Encounters, winner2Index.Value);
+                TiLog.Info($"[SlayTheStreamer2][boss-vote] round 2: applying second-boss swap to {secondBoss.Id}");
+                ApplySecondBossSwap(currentState, secondBoss);
+                secondId = secondBoss.Id;
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][boss-vote] ApplySecondBossSwap threw; preserving vanilla second boss", ex);
+            }
+        } else {
+            TiLog.Info("[SlayTheStreamer2][boss-vote] round 2: no winner; preserving vanilla second boss");
+        }
+
+        FinalizeOnMainThread(room, currentState, primaryId, secondId);
+    }
+
+    /// <summary>
+    /// Resolves the chat-chosen primary boss and applies it via ApplyBossSwap (MapCmd).
+    /// Returns the applied boss Id, or null on no-winner / resolve / swap failure.
+    /// </summary>
+    private static ModelId? ApplyPrimarySwap(IReadOnlyList<EncounterModel> slate, int? winnerIndex, IRunState currentState) {
+        if (!winnerIndex.HasValue) {
+            TiLog.Info("[SlayTheStreamer2][boss-vote] round 1: no winner; preserving vanilla boss");
+            return null;
+        }
+        try {
+            var winnerEncounter = BossVoteResolver.ResolveWinner(slate, winnerIndex.Value);
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] round 1: applying boss swap to {winnerEncounter.Id}");
+            ApplyBossSwap(currentState, winnerEncounter);
+            return winnerEncounter.Id;
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][boss-vote] ApplyBossSwap threw; preserving vanilla boss", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Shared liveness gate for a resume step (mirrors AncientVotePatch / CardRewardVotePatch).
+    /// On a live run returns true with the current state. On failure (room invalid, run
+    /// abandoned / gone / over, run changed, or probe threw), sends the ignored-result
+    /// receipt, resets all vote flags via AbortAndReset, and returns false. Does NOT touch
+    /// _resumeInProgress — only the final synthetic Proceed (FinalizeOnMainThread) needs that.
+    /// </summary>
+    private static bool TryBeginResume(NTreasureRoom room, string? runIdAtStart, out IRunState currentState) {
+        currentState = null!;
+        if (!GodotObject.IsInstanceValid(room)) {
+            TiLog.Warn("[SlayTheStreamer2][boss-vote] resume: room no longer valid; dropping");
+            AbortAndReset(sendReceipt: true);
+            return false;
+        }
+        try {
+            var rm = RunManager.Instance;
+            if (rm is null) {
+                TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: RunManager.Instance is null");
+                AbortAndReset(sendReceipt: true);
+                return false;
+            }
+            if (rm.IsAbandoned) {
+                TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run was abandoned during vote");
+                AbortAndReset(sendReceipt: true);
+                return false;
+            }
+            var state = rm.DebugOnlyGetState();
+            if (state is null) {
+                TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run state is gone");
+                AbortAndReset(sendReceipt: true);
+                return false;
+            }
+            if (state.IsGameOver) {
+                TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run is over (player dead)");
+                AbortAndReset(sendReceipt: true);
+                return false;
+            }
+            if (runIdAtStart is not null && state.Rng?.StringSeed != runIdAtStart) {
+                TiLog.Warn("[SlayTheStreamer2][boss-vote] resume aborted: run changed during vote");
+                AbortAndReset(sendReceipt: true);
+                return false;
+            }
+            currentState = state;
+            return true;
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] resume aborted: liveness check threw ({ex.Message})");
+            AbortAndReset(sendReceipt: true);
+            return false;
+        }
+    }
+
+    /// <summary>Resets the vote flags (and optionally sends the ignored-result receipt).
+    /// Used on liveness-abort and catastrophic round-setup failure. Leaves the swap
+    /// markers untouched (a prior completed vote's markers stay valid).</summary>
+    private static void AbortAndReset(bool sendReceipt) {
+        if (sendReceipt) SendIgnoredResultReceipt();
+        _activeRoom = null;
+        Interlocked.Exchange(ref _resumeInProgress, 0);
+        Interlocked.Exchange(ref _voteInProgress, 0);
+    }
+
+    /// <summary>
+    /// Final step of the (one- or two-round) boss vote on the main thread: fires the
+    /// synthetic Proceed re-click, records the save-quit idempotency markers for BOTH
+    /// the primary and second boss, and releases the vote flags. Always called exactly
+    /// once per vote, after all swaps are applied.
+    /// </summary>
+    private static void FinalizeOnMainThread(NTreasureRoom room, IRunState currentState, ModelId? primaryId, ModelId? secondId) {
+        Interlocked.Exchange(ref _resumeInProgress, 1);
+        try {
             // Synthetic Proceed re-click. _resumeInProgress=1 makes the prefix pass through.
             // OnProceedButtonPressed is private with an NButton param (discarded); reflective
             // invoke via the cached _proceedMethod handle. Pass null for the NButton arg.
             try {
                 var method = _proceedMethod.Value;
                 if (method is null) {
-                    TiLog.Error("[SlayTheStreamer2][boss-vote] resume: _proceedMethod is null; cannot fire synthetic Proceed");
+                    TiLog.Error("[SlayTheStreamer2][boss-vote] finalize: _proceedMethod is null; cannot fire synthetic Proceed");
                 } else {
                     method.Invoke(room, new object?[] { null });
                 }
@@ -730,23 +961,44 @@ internal static class BossVotePatch {
                 TiLog.Error("[SlayTheStreamer2][boss-vote] synthetic OnProceedButtonPressed threw", ex);
             }
 
-            // Mark this run+act as having completed its boss vote. Subsequent chest-room
-            // clicks within the same run+act (Golden Compass second chest, map back-arrow)
-            // are skipped by the idempotency check at the top of PrefixContinue. Set
-            // regardless of swap outcome — chat had its opportunity even on no-winner.
-            // swappedBossId is null when no swap applied (no-winner or ApplyBossSwap
-            // threw); the idempotency check treats null as "skip re-vote" since chat
-            // had its chance.
+            // Mark this run+act as voted. Subsequent chest clicks (Golden Compass second
+            // chest, map back-arrow) are skipped by the idempotency check at the top of
+            // PrefixContinue, which also verifies BOTH swaps survived save-quit.
             _lastSwapRunId = currentState.Rng?.StringSeed;
             _lastSwapActIndex = currentState.CurrentActIndex;
-            _lastSwappedBossId = swappedBossId;
+            _lastSwappedBossId = primaryId;
+            _lastSwappedSecondBossId = secondId;
+            TiLog.Info($"[SlayTheStreamer2][boss-vote] finalized: primary={primaryId?.ToString() ?? "vanilla"}, second={secondId?.ToString() ?? "vanilla"}");
         } catch (Exception ex) {
-            TiLog.Error("[SlayTheStreamer2][boss-vote] resume threw", ex);
+            TiLog.Error("[SlayTheStreamer2][boss-vote] finalize threw", ex);
         } finally {
             // Order matters: clear _resumeInProgress first, then _voteInProgress.
             _activeRoom = null;
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
+        }
+    }
+
+    /// <summary>
+    /// Re-applies the remembered A10 second boss if it has been rolled back (StS2
+    /// save-quit can snapshot pre-mutation state independently of the primary). No-op
+    /// when no second boss was set (_lastSwappedSecondBossId is null, e.g. non-A10 act)
+    /// or it is already in place. Mirrors the primary save-quit restore.
+    /// </summary>
+    private static void ReassertSecondBossIfNeeded(IRunState runState) {
+        if (_lastSwappedSecondBossId is null) return;
+        try {
+            var currentSecondId = runState.Act.SecondBossEncounter?.Id;
+            if (currentSecondId is not null && currentSecondId == _lastSwappedSecondBossId) return;   // already in place
+            var boss = runState.Act.AllBossEncounters.FirstOrDefault(e => e.Id == _lastSwappedSecondBossId);
+            if (boss is not null) {
+                ApplySecondBossSwap(runState, boss);
+                TiLog.Info($"[SlayTheStreamer2][boss-vote] re-asserted second boss {_lastSwappedSecondBossId} (save-quit rollback or transient mismatch)");
+            } else {
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] second boss {_lastSwappedSecondBossId} not found in current pool; leaving vanilla's second boss");
+            }
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][boss-vote] second-boss reassert failed: {ex.Message}");
         }
     }
 
@@ -766,9 +1018,10 @@ internal static class BossVotePatch {
     /// <summary>
     /// Dev-only: re-open the current boss vote with a fresh sample from the
     /// same (run, act) but a different seed (via _rerollSalt). The stale
-    /// HandleVoteAsync from the cancelled old session will see its resume
-    /// land on a stale generation and bail cleanly via the guard in
-    /// ResumeOnMainThread — no swap, no synthetic Proceed click.
+    /// resume from the cancelled old session sees its captured generation go
+    /// stale and bails cleanly via the round-1/round-2 generation guards — no
+    /// swap, no synthetic Proceed click. Rerolling restarts from round 1 (so a
+    /// reroll during the A10 second-boss round re-runs the whole two-round vote).
     /// Used by RerollVoteConsoleCmd. Returns (success, message) for the
     /// console to format.
     /// </summary>
@@ -789,13 +1042,10 @@ internal static class BossVotePatch {
 
         // Pre-flight: verify the pool will still produce a usable sample BEFORE
         // tearing down the existing session. If reroll would degenerate, leave
-        // the old vote intact.
+        // the old vote intact. Uses the FULL boss pool, matching BuildAndStartVote's
+        // round-1 sampling (task 2a removed the second-boss exclusion).
         try {
             var preflightPool = runState.Act.AllBossEncounters.ToList();
-            if (runState.Act.HasSecondBoss) {
-                var secondId = runState.Act.SecondBossEncounter?.Id;
-                if (secondId is not null) preflightPool.RemoveAll(e => e.Id == secondId);
-            }
             if (preflightPool.Count <= 1) {
                 return (false, $"Pre-flight: degenerate pool (count={preflightPool.Count}); cannot reroll.");
             }

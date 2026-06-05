@@ -9,5 +9,6 @@
   "voteDurationSeconds": 30,
   "cardSkipAsVoteOption": true,
   "showVoteTag": false,
-  "voteTallyOnLeft": false
+  "voteTallyOnLeft": false,
+  "allowSameBossTwice": false
 }

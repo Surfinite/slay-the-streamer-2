@@ -128,8 +128,11 @@ internal sealed partial class BossVotePopup : Control {
     /// <summary>
     /// Build the CanvasLayer + backdrop + columns and add to SceneTree.Root.
     /// Subscribe to session lifecycle events. Must be called on the main thread.
+    /// <paramref name="coreTitle"/> is the round-specific headline (e.g.
+    /// "Pick the deadliest Act 3 boss (1 of 2)."); the popup prepends the
+    /// optional vote-ID tag.
     /// </summary>
-    public void Show(int actNumberOneBased) {
+    public void Show(string coreTitle) {
         // Idempotency: Show() must be called at most once per instance.
         // The patch's _voteInProgress flag already guards against double-fire,
         // but this explicit guard makes the invariant locally visible and
@@ -176,7 +179,7 @@ internal sealed partial class BossVotePopup : Control {
             : "";
         var title = new Label {
             Name = "Title",
-            Text = $"{voteHint}Pick the deadliest Act {actNumberOneBased} boss.",
+            Text = $"{voteHint}{coreTitle}",
             HorizontalAlignment = HorizontalAlignment.Center,
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
         };
@@ -268,6 +271,19 @@ internal sealed partial class BossVotePopup : Control {
             };
             ApplyNameTheme(nameLabel);
             textBlock.AddChild(nameLabel);
+
+            // 2b: mark the round-1 winner when it is re-offered in round 2 so chat
+            // understands that re-picking it fights the same boss twice.
+            if (opt.MarkPriorWinner) {
+                var badge = new Label {
+                    Name = "PriorWinnerBadge",
+                    Text = "★ won round 1 — pick again for a double",
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                };
+                ApplyBadgeTheme(badge);
+                textBlock.AddChild(badge);
+            }
 
             var tally = new Label {
                 Name = "Tally",
@@ -417,6 +433,15 @@ internal sealed partial class BossVotePopup : Control {
         if (font is not null) label.AddThemeFontOverride("font", font);
         label.AddThemeColorOverride("font_color", new Color(0.937f, 0.784f, 0.5f, 1f));
         label.AddThemeFontSizeOverride("font_size", 24);
+    }
+
+    private static void ApplyBadgeTheme(Label label) {
+        var font = ResourceLoader.Load<Font>(FontPath);
+        if (font is not null) label.AddThemeFontOverride("font", font);
+        // Amber highlight so the "won round 1" marker reads as a callout, distinct
+        // from the gold boss-name line above it.
+        label.AddThemeColorOverride("font_color", new Color(1f, 0.66f, 0.26f, 1f));
+        label.AddThemeFontSizeOverride("font_size", 18);
     }
 
     private static void ApplyTallyTheme(Label label) {

@@ -672,6 +672,57 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- allowSameBossTwice (task 2b: A10 second-boss vote may repeat the first boss) ---
+
+    [Fact]
+    public void Load_MissingAllowSameBossTwice_DefaultsToFalse() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.AllowSameBossTwice);
+            Assert.DoesNotContain(success.Warnings, w => w.Contains("allowSameBossTwice"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_AllowSameBossTwice_ReadsExplicitTrue() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "allowSameBossTwice": true
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.True(success.Settings.AllowSameBossTwice);
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_AllowSameBossTwice_NonBoolean_WarnsAndDefaults() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "allowSameBossTwice": "yes"
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.False(success.Settings.AllowSameBossTwice);   // default
+            Assert.Contains(success.Warnings, w => w.Contains("allowSameBossTwice"));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

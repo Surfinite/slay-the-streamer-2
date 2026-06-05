@@ -41,14 +41,6 @@ Per-task commits to `main` with a slice-specific prefix:
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 
-Every Claude commit ends with the trailer:
-
-```
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-```
-
-Pass the message via a single-quoted HEREDOC to `git commit -m` so the trailer renders correctly.
-
 ### Periodic-tally dedup keys on tally STATE, not rendered text
 
 `VoteSession`'s periodic-tally dedup compares the underlying tally state (option index → count), NOT the rendered receipt string. Every render includes `<remaining>s left` so text-equality dedup would never fire and the receipt would spam every tick. Surfaced as a bug during spec v2.3 review. **If you refactor the dedup or the receipt formatter, keep the comparison on the structural tally — never on the formatted text.**

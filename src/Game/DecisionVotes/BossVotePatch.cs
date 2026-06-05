@@ -101,15 +101,25 @@ internal static class BossVotePatch {
         = (rs, boss) => MapCmd.SetBossEncounter(rs, boss);
 
     /// <summary>
-    /// Runtime override hook for the A10 second-boss swap (task 2a/2b). Defaults to
-    /// ActModel.SetSecondBossEncounter — there is no MapCmd helper because the second
-    /// boss is not shown on the map (it's the hidden A10 DoubleBoss follow-up fight),
-    /// so no top-bar/map refresh is needed. SetSecondBossEncounter validates only
-    /// RoomType == Boss (not distinctness from the primary), which is exactly what
-    /// lets 2b set the same boss for both slots.
+    /// Runtime override hook for the A10 second-boss swap (task 2a/2b). There is no
+    /// MapCmd.SetSecondBossEncounter, so this mirrors MapCmd.SetBossEncounter's body:
+    /// mutate the model THEN refresh the UI. ActModel.SetSecondBossEncounter only sets
+    /// _rooms.SecondBoss — without the refresh the top-bar boss icon and the map's
+    /// SecondBossMapPoint keep showing vanilla's pre-swap second boss (the combat itself
+    /// is already correct because it reads the model). NTopBarBossIcon.RefreshBossIcon
+    /// re-renders BOTH boss icons (it reads Act.SecondBossEncounter), and NMapScreen.SetMap
+    /// re-renders the second-boss map node. SetSecondBossEncounter validates only
+    /// RoomType == Boss (not distinctness from the primary), which is what lets 2b set
+    /// the same boss for both slots. Always invoked on the main thread.
     /// </summary>
     internal static Action<IRunState, EncounterModel> ApplySecondBossSwap { get; set; }
-        = (rs, boss) => rs.Act.SetSecondBossEncounter(boss);
+        = (rs, boss) => {
+            rs.Act.SetSecondBossEncounter(boss);
+            if (MegaCrit.Sts2.Core.TestSupport.TestMode.IsOff) {
+                NRun.Instance.GlobalUi.TopBar.BossIcon.RefreshBossIcon();
+                MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance?.SetMap(rs.Map, rs.Rng.Seed, clearDrawings: false);
+            }
+        };
 
     private static readonly Lazy<MethodInfo?> _proceedMethod =
         new(() => AccessTools.Method(typeof(NTreasureRoom), "OnProceedButtonPressed", new[] { typeof(NButton) }));

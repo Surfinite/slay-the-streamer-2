@@ -132,7 +132,7 @@ internal static class SettingsPanelBuilder {
         AddDivider(root);
         AddCheckboxRow(root, "Allow same boss twice (A10)", current.AllowSameBossTwice,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { AllowSameBossTwice = value }));
-        AddHelpText(root, "Ascension 10+ final act has two bosses; chat votes on each.\nWhen on, the second vote re-offers the first boss, so chat can pick\nthe same boss twice (fought back-to-back).");
+        AddHelpText(root, "Ascension 10 final act has two bosses; chat votes on both.\nWhen on, the second vote allows the same boss to be fought back-to-back.");
         AddDivider(root);
         AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));

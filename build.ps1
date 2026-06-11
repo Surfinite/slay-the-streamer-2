@@ -25,8 +25,12 @@ $harmonyVer = (Get-Item "src\0Harmony.dll").VersionInfo.FileVersion
 Write-Host "Refreshed src\sts2.dll and src\0Harmony.dll (Harmony $harmonyVer)"
 
 # Build via dotnet publish to a stable output path (avoid .godot/mono/temp drift).
-dotnet publish src\slay_the_streamer_2.csproj -c Release -o dist\publish-tmp
+# Assembly version is stamped from the manifest so the two can't diverge; the
+# SDK's SourceLink default appends "+<git sha>" to the informational version.
+$modVersion = ((Get-Content "src\slay_the_streamer_2.json" -Raw | ConvertFrom-Json).version).TrimStart('v')
+dotnet publish src\slay_the_streamer_2.csproj -c Release -o dist\publish-tmp -p:Version=$modVersion
 if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+Write-Host "Assembly version stamped from manifest: $modVersion"
 
 dotnet test tests\slay_the_streamer_2.tests.csproj --nologo
 if ($LASTEXITCODE -ne 0) { throw "Plan A regression tests failed" }

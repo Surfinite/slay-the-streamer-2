@@ -78,10 +78,6 @@ internal static class SettingsPanelPatch {
             if (mod.manifest?.id != ModConstants.ModId) return;
 
             var current = ChatModSettings.Current;
-            if (current is null) {
-                TiLog.Warn("[settings-ui] ModSettings.Current is null at panel build time; settings file missing or load failed");
-                return;
-            }
 
             // 4. Hide ModImage — we ship no mod_image.png so it just occupies 380px.
             if (imageNode != null) {
@@ -107,9 +103,20 @@ internal static class SettingsPanelPatch {
             }
 
             // 6. Build the settings content VBoxContainer (inner widget tree).
-            var debouncer = new SettingsSaveDebouncer();
-            var content = SettingsPanelBuilder.Build(current, debouncer);
-            content.AddChild(debouncer);
+            //    With no loaded settings (template awaiting credentials, file
+            //    missing or malformed) inject the minimal folder-access panel
+            //    instead — the README first-boot flow relies on the
+            //    "Open settings folder" button existing pre-configuration.
+            Control content;
+            if (current is not null) {
+                var debouncer = new SettingsSaveDebouncer();
+                content = SettingsPanelBuilder.Build(current, debouncer);
+                content.AddChild(debouncer);
+            } else {
+                TiLog.Info("[settings-ui] settings not loaded; injecting folder-access panel " +
+                           $"(state={ModEntry.Settings?.GetType().Name ?? "unknown"})");
+                content = SettingsPanelBuilder.BuildUnconfigured(UnconfiguredStatusText());
+            }
 
             // 7. Wrap in a ScrollContainer below the (repositioned) description.
             var scroll = new ScrollContainer {
@@ -127,4 +134,15 @@ internal static class SettingsPanelPatch {
             TiLog.Error("[settings-ui] SettingsPanelPatch.Postfix threw — vanilla mod manager continues", ex);
         }
     }
+
+    private static string UnconfiguredStatusText() => ModEntry.Settings switch {
+        SlayTheStreamer2.Game.Bootstrap.SettingsResult.Unconfigured =>
+            "Chat not connected — the settings file is awaiting credentials.\n" +
+            "Fill in channel, username and oauthToken (see the README), then restart the game.",
+        SlayTheStreamer2.Game.Bootstrap.SettingsResult.Missing =>
+            "Chat not connected — no settings file was found.\nRestart the game to create a template, or see the README.",
+        SlayTheStreamer2.Game.Bootstrap.SettingsResult.Malformed m =>
+            $"Chat not connected — the settings file couldn't be read:\n{m.Reason}",
+        _ => "Chat not connected — settings not loaded (see godot.log).",
+    };
 }

@@ -72,7 +72,50 @@ internal static class SettingsPanelBuilder {
     private static StyleBox?  _sliderTrackStyle;
     private static StyleBox?  _sliderFillStyle;
 
+    /// <summary>Drop a cached Godot resource if its native side has been freed.
+    /// StS2's asset cache can unload vanilla resources between panel builds
+    /// ("Unloading N missed cache assets"); reusing a stale wrapper throws
+    /// ObjectDisposedException (seen on re-opening the mod manager after
+    /// abandoning runs, 2026-06-08). Null lets the ??= below recreate it.</summary>
+    private static T? Revalidate<T>(T? cached) where T : GodotObject =>
+        cached != null && GodotObject.IsInstanceValid(cached) ? cached : null;
+
+    /// <summary>
+    /// Minimal panel for the not-yet-configured states (template awaiting
+    /// credentials; file missing or malformed): a status line plus the
+    /// settings-folder row, so the README first-boot flow ("Open settings
+    /// folder" button) works before any settings have loaded. No debouncer —
+    /// there are no value controls to save.
+    /// </summary>
+    public static Control BuildUnconfigured(string statusText) {
+        _kreonRegular = Revalidate(_kreonRegular);
+        _kreonBold    = Revalidate(_kreonBold);
+        _buttonBg     = Revalidate(_buttonBg);
+        _kreonRegular ??= TryLoadFont(KreonRegularPath);
+        _kreonBold    ??= TryLoadFont(KreonBoldPath);
+        _buttonBg     ??= TryLoadTexture(ButtonBgPath);
+
+        var root = new VBoxContainer {
+            Name = ModConstants.SettingsPanelNodeName,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        AddDivider(root);
+        AddHelpText(root, statusText);
+        AddDivider(root);
+        AddFilePathRow(root);
+        return root;
+    }
+
     public static Control Build(ChatSettings current, SettingsSaveDebouncer debouncer) {
+        _kreonRegular     = Revalidate(_kreonRegular);
+        _kreonBold        = Revalidate(_kreonBold);
+        _buttonBg         = Revalidate(_buttonBg);
+        _tickboxChecked   = Revalidate(_tickboxChecked);
+        _tickboxUnchecked = Revalidate(_tickboxUnchecked);
+        _sliderGrabber    = Revalidate(_sliderGrabber);
+        _sliderTrackStyle = Revalidate(_sliderTrackStyle);
+        _sliderFillStyle  = Revalidate(_sliderFillStyle);
+
         // Load vanilla fonts; if resource loading fails we fall back to null
         // (Godot will use its default font, which is still legible).
         _kreonRegular     ??= TryLoadFont(KreonRegularPath);

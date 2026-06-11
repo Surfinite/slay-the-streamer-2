@@ -69,7 +69,7 @@ internal static class CardRewardSkipGatePatch {
     /// <summary>
     /// Per-rewards-screen tracking of which NRewardButton instances had their card
     /// sub-screen opened. Populated by the NRewardButton.OnRelease prefix for
-    /// CardReward / SpecialCardReward buttons; consulted by OnProceedButtonPressed
+    /// CardReward buttons; consulted by OnProceedButtonPressed
     /// to enforce mandatory-look. Cleared in _Ready postfix (fresh rewards
     /// screen → fresh tracking) and AfterOverlayClosed postfix (defensive cleanup).
     /// </summary>
@@ -160,13 +160,21 @@ internal static class CardRewardSkipGatePatch {
     }
 
     /// <summary>
-    /// True iff the button is an NRewardButton wrapping a CardReward or SpecialCardReward.
+    /// True iff the button is an NRewardButton wrapping a CardReward.
     /// Direct property access — NRewardButton.Reward is a public property.
+    ///
+    /// SpecialCardReward is deliberately NOT gateable: it has no selection
+    /// sub-screen — clicking its button claims the card instantly via
+    /// Reward.OnSelect(). Mandatory-look can't apply (the only way to "look"
+    /// is to take), and vanilla treats leaving it behind as a free decline
+    /// (Thieving Hopper recovered card, Lantern Key), so it must neither
+    /// block Proceed nor charge skip budget. Surfaced live on FrostPrime's
+    /// stream 2026-06-08: the gate made a recovered stolen card un-declinable.
     /// </summary>
     private static bool IsCardRewardButton(Control button) {
         if (!GodotObject.IsInstanceValid(button)) return false;
         if (button is not NRewardButton rb) return false;
-        return rb.Reward is CardReward or SpecialCardReward;
+        return rb.Reward is CardReward;
     }
 
     /// <summary>
@@ -206,7 +214,9 @@ internal static class CardRewardSkipGatePatch {
         foreach (var b in buttons) {
             if (!GodotObject.IsInstanceValid(b)) continue;
             if (b is not NRewardButton rb) continue;
-            if (rb.Reward is not (CardReward or SpecialCardReward)) continue;
+            // SpecialCardReward (sibling of CardReward, no sub-screen) is not
+            // gateable — see IsCardRewardButton doc comment.
+            if (rb.Reward is not CardReward) continue;
             total++;
             if (!_openedCardRewardButtonIds.Contains(rb.GetInstanceId())) unopened++;
         }
@@ -525,8 +535,8 @@ internal static class CardRewardSkipGatePatch {
     /// Mandatory-look tracker: fires when the streamer releases a card-reward
     /// NRewardButton. Vanilla's OnRelease (NRewardButton.cs:214) is the sync click
     /// handler that kicks off `GetReward()` — which awaits `Reward.OnSelectWrapper()`
-    /// and opens the NCardRewardSelectionScreen sub-screen for CardReward/
-    /// SpecialCardReward. Records the button's instance ID; consulted later by
+    /// and opens the NCardRewardSelectionScreen sub-screen for CardReward.
+    /// Records the button's instance ID; consulted later by
     /// OnProceedButtonPressed prefix.
     /// </summary>
     [HarmonyPatch(typeof(NRewardButton), "OnRelease")]
@@ -537,7 +547,7 @@ internal static class CardRewardSkipGatePatch {
             try {
                 if (!ShouldEnforceSkipGate()) return;
                 if (!GodotObject.IsInstanceValid(__instance)) return;
-                if (__instance.Reward is not (CardReward or SpecialCardReward)) return;
+                if (__instance.Reward is not CardReward) return;
                 _openedCardRewardButtonIds.Add(__instance.GetInstanceId());
             } catch (Exception ex) {
                 TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] OnRelease prefix could not record opened button: {ex.Message}");

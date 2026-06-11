@@ -4,6 +4,55 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## In-settings mod version looks wrong / may not bump correctly (RESOLVED 2026-06-11)
+
+Resolution: the in-game number was deploy-staleness (install.ps1 not re-run after the 0.1.1 bump). The assembly-version half is fixed in `stream-polish/1`: build.ps1 now reads the manifest's `version` and passes `-p:Version`, so the assembly informational version is `<manifest>+<git sha>` (verified `0.1.1+e041602...` in the built DLL) and `godot.log`'s `mod version:` line now tracks releases. Manifest remains the single source of truth.
+
+### Original note
+
+Surfinite noticed the version shown in the in-game mod info (mod manager → Slay the Streamer 2) doesn't look right. To verify/fix:
+
+- **What's displayed is the manifest `version` field.** Our settings panel doesn't render a version itself — vanilla `NModInfoContainer` prints `Author` + `Version` from the manifest in the description region, and `SettingsPanelPatch` just repositions/strips around it (`src/Game/Ui/Settings/SettingsPanelPatch.cs:22,41`). So the number shown == the installed `slay_the_streamer_2.json` `version`.
+- **Source manifest is correct (`0.1.1`)** (`src/slay_the_streamer_2.json:6`), but the copy in Surfinite's game install was stale at `0.1.0` (install.ps1 not re-run since the v0.1.1 bump — installed manifest dated 2026-05-08). So the in-game `0.1.0` is at least partly deploy-staleness; confirm a fresh `build.ps1` + `install.ps1` shows `0.1.1`.
+- **Assembly version is pinned at `1.0.0`** — `godot.log` logs `mod version: 1.0.0+<githash>` (assembly/informational version), which never tracks releases. If any surface ever shows the assembly version instead of the manifest it reads `1.0.0`.
+
+**Action:** after a fresh build+install, verify the mod-info panel reads `0.1.1`; if not, trace where that string is sourced. Consider folding both the manifest `version` and the csproj `<Version>`/`<InformationalVersion>` into the release bump step so manifest + assembly can't diverge.
+
+---
+
+## YouTube votes land in the tally too slowly — want a faster cadence (RESOLVED 2026-06-11)
+
+Resolution: implemented the "smarter option" in `stream-polish/2`. New Ti-layer `IFastPollable` capability; `VoteCoordinator.Start` enables it and session `Closed`/`Cancelled` disables it; `MultiChatService` forwards to pollable children; `YouTubeChatService` polls every 1s (`FastPollInterval`) while enabled and wakes an in-flight steady-state delay via a swapped `TaskCompletionSource`, so the first fast poll fires immediately at vote open. The streamer's "side tally batches but card counts don't" claim was code-refuted: both poll the same `VoteSession.TallyVersion` every `_Process` frame with no throttling (`VoteTallyLabel.cs:169`, `CardRewardVotePopup.cs:316`) — the chunking WAS the poll cadence, so both surfaces benefit equally.
+
+### Original note
+
+Surfinite: YT votes show up in the tally in laggy chunks vs Twitch (real-time IRC). Want to tighten the interval.
+
+- **Cause.** The steady-state poll loop sleeps `clamp(NextTimeoutMs, PollMin, PollMax)` between polls, where `NextTimeoutMs` is YouTube's own server-recommended `timedContinuation.timeoutMs` and `PollMin = 1s`, `PollMax = 10s` (`src/Ti/Chat/YouTubeChat/YouTubeChatService.cs:38-39`; loop at `:142-175`). YouTube's recommended live-chat timeout is usually several seconds, so YT messages (and votes) arrive in bursts up to ~10s apart — that's the laggy feel. Twitch streams continuously so it never has this.
+- **Lever.** Lower `PollMax` (e.g. 2–3s) to poll more often than YouTube suggests. **Trade-off:** more frequent polling = higher request volume = higher 429 risk; the existing 429 carve-out + exponential backoff (`NextReconnectDelay`, `:263`) is the safety net, but watch `godot.log` for `poll HTTP 429` after lowering it.
+- **Smarter option.** Poll fast only while a vote is open (a `VoteSession` is active) and relax to the YouTube-recommended cadence otherwise — puts responsiveness exactly where it matters without sustained high request rates the rest of the run. Needs the YT service (Ti layer) to learn when a vote is in progress while staying clean of `Game/` per the TI/Game seam.
+- Lives in the game-agnostic Ti layer; any change should stay platform-generic.
+
+---
+
+## Card-skip gate misfires on stolen-card recovery (RESOLVED 2026-06-11)
+
+Resolution: fixed in `stream-polish/3`, with one correction to the fix-direction below: `SpecialCardReward` has **no selection sub-screen at all** — clicking its reward button claims the card instantly via `Reward.OnSelect()` (`decompiled/sts2/MegaCrit.Sts2.Core.Rewards/SpecialCardReward.cs:77-87`), so "mandatory-look" is a take-it trap for the entire type (Lantern Key included), not just the hopper card, and the encounter-source reflection idea was unnecessary. The gate now type-checks `is CardReward` only (SpecialCardReward and CardReward are sibling subclasses of `Reward`); `CountPendingCardRewards` ignores SpecialCardReward, so Proceed isn't blocked and no skip budget is charged for declining. No CardRewardVotePatch change needed — votes fire on the selection sub-screen, which SpecialCardReward never opens.
+
+### Original note
+
+Found on FrostPrime's stream. The `ThievingHopper` ("Thieving Hopper") enemy steals a card mid-combat; if you don't kill it within ~5 turns it escapes with the card permanently. When you *do* kill it, vanilla returns the card as a reward you may **decline** — i.e. leave the unwanted card behind. Our card-skip gate wrongly blocked that decline, so Frost couldn't leave the stolen card behind when vanilla would have allowed it.
+
+**Root cause.** `CardRewardSkipGatePatch.IsCardRewardButton` counts `SpecialCardReward` as a gateable card (`src/Game/DecisionVotes/CardRewardSkipGatePatch.cs:169`), and `CountPendingCardRewards` does the same (`:209`). The thief's recovered card is exactly a `SpecialCardReward`: `SwipePower.BeforeDeath` does `new SpecialCardReward(StolenCard.DeckVersion, …)` → `AddExtraReward` (`decompiled/sts2/MegaCrit.Sts2.Core.Models.Powers/SwipePower.cs:62-64`). So both the mandatory-look gate (the `OnProceedButtonPressed` prefix blocks Proceed while `pending.Unopened > 0`, `:590`) and the per-act skip budget (`TryConsumeStreamerSkip` + the `AfterOverlayClosed` charge, `:315` / `:433`) fire on the recovery reward — treating "decline a returned stolen card" like a normal card-reward skip. From the streamer's seat this reads as "the skip button doesn't unlock until all cards are taken."
+
+**Why it's wrong.** Declining a recovered stolen card isn't a card-reward *choice* (the gate exists to push card pick/skip decisions to chat and meter them via the per-act budget). It's a vanilla yes/no on getting your own card back — it should be exempt from mandatory-look and should not consume skip budget.
+
+**Fix direction.** Exempt the stolen-card recovery reward from the gate. It's tagged via `SetCustomDescriptionEncounterSource(ThievingHopperWeak)` (`SwipePower.cs:63`); prefer matching on that over excluding all `SpecialCardReward` wholesale — first confirm whether `SpecialCardReward` is used elsewhere for rewards that *should* still be gated. Exclude matching buttons from `CountPendingCardRewards` (`Total` and `Unopened`) and from the `AfterOverlayClosed` budget charge / `TryConsumeStreamerSkip`. Also check whether `CardRewardVotePatch` opens a degenerate vote on the single recovered card; if so it should skip it like other single-option offerings.
+
+**Repro.** Fight a Thieving Hopper, let it steal a card, kill it, then on the rewards screen try to leave the returned card behind — the gate blocks/no-ops the decline; vanilla allows it.
+
+---
+
 ## Settings UI (resolved 2026-05-22)
 
 First in-game settings UI for the mod. Injects a custom settings panel into the right-hand side of vanilla's `NModInfoContainer` when the player selects Slay the Streamer 2 in the mod manager. Five tunable knobs + an Open-folder button. Hot-reload between runs via `ModSettings.Current`-as-static + a 500ms-debounced atomic writer with `.bak` rolling backup. Vanilla-style row visuals (Kreon font, tickbox atlas icons, slider grabber from `scrollbar_train_large.tres`, dividers).

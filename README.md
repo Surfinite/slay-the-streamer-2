@@ -43,7 +43,17 @@ If the game can't see the mod, check the log at `%APPDATA%\SlayTheSpire2\logs\go
 
 ## 🔌 Connect your Twitch chat
 
-Open the file `mods/slay_the_streamer_2/slay_the_streamer_2.json` in any text editor. You'll see:
+Your credentials live in a settings file in the game's **user-data folder** — *not* in the mod install folder:
+
+```
+%APPDATA%\SlayTheSpire2\slay_the_streamer_2.json
+```
+
+> ⚠️ There is also a `slay_the_streamer_2.json` inside `mods/slay_the_streamer_2/` — that one is the **mod manifest** (loader metadata). Putting credentials in it does nothing.
+
+1. **Launch the game once** with the mod installed — the mod creates a settings template at the path above. (On mod versions up to 0.1.1 it doesn't yet: copy `mods/slay_the_streamer_2/slay_the_streamer_2.json.example` into `%APPDATA%\SlayTheSpire2\` and rename it to `slay_the_streamer_2.json`.)
+2. **Open the folder** — easiest is in-game: settings menu → mod list → **Slay the Streamer 2** → the **Open settings folder** button. Or paste `%APPDATA%\SlayTheSpire2` into Explorer's address bar.
+3. Open `slay_the_streamer_2.json` in any text editor. You'll see:
 
 ```json
 {
@@ -66,7 +76,7 @@ Fill in three fields:
 
 **New to this?** The fastest path is a token generator like [twitchtokengenerator.com](https://twitchtokengenerator.com/) — pick "Bot Chat Token", log in as the bot account, copy the Access Token, paste it with the `oauth:` prefix. For the official Twitch documentation on chat scopes and OAuth flows, see [dev.twitch.tv/docs/authentication](https://dev.twitch.tv/docs/authentication/) and [dev.twitch.tv/docs/irc/authenticate-bot](https://dev.twitch.tv/docs/irc/authenticate-bot/).
 
-Save the file and (re)launch the game. You should see chat-side messages when votes open and close, and the in-game tally overlay during votes.
+Save the file and **restart the game** (the mod connects at launch). To verify it worked, watch your Twitch chat: within a few seconds of the game starting you should see a message like `slay-the-streamer-2 connected (Twitch).` posted by the `username` account. During runs you'll then get chat-side messages when votes open and close, and the in-game tally overlay during votes.
 
 ### 🎥 (Optional) Also read YouTube chat
 

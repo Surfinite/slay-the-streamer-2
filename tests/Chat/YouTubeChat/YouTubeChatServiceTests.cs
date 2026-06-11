@@ -331,6 +331,63 @@ public class YouTubeChatServiceTests {
         Assert.Equal(0, received);   // initial-poll backlog suppressed
     }
 
+    [Fact]
+    public async Task SetFastPolling_Wakes_InFlight_Delay_And_Polls_At_Fast_Interval() {
+        // Steady-state timeout 60s clamps to PollMax (10s), so without fast
+        // polling no steady poll would land inside this test's window.
+        var scraper = new StubScraper {
+            NextPollResult = new PollResult(Array.Empty<ParsedChatMessage>(), "CONT", 60_000),
+        };
+        var svc = MakeService(scraper: scraper);
+        svc.FastPollInterval = TimeSpan.FromMilliseconds(40);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.ConnectedReadOnly) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        // ConnectedReadOnly fires BEFORE the poll-loop task starts; give the loop
+        // time to park inside its 10s steady delay so the toggle exercises the
+        // wake path rather than racing loop startup.
+        await Task.Delay(150);
+        int baseline = scraper.PollCallCount;   // cursor-establishing poll only
+
+        svc.SetFastPolling(true);
+        // Wake should interrupt the 10s steady delay; then ~40ms cadence.
+        for (int i = 0; i < 100 && scraper.PollCallCount < baseline + 3; i++) await Task.Delay(20);
+        Assert.True(scraper.PollCallCount >= baseline + 3,
+            $"expected >=3 fast polls within 2s; got {scraper.PollCallCount - baseline}");
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task SetFastPolling_Off_Returns_To_SteadyState_Cadence() {
+        var scraper = new StubScraper {
+            NextPollResult = new PollResult(Array.Empty<ParsedChatMessage>(), "CONT", 60_000),
+        };
+        var svc = MakeService(scraper: scraper);
+        svc.FastPollInterval = TimeSpan.FromMilliseconds(40);
+        var tcs = new TaskCompletionSource();
+        svc.ConnectionStateChanged += (_, e) => {
+            if (e.NewState == ChatConnectionState.ConnectedReadOnly) tcs.TrySetResult();
+        };
+        await svc.ConnectAsync("UCfake");
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        svc.SetFastPolling(true);
+        int baseline = scraper.PollCallCount;
+        for (int i = 0; i < 100 && scraper.PollCallCount < baseline + 2; i++) await Task.Delay(20);
+        Assert.True(scraper.PollCallCount >= baseline + 2, "fast polling never engaged");
+
+        svc.SetFastPolling(false);
+        await Task.Delay(150);                   // let any in-flight fast poll land
+        int afterDisable = scraper.PollCallCount;
+        await Task.Delay(400);                   // steady cadence is 10s — expect no growth
+        Assert.True(scraper.PollCallCount <= afterDisable + 1,
+            $"polling kept running fast after disable: {scraper.PollCallCount - afterDisable} extra polls");
+        svc.Dispose();
+    }
+
     // Helper — injects fake discovery/scraper/dispatcher/clock/scheduler.
     private static YouTubeChatService MakeService(
         IYouTubeLiveBroadcastDiscovery? discovery = null,

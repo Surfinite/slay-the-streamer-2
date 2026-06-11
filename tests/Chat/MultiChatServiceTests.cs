@@ -173,4 +173,27 @@ public class MultiChatServiceTests {
         multi.Dispose();
         Assert.True(youtube.DisposeCalled);
     }
+
+    [Fact]
+    public void SetFastPolling_Forwards_To_FastPollable_Children_Only() {
+        var twitch = new FakeChatService();   // not IFastPollable — must be skipped
+        var youtube = new FastPollableChatStub();
+        var multi = new MultiChatService(
+            (ChatPlatformNames.Twitch, twitch),
+            (ChatPlatformNames.YouTube, youtube));
+        multi.SetFastPolling(true);
+        multi.SetFastPolling(false);
+        Assert.Equal(new[] { true, false }, youtube.FastPollCalls);
+    }
+
+    [Fact]
+    public void SetFastPolling_Child_Throw_Is_Swallowed_And_Other_Children_Still_Called() {
+        var thrower = new FastPollableChatStub { ThrowOnSetFastPolling = true };
+        var recorder = new FastPollableChatStub();
+        var multi = new MultiChatService(
+            (ChatPlatformNames.Twitch, thrower),
+            (ChatPlatformNames.YouTube, recorder));
+        multi.SetFastPolling(true);   // must not throw
+        Assert.Equal(new[] { true }, recorder.FastPollCalls);
+    }
 }

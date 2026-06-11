@@ -12,7 +12,7 @@ namespace SlayTheStreamer2.Ti.Chat;
 /// <see cref="IChatConsumer"/> surface. ConnectAsync is intentionally not exposed —
 /// children are pre-connected by the wiring code (ModEntry) before construction.
 /// </summary>
-public sealed class MultiChatService : IChatConsumer {
+public sealed class MultiChatService : IChatConsumer, IFastPollable {
     private readonly Dictionary<string, IChatConsumer> _children;
     private readonly List<(string Name, EventHandler<ChatConnectionChangedEventArgs> Handler)> _stateHandlers = new();
 
@@ -117,6 +117,15 @@ public sealed class MultiChatService : IChatConsumer {
         foreach (var c in _children.Values) {
             try { c.Disconnect(); } catch (Exception ex) {
                 TiLog.Warn($"[MultiChatService] child Disconnect threw: {ex.Message}");
+            }
+        }
+    }
+
+    public void SetFastPolling(bool enabled) {
+        foreach (var c in _children.Values) {
+            if (c is not IFastPollable fp) continue;
+            try { fp.SetFastPolling(enabled); } catch (Exception ex) {
+                TiLog.Warn($"[MultiChatService] child SetFastPolling threw: {ex.Message}");
             }
         }
     }

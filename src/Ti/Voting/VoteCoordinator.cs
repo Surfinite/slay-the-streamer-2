@@ -78,12 +78,28 @@ public sealed class VoteCoordinator : IDisposable {
         CurrentSession = session;
         session.Closed += OnSessionEnded;
         session.Cancelled += OnSessionEnded;
+        SetFastPolling(true);
 
         return session;
     }
 
     private void OnSessionEnded(object? sender, VoteSession s) {
-        if (CurrentSession == s) CurrentSession = null;
+        // Guard on identity: a stale session's terminal event must not clear the
+        // state (or kill the fast-poll window) of a newer session.
+        if (CurrentSession == s) {
+            CurrentSession = null;
+            SetFastPolling(false);
+        }
+    }
+
+    /// <summary>Poll-based chat services (YouTube) tighten their cadence while a
+    /// vote is open so votes land in the tally with minimal delay. Cancelled can
+    /// fire from the chat-parser thread; IFastPollable is thread-safe by contract.</summary>
+    private void SetFastPolling(bool enabled) {
+        if (_chat is not IFastPollable fp) return;
+        try { fp.SetFastPolling(enabled); } catch (Exception ex) {
+            TiLog.Warn($"[VoteCoordinator] SetFastPolling({enabled}) threw: {ex.Message}");
+        }
     }
 
     private static string Slug(string s) {

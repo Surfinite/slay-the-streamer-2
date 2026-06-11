@@ -11,7 +11,7 @@ namespace SlayTheStreamer2.Ti.Chat.YouTubeChat;
 /// not supported (Decision D3). Reconnect cadence + 429 carve-out + 30-cycle
 /// escalation receipt are added in Tasks 22, 23.
 /// </summary>
-public sealed class YouTubeChatService : IChatService {
+public sealed class YouTubeChatService : IChatService, IFastPollable {
     private readonly IMainThreadDispatcher _dispatcher;
     private readonly IClock _clock;
     private readonly ITimerScheduler _scheduler;
@@ -32,11 +32,17 @@ public sealed class YouTubeChatService : IChatService {
     private int _consecutive429Count;
     private int _consecutiveReconnectCount;
     private bool _escalationSent;
+    private volatile bool _fastPoll;
+    private TaskCompletionSource _fastPollWake = NewWakeSignal();
 
     private const int EscalationThreshold = 30;
 
     private static readonly TimeSpan PollMin = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan PollMax = TimeSpan.FromSeconds(10);
+
+    /// <summary>Poll interval while fast polling is on (vote-window cadence).
+    /// Instance-settable so tests can shrink it below real-time scale.</summary>
+    internal TimeSpan FastPollInterval { get; set; } = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan ReconnectBase = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ReconnectJitter = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ReconnectCap = TimeSpan.FromSeconds(600);
@@ -139,12 +145,43 @@ public sealed class YouTubeChatService : IChatService {
         TransitionTo(ChatConnectionState.Disconnected, "Disconnect called", YouTubeChatStatusReason.None);
     }
 
+    /// <summary>
+    /// While a vote is open the voting layer enables fast polling: the loop
+    /// ignores YouTube's recommended timeoutMs and polls every
+    /// <see cref="FastPollInterval"/>. Enabling also wakes an in-flight
+    /// steady-state delay (which can be up to PollMax) so the first fast poll
+    /// happens immediately rather than after the residual wait.
+    /// </summary>
+    public void SetFastPolling(bool enabled) {
+        if (Volatile.Read(ref _disposed) == 1) return;
+        if (_fastPoll == enabled) return;
+        _fastPoll = enabled;
+        TiLog.Info($"[YouTubeChatService] fast polling {(enabled ? "enabled" : "disabled")}");
+        if (enabled) {
+            Interlocked.Exchange(ref _fastPollWake, NewWakeSignal()).TrySetResult();
+        }
+    }
+
+    private static TaskCompletionSource NewWakeSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private async Task RunPollLoopAsync(int seedTimeoutMs, CancellationToken ct) {
         int lastTimeoutMs = seedTimeoutMs <= 0 ? 5000 : seedTimeoutMs;
         while (!ct.IsCancellationRequested && _state == ChatConnectionState.ConnectedReadOnly) {
             var clampedMs = Math.Clamp(lastTimeoutMs, (int)PollMin.TotalMilliseconds, (int)PollMax.TotalMilliseconds);
-            try { await Task.Delay(TimeSpan.FromMilliseconds(clampedMs), ct).ConfigureAwait(false); }
+            // Acquire-read the wake signal FIRST (Volatile.Read pins the order; a
+            // plain load could legally be reordered after the _fastPoll read and
+            // miss a toggle). The writer publishes _fastPoll=true before full-fence
+            // swapping in the new signal, so: observing the new signal implies
+            // observing _fastPoll==true (fast delay used, wake unneeded); observing
+            // the old one means the writer's TrySetResult on it wakes our WhenAny.
+            var wake = Volatile.Read(ref _fastPollWake);
+            var delayMs = _fastPoll ? (int)FastPollInterval.TotalMilliseconds : clampedMs;
+            try {
+                await Task.WhenAny(Task.Delay(TimeSpan.FromMilliseconds(delayMs), ct), wake.Task).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) { return; }
+            if (ct.IsCancellationRequested) return;
             if (Volatile.Read(ref _disposed) == 1) return;
             if (_state != ChatConnectionState.ConnectedReadOnly) return;
 

@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using SlayTheStreamer2.Tests.Chat;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
@@ -7,6 +8,7 @@ using Xunit;
 
 namespace SlayTheStreamer2.Tests.Voting;
 
+[Collection("TiLog.Sink")]
 public class VoteCoordinatorTests {
     private readonly FakeClock _clock = new(new DateTimeOffset(2026, 5, 8, 12, 0, 0, TimeSpan.Zero));
     private readonly FakeChatService _chat = new();
@@ -95,5 +97,53 @@ public class VoteCoordinatorTests {
         var dispatcher = new ImmediateDispatcher();
         var coord = new VoteCoordinator(chat, new[] { ChatPlatformNames.Twitch }, clock, scheduler, dispatcher);
         Assert.Same(dispatcher, coord.Dispatcher);
+    }
+
+    private VoteCoordinator NewCoordWith(FastPollableChatStub chat) =>
+        new(chat, new[] { ChatPlatformNames.Twitch, ChatPlatformNames.YouTube },
+            _clock, _scheduler, _dispatcher, _rng);
+
+    [Fact]
+    public void Start_EnablesFastPolling_OnFastPollableChat() {
+        var chat = new FastPollableChatStub();
+        var c = NewCoordWith(chat);
+        c.Start("v", new[] { "a", "b" }, TimeSpan.FromSeconds(30));
+        Assert.Equal(new[] { true }, chat.FastPollCalls);
+    }
+
+    [Fact]
+    public void SessionClose_DisablesFastPolling() {
+        var chat = new FastPollableChatStub();
+        var c = NewCoordWith(chat);
+        var s = c.Start("v", new[] { "a", "b" }, TimeSpan.FromSeconds(30));
+        s.CloseNow();
+        Assert.Equal(new[] { true, false }, chat.FastPollCalls);
+    }
+
+    [Fact]
+    public void SessionCancel_DisablesFastPolling() {
+        var chat = new FastPollableChatStub();
+        var c = NewCoordWith(chat);
+        var s = c.Start("v", new[] { "a", "b" }, TimeSpan.FromSeconds(30));
+        s.Cancel();
+        Assert.Equal(new[] { true, false }, chat.FastPollCalls);
+    }
+
+    [Fact]
+    public void Start_FastPollableThrow_DoesNotPropagate() {
+        var chat = new FastPollableChatStub { ThrowOnSetFastPolling = true };
+        var c = NewCoordWith(chat);
+        var s = c.Start("v", new[] { "a", "b" }, TimeSpan.FromSeconds(30));
+        Assert.NotNull(s);
+    }
+
+    [Fact]
+    public void Start_NonFastPollableChat_IsNoOp() {
+        // FakeChatService does not implement IFastPollable; the whole vote
+        // lifecycle must run without fast-poll side effects or throws.
+        var c = NewCoord();
+        var s = c.Start("v", new[] { "a", "b" }, TimeSpan.FromSeconds(30));
+        s.CloseNow();
+        Assert.Null(c.CurrentSession);
     }
 }

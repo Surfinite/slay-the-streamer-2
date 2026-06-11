@@ -24,6 +24,10 @@ public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
     public sealed record Missing(string Path) : SettingsResult;
     public sealed record Malformed(string Path, string Reason) : SettingsResult;
+    /// <summary>File exists but its credential fields are still empty or the
+    /// untouched template placeholders — the auto-created first-boot state.
+    /// Distinct from Malformed so the log reads as "fill me in", not an error.</summary>
+    public sealed record Unconfigured(string Path) : SettingsResult;
 
     private SettingsResult() { }   // restrict subclassing to nested records
 }
@@ -95,9 +99,23 @@ public static class ModSettings {
             var username = ReadStringOrNull(root, "username");
             var oauthToken = ReadStringOrNull(root, "oauthToken");
 
+            // All three credential fields untouched (empty or template placeholder)
+            // → the auto-created first-boot state, not a user error.
+            if (IsTemplateValue(channel) && IsTemplateValue(username) && IsTemplateValue(oauthToken))
+                return new SettingsResult.Unconfigured(path);
+
             if (string.IsNullOrWhiteSpace(channel)) return new SettingsResult.Malformed(path, "channel is missing or empty");
             if (string.IsNullOrWhiteSpace(username)) return new SettingsResult.Malformed(path, "username is missing or empty");
             if (string.IsNullOrWhiteSpace(oauthToken)) return new SettingsResult.Malformed(path, "oauthToken is missing or empty");
+
+            // A lone leftover placeholder would otherwise sail through as Success
+            // and fail at Twitch auth/join with no hint at the real cause.
+            if (channel == SettingsBootstrap.PlaceholderChannel)
+                return new SettingsResult.Malformed(path, "channel is still the template placeholder — replace it with your Twitch channel name");
+            if (username == SettingsBootstrap.PlaceholderUsername)
+                return new SettingsResult.Malformed(path, "username is still the template placeholder — replace it with the chat account's login");
+            if (oauthToken == SettingsBootstrap.PlaceholderOauthToken)
+                return new SettingsResult.Malformed(path, "oauthToken is still the template placeholder — replace it with a real token (see README)");
 
             var (normalisedChannel, channelWarning) = NormaliseChannel(channel);
             if (channelWarning is not null) warnings.Add(channelWarning);
@@ -214,6 +232,12 @@ public static class ModSettings {
                 warnings);
         }
     }
+
+    private static bool IsTemplateValue(string? v) =>
+        string.IsNullOrWhiteSpace(v) ||
+        v == SettingsBootstrap.PlaceholderChannel ||
+        v == SettingsBootstrap.PlaceholderUsername ||
+        v == SettingsBootstrap.PlaceholderOauthToken;
 
     private static string? ReadStringOrNull(JsonElement root, string name) {
         return root.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String

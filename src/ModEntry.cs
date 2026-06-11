@@ -92,6 +92,24 @@ public static class ModEntry {
             Log.Info($"[SlayTheStreamer2] mod version: {modVersion}");
 
             var settingsPath = Path.Combine(OS.GetUserDataDir(), "slay_the_streamer_2.json");
+
+            // First-boot bootstrap: create the template if missing; additively add
+            // any new keys to an existing file (never overwrites user values).
+            switch (SettingsBootstrap.EnsureFile(settingsPath)) {
+                case SettingsBootstrap.Outcome.CreatedTemplate c:
+                    Log.Info($"[SlayTheStreamer2] created settings template at {c.Path}");
+                    break;
+                case SettingsBootstrap.Outcome.AddedMissingKeys a:
+                    Log.Info($"[SlayTheStreamer2] settings file: added missing key(s) with defaults: {string.Join(", ", a.Keys)} (previous file backed up as .bak)");
+                    break;
+                case SettingsBootstrap.Outcome.SkippedUnparseable s:
+                    Log.Info($"[SlayTheStreamer2] settings bootstrap left file untouched: {s.Reason}");
+                    break;
+                case SettingsBootstrap.Outcome.Failed f:
+                    Log.Warn($"[SlayTheStreamer2] settings bootstrap failed (continuing to load): {f.Reason}");
+                    break;
+            }
+
             var settingsResult = BootstrapModSettings.Load(settingsPath);
             Settings = settingsResult;
             ChatSettings? settings = null;
@@ -105,6 +123,10 @@ public static class ModEntry {
                 case SettingsResult.Missing m:
                     Log.Info($"[SlayTheStreamer2] no settings file at {m.Path}; mod loaded but Twitch not connected. " +
                              "Create the file with: { \"schemaVersion\": 1, \"channel\": \"...\", \"username\": \"...\", \"oauthToken\": \"oauth:...\" }");
+                    break;
+                case SettingsResult.Unconfigured u:
+                    Log.Info($"[SlayTheStreamer2] settings file at {u.Path} is awaiting credentials — " +
+                             "fill in channel / username / oauthToken (see README) and restart. Twitch not connected.");
                     break;
                 case SettingsResult.Malformed m:
                     Log.Error($"[SlayTheStreamer2] settings file at {m.Path} is malformed: {m.Reason}. Mod loaded but not connecting.");

@@ -100,7 +100,7 @@ internal static class SettingsPanelBuilder {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
         AddDivider(root);
-        AddHelpText(root, statusText);
+        AddStatusText(root, statusText);
         AddDivider(root);
         AddFilePathRow(root);
         return root;
@@ -433,6 +433,39 @@ internal static class SettingsPanelBuilder {
         mc.AddThemeConstantOverride("margin_top",    -15);
         mc.AddThemeConstantOverride("margin_right",  130);
         mc.AddThemeConstantOverride("margin_bottom", 12);
+        mc.AddChild(lbl);
+        parent.AddChild(mc);
+    }
+
+    // -------------------------------------------------------------------------
+    // Standalone status paragraph (pre-configuration panel). Unlike AddHelpText,
+    // this is NOT tucked under a control: positive top margin so the first line
+    // clears the divider above it, and full panel width so it wraps naturally.
+    // -------------------------------------------------------------------------
+
+    private static void AddStatusText(Container parent, string text) {
+        var lbl = new RichTextLabel {
+            Text                = text,
+            BbcodeEnabled       = true,
+            FitContent          = true,
+            ScrollActive        = false,
+            AutowrapMode        = TextServer.AutowrapMode.WordSmart,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Modulate            = HelpColor,
+            CustomMinimumSize   = new Vector2(0, 20),
+        };
+        if (_kreonRegular != null) lbl.AddThemeFontOverride("normal_font", _kreonRegular);
+        if (_kreonBold    != null) lbl.AddThemeFontOverride("bold_font",   _kreonBold);
+        lbl.AddThemeFontSizeOverride("normal_font_size", HelpFontSize);
+        lbl.AddThemeFontSizeOverride("bold_font_size",   HelpFontSize);
+
+        var mc = new MarginContainer {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        mc.AddThemeConstantOverride("margin_left",   12);
+        mc.AddThemeConstantOverride("margin_top",    14);
+        mc.AddThemeConstantOverride("margin_right",  12);
+        mc.AddThemeConstantOverride("margin_bottom", 14);
         mc.AddChild(lbl);
         parent.AddChild(mc);
     }

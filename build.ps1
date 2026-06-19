@@ -21,6 +21,11 @@ if (-not (Test-Path $gameHarmony)) { throw "0Harmony.dll not found at $gameHarmo
 
 Copy-Item -Force $gameSts2 "src\sts2.dll"
 Copy-Item -Force $gameHarmony "src\0Harmony.dll"
+# sts2.xml (MegaCrit's XML docs, shipped beside the DLL since game v0.107.1) gives
+# IDE IntelliSense tooltips. Reference-only; gitignored. Guarded so older game
+# builds without the XML still build cleanly.
+$gameXml = Join-Path $dataDir "sts2.xml"
+if (Test-Path $gameXml) { Copy-Item -Force $gameXml "src\sts2.xml" }
 $harmonyVer = (Get-Item "src\0Harmony.dll").VersionInfo.FileVersion
 Write-Host "Refreshed src\sts2.dll and src\0Harmony.dll (Harmony $harmonyVer)"
 

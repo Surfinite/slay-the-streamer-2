@@ -39,6 +39,9 @@ Thumbs.db
 # they're MegaCrit / HarmonyLib binaries, not ours to redistribute.
 src/sts2.dll
 src/0Harmony.dll
+# sts2.xml (MegaCrit's XML docs, shipped beside sts2.dll since game v0.107.1) is
+# copied per-build for IDE IntelliSense — reference-only, not ours to redistribute.
+src/sts2.xml
 
 # External-review workflow inputs and raw reviewer outputs.
 # Kept local-only: CONTEXT docs are throwaway inputs and raw _REVIEWS folders

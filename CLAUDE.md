@@ -14,7 +14,11 @@ pwsh -File build.ps1     # rebuilds dist/ (dotnet publish + dotnet test + assemb
 pwsh -File install.ps1   # COPY ONLY — dist/ -> Steam mods folder; does NOT rebuild
 ```
 
-Both steps are required. `install.ps1` is a copy step only. **The mod version printed in `godot.log` is the git HEAD at build time, not install time** — a stale `dist/` means a stale mod runs even after re-install. If the version hash in the log doesn't match `git log -1 --format=%H`, you skipped `build.ps1`.
+Both steps are required. `install.ps1` is a copy step only. **The mod version printed in `godot.log` is `<manifest version>+<git sha>`** — the suffix is the git HEAD at *build* time (build.ps1 stamps `-p:Version` from `src/slay_the_streamer_2.json`). A stale `dist/` runs stale even after re-install; if the hash doesn't match `git log -1 --format=%H`, you skipped `build.ps1`. **Re-run `install.ps1` after the FINAL build** — building the release zip doesn't deploy it, and a build done *before* the version-bump commit leaves the local install on the prior stamp (bit us: local read `0.1.1` after `0.1.2` shipped).
+
+### Verifying mod compat after an StS2 Beta game update
+
+Decompile the OLD (`src/sts2.dll` — still the prior build's binary until you rebuild) and the NEW game DLL with the **same `ilspycmd`**, then `diff -rq` those two. **Don't** diff against the committed `decompiled/sts2/` baseline — ilspycmd-version emit differences (`<>z__`↔`_003C_003E`, `global::` prefixes) flood it with false hits (~1979 vs ~1138 real for v0.107.0→v0.107.1). Decompile **XML-free**: the game ships `sts2.xml` beside the DLL since v0.107.1, and a sibling `.xml` makes ILSpy embed doc comments into every file. Filter changed files to the patch surface, then member-level-`diff` each hit (a file usually "differs" only from body/balance changes that don't touch our bound signatures). v0.107.0→v0.107.1 was ~1138 real changes, **zero** mod impact.
 
 ### Test isolation for TiLog
 
@@ -92,6 +96,7 @@ Reference impl: `src/Game/DecisionVotes/NeowBlessingVotePatch.cs` (B.1) and `Car
 - `IChatService : IChatConsumer` adds `ConnectAsync` for platforms that need a connect lifecycle (Twitch, YouTube).
 - `MultiChatService : IChatConsumer` is the N-platform aggregator. Its aggregate `State` is best-of-children for active states; worst-of for terminal states (`AuthenticationFailed > JoinFailed > Disposed > Disconnected`).
 - `VoteCoordinator` takes `IChatConsumer`, not `IChatService` — the connect lifecycle is wired by `ModEntry`, not by the voting layer.
+- `IFastPollable` (optional capability, post-v0.1.2) — `VoteCoordinator` enables it on `Start` and disables on session `Closed`/`Cancelled`; `MultiChatService` forwards to pollable children; `YouTubeChatService` polls every 1s during a vote (else YouTube's server cadence). Twitch is event-push and doesn't implement it. NOTE: the YT poll loop uses real `Task.Delay` (not `ITimerScheduler`), so its tests use real short delays + an instance-settable `FastPollInterval`, not the fake scheduler.
 
 ### YouTube scraper isolation
 

@@ -16,7 +16,9 @@ Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheS
 
 ## ⬇️ Download
 
-**[Get the latest release →](https://github.com/Surfinite/slay-the-streamer-2/releases/latest)**
+**[Now available through the steam Workshop →](https://steamcommunity.com/sharedfiles/filedetails/?id=3761888849)**
+
+[Get the latest release →](https://github.com/Surfinite/slay-the-streamer-2/releases/latest)
 
 Grab the `slay_the_streamer_2-vX.Y.Z.zip` asset from the release page.
 

@@ -49,3 +49,6 @@ src/sts2.xml
 # The synthesized META-REVIEW-*.md files ARE committed — that's the load-bearing artifact.
 **/*-CONTEXT.md
 **/*_REVIEWS/
+
+# Steam Workshop workspace: content/ is synced from dist/ by workshop/upload.ps1
+workshop/content/

@@ -53,26 +53,38 @@ internal static class SettingsPanelPatch {
     private static Vector2? _savedDescPosition;
     private static bool     _savedImageVisible = true;
 
+    /// <summary>
+    /// Remove any injected scroll container and restore vanilla ModDescription and
+    /// ModImage to their original values in case we mutated them on a previous fill
+    /// of our mod. Shared by the Fill postfix (re-entrant fills) and the Clear
+    /// postfix (game v0.108.0+ calls Clear when the modding submenu closes).
+    /// </summary>
+    internal static void RemoveInjectedPanelAndRestore(NModInfoContainer container) {
+        var existing = container.GetNodeOrNull(ModConstants.SettingsPanelNodeName);
+        if (existing != null) {
+            existing.QueueFree();
+        }
+
+        var descNode  = container.GetNodeOrNull<RichTextLabel>("ModDescription");
+        var imageNode = container.GetNodeOrNull<Control>("ModImage");
+
+        if (descNode != null) {
+            if (_savedDescSize.HasValue)     descNode.Size     = _savedDescSize.Value;
+            if (_savedDescPosition.HasValue) descNode.Position = _savedDescPosition.Value;
+        }
+        if (imageNode != null && _savedImageVisible) {
+            imageNode.Visible = _savedImageVisible;
+        }
+    }
+
     static void Postfix(NModInfoContainer __instance, Mod mod) {
         try {
-            // 1. Defensive cleanup: remove any prior injected scroll container by name.
-            var existing = __instance.GetNodeOrNull(ModConstants.SettingsPanelNodeName);
-            if (existing != null) {
-                existing.QueueFree();
-            }
+            // 1+2. Defensive cleanup + restore (Fill is re-entrant — vanilla doesn't
+            //      clear arbitrary children).
+            RemoveInjectedPanelAndRestore(__instance);
 
-            // 2. Always restore vanilla ModDescription and ModImage to their original
-            //    values in case we mutated them on a previous fill of our mod.
             var descNode  = __instance.GetNodeOrNull<RichTextLabel>("ModDescription");
             var imageNode = __instance.GetNodeOrNull<Control>("ModImage");
-
-            if (descNode != null) {
-                if (_savedDescSize.HasValue)     descNode.Size     = _savedDescSize.Value;
-                if (_savedDescPosition.HasValue) descNode.Position = _savedDescPosition.Value;
-            }
-            if (imageNode != null && _savedImageVisible) {
-                imageNode.Visible = _savedImageVisible;
-            }
 
             // 3. Inject only when our mod is selected.
             if (mod.manifest?.id != ModConstants.ModId) return;
@@ -145,4 +157,22 @@ internal static class SettingsPanelPatch {
             $"Chat not connected — the settings file couldn't be read:\n{m.Reason}",
         _ => "Chat not connected — settings not loaded (see godot.log).",
     };
+}
+
+/// <summary>
+/// Harmony postfix on NModInfoContainer.Clear (new in game v0.108.0, called from
+/// NModdingScreen.OnSubmenuClosed when the modding submenu closes). Vanilla Clear
+/// only blanks title/image/description — it doesn't remove arbitrary children, so
+/// without this our injected panel (and the repositioned ModDescription) would
+/// linger until the next row click runs the Fill postfix's cleanup.
+/// </summary>
+[HarmonyPatch(typeof(NModInfoContainer), nameof(NModInfoContainer.Clear))]
+internal static class SettingsPanelClearPatch {
+    static void Postfix(NModInfoContainer __instance) {
+        try {
+            SettingsPanelPatch.RemoveInjectedPanelAndRestore(__instance);
+        } catch (System.Exception ex) {
+            TiLog.Error("[settings-ui] SettingsPanelClearPatch.Postfix threw — vanilla mod manager continues", ex);
+        }
+    }
 }

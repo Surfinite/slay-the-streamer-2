@@ -1,8 +1,8 @@
 # Slay the Streamer 2
 
 A **Slay the Spire 2** mod that lets your Twitch chat (and optionally YouTube
-chat) vote on the choices you make during a run — Neow blessings, card
-rewards, Ancient relics, the act boss, and the Act 1 variant.
+chat) vote on the choices you make during a run — Ancient blessings, card
+rewards, the act boss, and the Act 1 variant.
 
 Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer).
 

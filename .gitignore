@@ -52,3 +52,6 @@ src/sts2.xml
 
 # Steam Workshop workspace: content/ is synced from dist/ by workshop/upload.ps1
 workshop/content/
+
+# Crash-dump evidence for megacrit/sts2-mod-uploader#14 (binary, local only)
+crash-dumps/*/*.dmp

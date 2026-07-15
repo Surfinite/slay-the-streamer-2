@@ -166,8 +166,21 @@ internal static class SettingsPanelPatch {
 /// without this our injected panel (and the repositioned ModDescription) would
 /// linger until the next row click runs the Fill postfix's cleanup.
 /// </summary>
-[HarmonyPatch(typeof(NModInfoContainer), nameof(NModInfoContainer.Clear))]
+[HarmonyPatch(typeof(NModInfoContainer), ClearMethodName)]
 internal static class SettingsPanelClearPatch {
+    // String, not nameof: Clear() only exists on game >= v0.108.0, and build.ps1
+    // compiles against whichever game branch is installed — nameof would break
+    // the build on v0.107.x.
+    private const string ClearMethodName = "Clear";
+
+    // On game < v0.108.0 the target method is absent and PatchAll would throw
+    // "Undefined target method", fatally disabling EVERY patch (live failure
+    // mode reported on the Workshop, game v0.107.0, 2026-07-13). Prepare()
+    // returning false makes Harmony skip just this class; the lingering-panel
+    // issue can't occur there because vanilla never clears the info panel.
+    static bool Prepare() =>
+        HarmonyLib.AccessTools.Method(typeof(NModInfoContainer), ClearMethodName) != null;
+
     static void Postfix(NModInfoContainer __instance) {
         try {
             SettingsPanelPatch.RemoveInjectedPanelAndRestore(__instance);

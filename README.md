@@ -74,6 +74,8 @@ Fill in three fields:
 - **`username`** — the account that will post chat receipts ("Vote opened…", "Chat picked X"). Most solo streamers use their own account here, or the same bot account they already use for other tools.
 - **`oauthToken`** — a chat token for the `username` account. It needs the `chat:read` and `chat:edit` scopes, and must be prefixed with `oauth:` (e.g. `"oauth:abc123…"`).
 
+> ⚠️ **The `username` account's votes don't count.** The mod ignores chat messages from that account — its own receipts contain vote-shaped text like `#0`/`#1`, so they'd otherwise be counted as votes. Using your own account for `username` is fine (chat does the voting, not you) — but you then **can't test voting by typing in your own chat**. Test from a second account or ask a friend.
+
 **Already have a chat bot?** If you've already got a Twitch bot set up (Nightbot, StreamElements, your own, etc.), you can reuse its credentials — just paste the existing OAuth token (with the `oauth:` prefix) and the bot's username here.
 
 **New to this?** The fastest path is a token generator like [twitchtokengenerator.com](https://twitchtokengenerator.com/) — pick "Bot Chat Token", log in as the bot account, copy the Access Token, paste it with the `oauth:` prefix. For the official Twitch documentation on chat scopes and OAuth flows, see [dev.twitch.tv/docs/authentication](https://dev.twitch.tv/docs/authentication/) and [dev.twitch.tv/docs/irc/authenticate-bot](https://dev.twitch.tv/docs/irc/authenticate-bot/).

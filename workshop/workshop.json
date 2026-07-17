@@ -2,7 +2,7 @@
   "title": "Slay the Streamer 2",
   "description": "Twitch and YouTube chat votes on the streamer's choices: run start (act variant), Neow and mid-run Ancient blessings, card rewards, and act bosses. Inspired by Tempus's Slay the Streamer for StS1.\n\nConfiguration lives in %APPDATA%\\SlayTheSpire2\\slay_the_streamer_2.json and in the in-game Mods screen once connected.\n\nSetup guide and README: https://github.com/Surfinite/slay-the-streamer-2\n\nDemo: https://www.twitch.tv/videos/2782280062",
   "visibility": null,
-  "changeNote": "v0.1.4: fixes v0.1.3 doing nothing on game v0.107.x (mod loaded, chat connected, but votes never fired). Also note: votes from the configured `username` account are ignored (stops the mod's own receipts counting as votes), so don't test by voting from that account - use a second account or a friend.",
+  "changeNote": "v0.1.5: fixes no votes firing on game v0.109.0 (beta branch) - the update changed internal RNG signatures; the mod now adapts to the game version at runtime. One build works on v0.107.x, v0.108.0 and v0.109.0.",
   "tags": [],
   "dependencies": [],
   "contentDescriptors": []

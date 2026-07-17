@@ -117,7 +117,12 @@ internal static class BossVotePatch {
             rs.Act.SetSecondBossEncounter(boss);
             if (MegaCrit.Sts2.Core.TestSupport.TestMode.IsOff) {
                 NRun.Instance.GlobalUi.TopBar.BossIcon.RefreshBossIcon();
-                MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance?.SetMap(rs.Map, rs.Rng.Seed, clearDrawings: false);
+                // Via SeedCompat: RunRngSet.Seed and SetMap's seed param widened
+                // uint -> ulong in game v0.109.0; direct calls only bind on one branch.
+                var mapScreen = MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance;
+                if (mapScreen != null) {
+                    SeedCompat.SetMapPreservingSeed(mapScreen, rs.Map, rs.Rng, clearDrawings: false);
+                }
             }
         };
 

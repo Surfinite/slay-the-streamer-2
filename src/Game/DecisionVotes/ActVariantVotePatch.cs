@@ -245,7 +245,8 @@ internal static partial class ActVariantVotePatch {
         // normally seeds layer picks from the run seed inside BeginRunLocally,
         // but that seed doesn't exist yet at OnEmbarkPressed-time. Random
         // per-vote layer choice is fine for a 30-second preview.
-        var rng = new Rng((uint)System.Environment.TickCount);
+        // Via SeedCompat: the Rng ctor signature differs across game branches.
+        var rng = SeedCompat.CreateRng((uint)System.Environment.TickCount);
 
         // Pre-warm full layered backdrop scenes for both variants.
         var prewarm = PreWarmAssets(

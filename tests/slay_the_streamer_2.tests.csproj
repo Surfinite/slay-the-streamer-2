@@ -36,6 +36,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\AncientRelicExclusionPatches.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RunLiveness.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\OverlayOcclusion.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\SeedCompat.cs" />
   </ItemGroup>
 
   <ItemGroup>

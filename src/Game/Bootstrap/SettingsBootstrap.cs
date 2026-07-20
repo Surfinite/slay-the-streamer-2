@@ -56,6 +56,7 @@ public static class SettingsBootstrap {
         ["showVoteTag"]          = false,
         ["voteTallyOnLeft"]      = false,
         ["allowSameBossTwice"]   = false,
+        ["relicChoices"]         = 1,
     };
 
     /// <summary>

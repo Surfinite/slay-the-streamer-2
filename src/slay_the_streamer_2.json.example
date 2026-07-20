@@ -10,5 +10,6 @@
   "cardSkipAsVoteOption": true,
   "showVoteTag": false,
   "voteTallyOnLeft": false,
-  "allowSameBossTwice": false
+  "allowSameBossTwice": false,
+  "relicChoices": 1
 }

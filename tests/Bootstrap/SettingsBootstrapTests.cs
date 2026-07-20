@@ -38,6 +38,20 @@ public class SettingsBootstrapTests {
         Assert.Null(json["youtubeChannelId"]);
     }
 
+    [Fact]
+    public void Template_contains_relicChoices_default_1() {
+        var json = JsonNode.Parse(SettingsBootstrap.BuildTemplateJson())!.AsObject();
+        Assert.Equal(1, (int)json["relicChoices"]!);
+    }
+
+    [Fact]
+    public void AddMissingKeys_adds_relicChoices_to_old_files() {
+        var json = JsonNode.Parse("{\"schemaVersion\":1}")!.AsObject();
+        var added = SettingsBootstrap.AddMissingKeys(json);
+        Assert.Contains("relicChoices", added);
+        Assert.Equal(1, (int)json["relicChoices"]!);
+    }
+
     // ---------------------------------------------------------------------
     // EnsureFile — create path
     // ---------------------------------------------------------------------

@@ -18,7 +18,8 @@ public sealed record ChatSettings(
     bool CardSkipAsVoteOption = true,
     bool ShowVoteTag = false,
     bool VoteTallyOnLeft = false,
-    bool AllowSameBossTwice = false);
+    bool AllowSameBossTwice = false,
+    int RelicChoices = 1);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -226,9 +227,24 @@ public static class ModSettings {
                 else warnings.Add("allowSameBossTwice is not a boolean; using default (false)");
             }
 
+            int relicChoices = 1;
+            if (root.TryGetProperty("relicChoices", out var relicChoicesProp)) {
+                if (relicChoicesProp.ValueKind != JsonValueKind.Number || !relicChoicesProp.TryGetInt32(out var rawChoices)) {
+                    warnings.Add("relicChoices is not an integer; using default (1)");
+                } else if (rawChoices < 1) {
+                    warnings.Add($"relicChoices {rawChoices} below minimum; clamped to 1");
+                    relicChoices = 1;
+                } else if (rawChoices > 4) {
+                    warnings.Add($"relicChoices {rawChoices} above maximum; clamped to 4");
+                    relicChoices = 4;
+                } else {
+                    relicChoices = rawChoices;
+                }
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices),
                 warnings);
         }
     }

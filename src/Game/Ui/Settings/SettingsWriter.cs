@@ -32,6 +32,8 @@ public static class SettingsWriter {
         json["showVoteTag"] = settings.ShowVoteTag;
         json["cardSkipsPerAct"] = settings.CardSkipsPerAct;
         json["voteTallyOnLeft"] = settings.VoteTallyOnLeft;
+        json["allowSameBossTwice"] = settings.AllowSameBossTwice;
+        json["relicChoices"] = settings.RelicChoices;
 
         WriteAtomic(path, json);
     }

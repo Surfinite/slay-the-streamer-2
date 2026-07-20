@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Ti.Chat;
 using Xunit;
@@ -720,6 +721,32 @@ public class ModSettingsTests {
             var success = Assert.IsType<SettingsResult.Success>(result);
             Assert.False(success.Settings.AllowSameBossTwice);   // default
             Assert.Contains(success.Warnings, w => w.Contains("allowSameBossTwice"));
+        } finally { File.Delete(path); }
+    }
+
+    // --- relicChoices (bossy-relics task 2: relic-reward option count, 1-4, default 1) ---
+
+    [Theory]
+    [InlineData("\"relicChoices\": 3,", 3, false)]
+    [InlineData("\"relicChoices\": 1,", 1, false)]
+    [InlineData("\"relicChoices\": 0,", 1, true)]    // below min -> clamp + warning
+    [InlineData("\"relicChoices\": 9,", 4, true)]    // above max -> clamp + warning
+    [InlineData("\"relicChoices\": \"two\",", 1, true)] // non-int -> default + warning
+    [InlineData("", 1, false)]                        // missing -> default, no warning
+    public void RelicChoices_parses_clamps_and_defaults(string fragment, int expected, bool expectWarning) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(expected, success.Settings.RelicChoices);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("relicChoices")));
         } finally { File.Delete(path); }
     }
 

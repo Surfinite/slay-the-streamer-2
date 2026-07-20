@@ -76,6 +76,23 @@ public class SettingsWriterTests {
     }
 
     [Fact]
+    public void Write_persists_relicChoices_and_allowSameBossTwice() {
+        var path = TempPath();
+        try {
+            var settings = MakeSettings() with { RelicChoices = 3, AllowSameBossTwice = true };
+            SettingsWriter.Write(path, settings);
+
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert.Equal(3, (int)json["relicChoices"]!);
+            Assert.True((bool)json["allowSameBossTwice"]!);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bak")) File.Delete(path + ".bak");
+            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
+        }
+    }
+
+    [Fact]
     public void Write_OverExistingFile_CreatesBakCopyOfPriorContents() {
         var path = TempPath();
         var bak = path + ".bak";

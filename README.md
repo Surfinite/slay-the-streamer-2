@@ -149,6 +149,7 @@ Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list.
 - **Allow chat to skip** — when on, chat can vote `#0` to skip a card reward.
 - **Show vote tag** — show the `[NN]` vote-ID tag in chat receipts and the on-screen tally. Helpful if your YT chat has stream delay.
 - **Card skips per act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
+- **Relic choices** — how many relics you get to choose from per treasure chest and elite kill (1–4, default 1). You pick one; the rest go back into the relic pool. 1 = vanilla behavior. Not a chat vote — this is streamer-only.
 - **Settings file** — read-only path with an Open-folder button to reveal `%APPDATA%\SlayTheSpire2\` in Explorer.
 
 The settings panel is disabled mid-run — change settings between runs. Changes save automatically.

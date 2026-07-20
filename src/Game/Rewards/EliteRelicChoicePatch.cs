@@ -20,7 +20,9 @@ namespace SlayTheStreamer2.Game.Rewards;
 /// Patch point is WithRewardsFromRoom (not GenerateRewardsFor): it runs before
 /// Populate, and the tutorial path (TryGenerateTutorialRewards) produces
 /// PREDETERMINED relic rewards that are already populated - the unpopulated
-/// filter below therefore skips tutorials for free.
+/// filter below therefore skips tutorials for free. (Edge case: the tutorial
+/// path can fall back to a plain unpopulated RelicReward when Vajra/OrnamentalFan
+/// is unavailable - the offer then expands there too, which is harmless.)
 /// </summary>
 [HarmonyPatch(typeof(RewardsSet), nameof(RewardsSet.WithRewardsFromRoom))]
 internal static class EliteRelicChoicePatch {
@@ -84,14 +86,17 @@ internal static class LinkedSetClaimBookkeepingPatch {
         try {
             if (!EliteRelicChoicePatch.PendingWrappers.Remove(__instance)) return;
             EliteRelicChoicePatch.Registry.Remove(reward);   // claimed member: no refund
-            // Wrapper's OnSelect trivially returns true (LinkedRewardSet.OnSelect,
-            // MegaCrit.Sts2.Core.Rewards - always Task.FromResult(true)); calling
-            // SelectUnsynchronized() (Reward's only public claim entry-point - there
-            // is no "Select()") marks SuccessfullySelected and lets the set
-            // complete without re-triggering RewardsSetSynchronizer traffic (that's
-            // the "Unsynchronized" contract). Fire-and-forget is safe: no awaiter
-            // depends on ordering here.
-            _ = __instance.SelectUnsynchronized();
+            // Wrapper's own OnSelect trivially returns true; selecting it marks
+            // SuccessfullySelected so the RewardsSet can complete. The chain
+            // resolves synchronously TODAY (v0.109: Hook.AfterRewardTaken has no
+            // awaiting overrides - verified against the decompile); if a future
+            // game version makes it truly async, the completion check may run
+            // before the wrapper is marked and the set won't complete - re-check
+            // this on game-update compat passes. The continuation makes any
+            // async fault observable instead of silently discarded.
+            __instance.SelectUnsynchronized().ContinueWith(
+                t => TiLog.Error("[bossy-relics] wrapper SelectUnsynchronized faulted", t.Exception),
+                System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
         } catch (System.Exception ex) {
             TiLog.Error("[bossy-relics] linked-set bookkeeping failed", ex);
         }

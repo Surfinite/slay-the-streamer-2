@@ -189,6 +189,9 @@ internal static class SettingsPanelBuilder {
         AddDivider(root);
         AddVoteTallySideDropdown(root, current, debouncer);
         AddDivider(root);
+        AddRelicChoicesDropdown(root, current, debouncer);
+        AddHelpText(root, "Relics offered per chest / elite reward. Streamer picks 1;\nthe rest go back into the relic pool. 1 = vanilla.");
+        AddDivider(root);
         AddFilePathRow(root);
 
         return root;
@@ -317,6 +320,49 @@ internal static class SettingsPanelBuilder {
         dropdown.ItemSelected += idx => {
             var value = dropdown.GetItemMetadata((int)idx).AsInt32();
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = value });
+        };
+
+        inner.AddChild(dropdown);
+        parent.AddChild(row);
+    }
+
+    private static void AddRelicChoicesDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
+
+        inner.AddChild(MakeRowLabel("Relic choices"));
+
+        var dropdown = new OptionButton {
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(115, 0),
+        };
+        if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
+        dropdown.AddThemeFontSizeOverride("font_size", 22);
+        dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
+
+        // Metadata (not item-ids) mirrors AddCardSkipsDropdown: id=-1 collides
+        // with Godot's auto-assign sentinel.
+        (string Label, int Value)[] entries = [
+            ("1  (vanilla)", 1),
+            ("2", 2),
+            ("3", 3),
+            ("4", 4)
+        ];
+        int selectedIdx = 0;
+        for (int i = 0; i < entries.Length; i++) {
+            dropdown.AddItem(entries[i].Label);
+            dropdown.SetItemMetadata(i, entries[i].Value);
+            if (entries[i].Value == current.RelicChoices) selectedIdx = i;
+        }
+        dropdown.Selected = selectedIdx;
+
+        var popup = dropdown.GetPopup();
+        if (_kreonRegular != null) popup.AddThemeFontOverride("font", _kreonRegular);
+        popup.AddThemeFontSizeOverride("font_size", 22);
+
+        dropdown.ItemSelected += idx => {
+            var value = dropdown.GetItemMetadata((int)idx).AsInt32();
+            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { RelicChoices = value });
         };
 
         inner.AddChild(dropdown);

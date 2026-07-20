@@ -24,9 +24,10 @@ namespace SlayTheStreamer2.Game.Rewards;
 ///
 /// Chest pulls come from the SHARED grab bag only (BeginRelicPicking pulls
 /// _sharedGrabBag.PullFromFront directly - the player bag is untouched), so
-/// refunds here use sharedBagOnly: true. Vanilla's MoveToFallback demotion of
-/// leftover relics in the PLAYER bag is undone by ReturnToPools' fallback
-/// scrub + our not-inserting into the player deque (the relic never left it).
+/// refunds here use sharedBagOnly: true. Vanilla's later award-animation tail
+/// still calls player.RelicGrabBag.MoveToFallback for every Skipped result
+/// (see ChestRelicRefundPatch's doc comment below) - ChestRefundDemotionGuardPatch
+/// blocks that demotion for relics this mod has already refunded.
 /// </summary>
 [HarmonyPatch(typeof(TreasureRoomRelicSynchronizer), nameof(TreasureRoomRelicSynchronizer.BeginRelicPicking))]
 internal static class ChestRelicChoicePatch {
@@ -43,6 +44,7 @@ internal static class ChestRelicChoicePatch {
     static void Postfix(TreasureRoomRelicSynchronizer __instance) {
         try {
             SessionOffer.Clear();
+            ChestRefundDemotionGuardPatch.ProtectedIds.Clear();
             int choices = RelicChoicePlanner.Clamp(ModSettings.Current?.RelicChoices ?? 1);
             if (choices <= 1) return;
 
@@ -55,9 +57,11 @@ internal static class ChestRelicChoicePatch {
             // Count > 1: not the shape we expect (future game change) - leave alone.
             if (current is null || current.Count != 1) return;
 
-            // First-ever-chest tutorial forces Gorget solo - keep it solo. Compare
-            // by canonical Id (not the Id.Entry string literal) to sidestep the
-            // UPPER_SNAKE_CASE derivation landmine entirely.
+            // First-ever-chest tutorial forces Gorget solo - keep any solo-Gorget
+            // chest vanilla (over-broad by design: also skips rare later natural
+            // Gorget draws, a missed expansion at worst). Compare by canonical Id
+            // (not the Id.Entry string literal) to sidestep the UPPER_SNAKE_CASE
+            // derivation landmine entirely.
             if (current[0].Id == ModelDb.Relic<Gorget>().Id) return;
 
             int extraCount = RelicChoicePlanner.ExtraCount(choices, current.Count, RelicChoicePlanner.MaxChoices);
@@ -73,7 +77,14 @@ internal static class ChestRelicChoicePatch {
                 // chest stream position stays untouched -> the ORIGINAL relic is
                 // identical to what vanilla would have offered).
                 var rarity = RelicFactory.RollRarity(rng);
-                var relic = sharedBag.PullFromFront(rarity, player.RunState) ?? RelicFactory.FallbackRelic;
+                var relic = sharedBag.PullFromFront(rarity, player.RunState);
+                // Never pad with RelicFactory.FallbackRelic (Circlet singleton) -
+                // a null pull means the shared bag is dry for this rarity, and
+                // padding risks putting the SAME Circlet instance in the offer
+                // twice, which would break the refund loop's id-based accounting.
+                // Just offer fewer relics (vanilla's own rarity cascade makes a
+                // null pull vanishingly rare anyway).
+                if (relic is null) break;
                 current.Add(relic);
             }
             SessionOffer.AddRange(current);
@@ -99,14 +110,14 @@ internal static class ChestRelicChoicePatch {
 /// animation coroutine (AnimateRelicAwards) - the actual
 /// player.RelicGrabBag.MoveToFallback(relic) calls happen after several
 /// awaited tween/Cmd.Wait animation beats, i.e. well AFTER this postfix has
-/// already returned, not before. This turns out not to matter: that
-/// demotion runs on each player's OWN RelicGrabBag, and chest pulls only
-/// ever came from the SHARED bag, so RelicGrabBag.MoveToFallback finds no
-/// matching entry in the player's own deques (see RelicGrabBag.cs -
-/// MoveToFallback is a no-op when the relic was never present) and never
-/// touches _mpFallbackDequeue for these relics. Our refund
-/// (sharedBagOnly: true) only ever touches the SHARED bag, so the two
-/// writes are on disjoint bags regardless of ordering.
+/// already returned. Our refund (sharedBagOnly: true) runs FIRST, inline in
+/// this postfix; vanilla's demotion runs LATER, in the award animation tail,
+/// for every Skipped result (player=null, which fires for the sole player in
+/// single-player). Because the player bag and shared bag are populated from
+/// overlapping pools, that later demotion can still find - and evict - the
+/// refunded relic's copy in the player's own rarity deque, moving it to the
+/// unserialized _mpFallbackDequeue. ChestRefundDemotionGuardPatch below
+/// blocks that demotion for any relic we've already refunded this session.
 /// </summary>
 [HarmonyPatch(typeof(TreasureRoomRelicSynchronizer), nameof(TreasureRoomRelicSynchronizer.OnPicked))]
 internal static class ChestRelicRefundPatch {
@@ -124,15 +135,49 @@ internal static class ChestRelicRefundPatch {
             // SKIP, _currentRelics is still set (deferred to room exit).
             bool skipped = !index.HasValue;
             var offered = new List<RelicModel>(ChestRelicChoicePatch.SessionOffer);
-            RelicModel? claimed = (!skipped && index!.Value >= 0 && index.Value < offered.Count) ? offered[index.Value] : null;
             ChestRelicChoicePatch.SessionOffer.Clear();
 
-            foreach (var relic in offered) {
-                if (claimed != null && relic.Id == claimed.Id) continue;
+            for (int i = 0; i < offered.Count; i++) {
+                // Skip the claimed slot BY INDEX, not by id - two distinct
+                // offered relics can share an id if the shared bag offered the
+                // same model twice (e.g. two Circlets), and id-based dedup
+                // would then wrongly skip the refund of the OTHER copy too.
+                if (!skipped && index!.Value == i) continue;
+                var relic = offered[i];
+                ChestRefundDemotionGuardPatch.ProtectedIds.Add(relic.Id);
                 RelicReturnHelper.ReturnToPools(player, relic, sharedBagOnly: true);
             }
         } catch (System.Exception ex) {
             TiLog.Error("[bossy-relics] chest refund failed", ex);
         }
+    }
+}
+
+/// <summary>
+/// Vanilla's treasure-award animation demotes every Skipped result out of each
+/// player's grab bag via MoveToFallback - a multiplayer bookkeeping step that
+/// solo vanilla never triggers (solo chests are always 1 relic, so there are
+/// never Skipped results). Our N-relic offers do trigger it, and it runs AFTER
+/// our refund, silently demoting the refunded relic's player-bag copy to the
+/// unserialized last-resort deque. Skip the demotion for relics this mod has
+/// refunded in the current chest session (single-player only - the guard set
+/// is only ever populated behind the Players.Count == 1 gate).
+/// </summary>
+[HarmonyPatch(typeof(RelicGrabBag), nameof(RelicGrabBag.MoveToFallback))]
+internal static class ChestRefundDemotionGuardPatch {
+    /// <summary>Relic ids refunded by the current/most recent chest session.
+    /// Populated by ChestRelicRefundPatch, cleared at the next BeginRelicPicking.</summary>
+    internal static readonly HashSet<ModelId> ProtectedIds = new();
+
+    static bool Prefix(RelicModel toRemove) {
+        try {
+            if (ProtectedIds.Contains(toRemove.Id)) {
+                TiLog.Info($"[bossy-relics] blocked fallback demotion of refunded {toRemove.Id.Entry}");
+                return false;   // skip vanilla demotion
+            }
+        } catch (System.Exception ex) {
+            TiLog.Error("[bossy-relics] demotion guard failed; vanilla demotion proceeds", ex);
+        }
+        return true;
     }
 }

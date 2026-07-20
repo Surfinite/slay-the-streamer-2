@@ -23,11 +23,15 @@ namespace SlayTheStreamer2.Game.Rewards;
 /// _singleplayerSkipped, hence the OnPicked postfix).
 ///
 /// Chest pulls come from the SHARED grab bag only (BeginRelicPicking pulls
-/// _sharedGrabBag.PullFromFront directly - the player bag is untouched), so
-/// refunds here use sharedBagOnly: true. Vanilla's later award-animation tail
-/// still calls player.RelicGrabBag.MoveToFallback for every Skipped result
-/// (see ChestRelicRefundPatch's doc comment below) - ChestRefundDemotionGuardPatch
-/// blocks that demotion for relics this mod has already refunded.
+/// _sharedGrabBag.PullFromFront directly - the player bag is untouched), but
+/// refunds here still use sharedBagOnly: false: the spec's decline semantics
+/// require the PLAYER-bag copy to move to the back of its deque too, not
+/// just stay wherever it already was (possibly the front, where the very
+/// next elite offer would immediately re-offer it). Vanilla's later
+/// award-animation tail still calls player.RelicGrabBag.MoveToFallback for
+/// every Skipped result (see ChestRelicRefundPatch's doc comment below) -
+/// ChestRefundDemotionGuardPatch blocks that demotion for relics this mod
+/// has already refunded, so the moved-to-back position sticks.
 /// </summary>
 [HarmonyPatch(typeof(TreasureRoomRelicSynchronizer), nameof(TreasureRoomRelicSynchronizer.BeginRelicPicking))]
 internal static class ChestRelicChoicePatch {
@@ -71,6 +75,12 @@ internal static class ChestRelicChoicePatch {
                 player.RunState.Rng?.StringSeed, "bossy-chest",
                 player.RunState.CurrentActIndex, player.RunState.TotalFloor));
 
+            // Track session offers incrementally (original relic(s) now, each
+            // extra as it's pulled) so a mid-loop exception still leaves
+            // whatever was already added refundable - not just whatever
+            // happened to be in `current` after a post-loop AddRange.
+            SessionOffer.AddRange(current);
+
             var sharedBag = SharedBagRef(__instance);
             for (int i = 0; i < extraCount; i++) {
                 // Mirror the vanilla pull shape, rarity on OUR rng (vanilla's
@@ -86,8 +96,8 @@ internal static class ChestRelicChoicePatch {
                 // null pull vanishingly rare anyway).
                 if (relic is null) break;
                 current.Add(relic);
+                SessionOffer.Add(relic);
             }
-            SessionOffer.AddRange(current);
             TiLog.Info($"[bossy-relics] chest offer expanded to {current.Count} relics");
         } catch (System.Exception ex) {
             TiLog.Error("[bossy-relics] ChestRelicChoicePatch failed; vanilla chest unchanged", ex);
@@ -110,13 +120,16 @@ internal static class ChestRelicChoicePatch {
 /// animation coroutine (AnimateRelicAwards) - the actual
 /// player.RelicGrabBag.MoveToFallback(relic) calls happen after several
 /// awaited tween/Cmd.Wait animation beats, i.e. well AFTER this postfix has
-/// already returned. Our refund (sharedBagOnly: true) runs FIRST, inline in
-/// this postfix; vanilla's demotion runs LATER, in the award animation tail,
-/// for every Skipped result (player=null, which fires for the sole player in
-/// single-player). Because the player bag and shared bag are populated from
-/// overlapping pools, that later demotion can still find - and evict - the
-/// refunded relic's copy in the player's own rarity deque, moving it to the
-/// unserialized _mpFallbackDequeue. ChestRefundDemotionGuardPatch below
+/// already returned. Our refund (sharedBagOnly: false, so it also moves the
+/// player-bag copy to the back of its deque per the spec's decline
+/// semantics) runs FIRST, inline in this postfix and therefore synchronously
+/// ahead of the award animation's demotion beat; vanilla's demotion runs
+/// LATER, in the award animation tail, for every Skipped result (player=null,
+/// which fires for the sole player in single-player). Because the player bag
+/// and shared bag are populated from overlapping pools, that later demotion
+/// can still find - and evict - the refunded relic's copy in the player's
+/// own rarity deque, moving it to the unserialized _mpFallbackDequeue.
+/// ChestRefundDemotionGuardPatch below
 /// blocks that demotion for any relic we've already refunded this session.
 /// </summary>
 [HarmonyPatch(typeof(TreasureRoomRelicSynchronizer), nameof(TreasureRoomRelicSynchronizer.OnPicked))]
@@ -145,7 +158,7 @@ internal static class ChestRelicRefundPatch {
                 if (!skipped && index!.Value == i) continue;
                 var relic = offered[i];
                 ChestRefundDemotionGuardPatch.ProtectedIds.Add(relic.Id);
-                RelicReturnHelper.ReturnToPools(player, relic, sharedBagOnly: true);
+                RelicReturnHelper.ReturnToPools(player, relic, sharedBagOnly: false);
             }
         } catch (System.Exception ex) {
             TiLog.Error("[bossy-relics] chest refund failed", ex);

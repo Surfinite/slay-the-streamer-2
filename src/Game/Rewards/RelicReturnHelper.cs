@@ -14,8 +14,11 @@ namespace SlayTheStreamer2.Game.Rewards;
 /// the front, so "back" = seen again only after the rest of that rarity has
 /// cycled — locked decision, spec 2026-07-20). Pulls are destructive to both
 /// the player bag and the shared bag (RelicFactory.PullNextRelicFromFront),
-/// so restoration mirrors both; chest pulls only touched the shared bag, so
-/// chest-skip refunds pass sharedBagOnly: true.
+/// so restoration mirrors both. Chest pulls only touch the shared bag
+/// directly, but the spec's decline semantics still require the PLAYER-bag
+/// copy to move to the back too (so the very next elite offer doesn't
+/// immediately re-offer a relic chat just declined) - see
+/// ChestRelicRefundPatch for why chest refunds pass sharedBagOnly: false.
 /// </summary>
 internal static class RelicReturnHelper {
     // RelicGrabBag internals: Dictionary<RelicRarity, List<RelicModel>> _deques
@@ -60,7 +63,12 @@ internal static class RelicReturnHelper {
             deque = new List<RelicModel>();
             deques[canonical.Rarity] = deque;
         }
-        if (deque.Exists(r => r.Id == canonical.Id)) return;   // idempotence
+        // "Return to pool" always means back-of-deque, whether or not a copy
+        // was already present: if the canonical relic is already in the
+        // deque (e.g. a chest refund's player-bag copy never left it),
+        // remove that entry first so the Add below always moves it to the
+        // back, rather than leaving it wherever it happened to sit.
+        deque.RemoveAll(r => r.Id == canonical.Id);
         deque.Add(canonical);   // back of deque
     }
 }

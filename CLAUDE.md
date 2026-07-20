@@ -137,6 +137,7 @@ Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the
 | Pre-spec landscape research (sealed-deck + Draft modifier in vanilla Custom Mode) | `notes/08-sealed-deck-custom-mode-investigation.md` |
 | Pre-spec landscape research (settings UI hook surface + tunable-knobs inventory) | `notes/09-settings-and-tunable-knobs.md` |
 | Pre-spec landscape research (B.3 act boss vote feasibility) | `notes/10-boss-vote-feasibility.md` |
+| Pre-spec landscape research (Bossy Relics pick-1-of-N relic rewards) | `notes/11-bossy-relics-investigation.md` |
 | StS2 asset extraction workflow (`.pck` → `decompiled/sts2-assets/`) | `notes/asset-extraction.md` |
 | Decompiled game source (regenerable, gitignored) | `decompiled/sts2/MegaCrit/sts2/...` |
 | Reference repos (gitignored, cloned per-workspace) | `references/SlayTheStreamer-sts1/` (Tempus's StS1 original — feature reference only, no license, no code copy); `references/STS2FirstMod/` (jiegec's StS2 modding toolkit reference) |

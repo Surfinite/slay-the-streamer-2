@@ -96,12 +96,13 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
                 _lastOverrideRemaining = snap.RemainingThisAct;
             }
         } else {
-            if (_showingOverride) {
+            if (_lastOverrideRemaining != int.MinValue) {
                 _showingOverride = false;
                 _lastOverrideRemaining = int.MinValue;
                 UpdateText(_skipSnapshot);   // restore skip text + its visibility rules
+            } else if (!Visible && _skipSnapshot.LimitThisAct > 0) {
+                Visible = true;
             }
-            if (!Visible) Visible = true;
         }
 
         // Poll the Skip button each frame so the label tracks any aspect-ratio

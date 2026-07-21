@@ -282,6 +282,16 @@ internal static class CardRewardVotePatch {
         // Hard guards
         if (!GodotObject.IsInstanceValid(__instance) || !GodotObject.IsInstanceValid(cardHolder)) return true;
 
+        // Vote in progress: nothing may fall through to vanilla. Must run
+        // BEFORE the multiplayer/chat bail-to-vanilla gates — a mid-vote click
+        // during a chat disconnect would otherwise reach vanilla SelectCard
+        // and claim a card under a pending vote.
+        if (_voteInProgress == 1) {
+            if (TryOverrideWithCard(__instance, cardHolder)) return false;
+            TiLog.Debug("[SlayTheStreamer2][card-vote] repeat click during open vote; suppressed");
+            return false;
+        }
+
         // Multiplayer bail
         int? playerCount = TryGetPlayerCount();
         if (playerCount is int n && n > 1) {

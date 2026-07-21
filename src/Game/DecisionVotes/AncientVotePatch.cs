@@ -87,6 +87,17 @@ internal static class AncientVotePatch {
             return _voteInProgress != 1;
         }
 
+        // Vote in progress: nothing may fall through to vanilla — the options
+        // are left clickable when an override is available, so this must run
+        // BEFORE the multiplayer/chat bail-to-vanilla gates (a mid-vote click
+        // during a chat disconnect would otherwise reach vanilla and advance
+        // the event under a pending vote).
+        if (_voteInProgress == 1) {
+            if (TryOverride(option, index)) return false;
+            TiLog.Debug("[SlayTheStreamer2][ancient-vote] click during open vote; suppressed");
+            return false;
+        }
+
         if (TryGetEventOwnerPlayerCount(__instance) is int playerCount && playerCount > 1) {
             if (Interlocked.CompareExchange(ref _multiplayerWarnFired, 1, 0) == 0) {
                 TiLog.Warn("[SlayTheStreamer2][ancient-vote] multiplayer detected (Players.Count > 1); bailing to vanilla (further bail-outs at Debug)");

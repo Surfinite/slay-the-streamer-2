@@ -116,7 +116,7 @@ Votes time out after 30 seconds by default (configurable, 10–120s).
 
 ---
 
-## ✨ What chat votes on (v0.1)
+## ✨ What chat votes on
 
 | Decision | Description |
 |---|---|
@@ -132,6 +132,11 @@ The mod also plays nicely with two vanilla Custom Mode modifiers:
 
 `SealedDeck` and `Draft` are mutually exclusive in Custom Mode. Note: vanilla Custom Mode is locked behind 3 standard-mode wins (or unlock everything on the modded save via `unlock all` in the dev console, as in the caveats below).
 
+### 🎛 Streamer-side extras (not chat votes)
+
+- **Vote overrides** *(new in v0.2)* — a per-act budget (default 1) to overrule chat: while a card-reward or Ancient vote is counting down, just click the option you want — or Skip — and the vote ends instantly with your pick. Chat is told, e.g. `Surfinite overrode the vote and took Ricochet. 0 overrides remaining this act`. Skipping mid-vote costs an override, not a card skip.
+- **Relic choices** *(new in v0.2)* — treasure chests and elite kills can offer 2–4 relics instead of 1; you pick one and the rest go back into the relic pool.
+
 ---
 
 ## 🤝 Mod compatibility
@@ -146,11 +151,16 @@ Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list.
 
 - **Vote duration** — 10 to 120 seconds (default 30s).
 - **Vote on Act 1 variant** — turn the pre-run Underdocks/Overgrowth vote on or off.
+- **Allow same boss twice (A10)** — Ascension 10's final act has two bosses and chat votes on both; when on, the second vote is allowed to pick the same boss back-to-back.
 - **Allow chat to skip** — when on, chat can vote `#0` to skip a card reward.
+- **Streamer card skips / act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
+- **Streamer vote overrides / act** — how many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). While a card-reward or Ancient vote is counting down, click the option you want (or Skip) and the vote ends instantly with your pick. Skipping mid-vote costs an override, not a card skip. Clicks in the first ~1.5 seconds of a vote are ignored, so the double-click that opened the vote can't spend an override by accident.
 - **Show vote tag** — show the `[NN]` vote-ID tag in chat receipts and the on-screen tally. Helpful if your YT chat has stream delay.
-- **Card skips per act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
+- **Vote tally side** — which side of the screen the on-screen tally overlay sits on.
 - **Relic choices** — how many relics you get to choose from per treasure chest and elite kill (1–4, default 1). You pick one; the rest go back into the relic pool. 1 = vanilla behavior. Not a chat vote — this is streamer-only.
 - **Settings file** — read-only path with an Open-folder button to reveal `%APPDATA%\SlayTheSpire2\` in Explorer.
+
+During a card-reward vote, the skip counter under the cards swaps to show your remaining vote overrides (in gold) so you always know whether an override click is available.
 
 The settings panel is disabled mid-run — change settings between runs. Changes save automatically.
 
@@ -158,8 +168,9 @@ The settings panel is disabled mid-run — change settings between runs. Changes
 
 ---
 
-## ⚠️ Known caveats for v0.1
+## ⚠️ Known caveats
 
+- **The game itself can intermittently crash silently right after a modded launch** (opens, then closes within seconds, nothing in the log). This is a Slay the Spire 2 bug in its crash-reporter teardown, not specific to this mod — reported to MegaCrit ([details](https://github.com/megacrit/sts2-mod-uploader/issues/14)). If it hits you repeatedly, add `--force-sentry` to the game's Steam Launch Options.
 - **Modded save is its own profile** — your unmodded progress is untouched, and modded runs don't count toward unlocks. The boss vote samples the act-variant's full boss pool, so chat may pick bosses that aren't unlocked on your unmodded save. If you want to also unlock things on the modded save, open the dev console (`~`) and run `unlock all`.
 - **Twitch chat receipts can get rate-limited** under heavy back-to-back voting (Twitch caps regular accounts at 20 messages per 30 seconds). The vote still works, but some "Vote opened…" / "Chat picked X" messages may not appear in chat.
 
@@ -204,7 +215,7 @@ slay-the-streamer-2/
       DecisionVotes/            Harmony patches per voted decision
       DevCommands/              dev-console commands (rerollvote, resetskips, votenow)
       Ui/                       per-vote popups (BossVotePopup, ActVariantVotePopup,
-                                CardRewardVotePopup, AncientVotePopup, CardSkipCounterLabel,
+                                CardRewardVotePopup, AncientVotePopup, StreamerBudgetCounterLabel,
                                 in-game Settings panel)
     ModEntry.cs               [ModInitializer] entry point
     slay_the_streamer_2.csproj

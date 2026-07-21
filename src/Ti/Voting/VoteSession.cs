@@ -34,6 +34,7 @@ public sealed class VoteSession : IDisposable {
     private VoteSessionState _state = VoteSessionState.Open;
     private int? _tieAmong;
     private bool _noVotesReceived;
+    private bool _forcedWinner;
     private TimeSpan _disconnectGapAccum;
     private DateTimeOffset? _disconnectStartedAt;
 
@@ -51,6 +52,7 @@ public sealed class VoteSession : IDisposable {
     public VoteSessionState State => _state;
     public int? WinnerIndex { get; private set; }
     public TimeSpan TimeRemaining => MaxZero(_openedAt + Duration - _clock.UtcNow);
+    public TimeSpan Elapsed => _clock.UtcNow - _openedAt;
     public IReadOnlyDictionary<int, int> Tallies => new Dictionary<int, int>(_tallies);
     public IReadOnlyList<string> ConfiguredPlatforms => _configuredPlatforms;
     public IReadOnlyDictionary<(string Platform, int OptionIndex), int>? TalliesByPlatform =>
@@ -242,6 +244,40 @@ public sealed class VoteSession : IDisposable {
         return winner;
     }
 
+    /// <summary>
+    /// Close the vote immediately with a forced winner (streamer override).
+    /// Returns false without side effects unless the session is Open — callers
+    /// must consume override budget only on true. Fires the normal Closed
+    /// event (popups/tally tear down as on natural close) but sends NO close
+    /// receipt: override messaging is the caller's job, because the receipt
+    /// needs game-side context (streamer name, remaining budget) that Ti must
+    /// not know.
+    /// </summary>
+    public bool TryCloseNow(int forcedWinnerIndex) {
+        if (forcedWinnerIndex < 0 || forcedWinnerIndex >= Options.Count)
+            throw new ArgumentOutOfRangeException(nameof(forcedWinnerIndex),
+                $"forced winner {forcedWinnerIndex} outside option range 0..{Options.Count - 1}");
+        if (_state != VoteSessionState.Open) return false;
+
+        if (_disconnectStartedAt is { } start) {
+            _disconnectGapAccum += _clock.UtcNow - start;
+            _disconnectStartedAt = null;
+        }
+        _state = VoteSessionState.Closing;
+        WinnerIndex = forcedWinnerIndex;
+        _forcedWinner = true;
+        _chat.MessageReceived -= OnChatMessage;
+        _chat.ConnectionStateChanged -= OnChatConnectionStateChanged;
+        _closeTimer.Dispose();
+        _periodicTimer?.Dispose();
+        _state = VoteSessionState.Closed;
+        _winnerTcs.TrySetResult(forcedWinnerIndex);
+        if (!_anyoneAwaited)
+            TiLog.Warn($"VoteSession {Id} force-closed with winner {forcedWinnerIndex} but AwaitWinnerAsync was never called; caller likely forgot to consume the result.");
+        Closed?.Invoke(this, this);
+        return true;
+    }
+
     public void Cancel() {
         if (_state != VoteSessionState.Open) return;
         _chat.MessageReceived -= OnChatMessage;
@@ -292,7 +328,8 @@ public sealed class VoteSession : IDisposable {
             RandomTieAmong: _tieAmong, NoVotesReceived: _noVotesReceived,
             DisconnectGap: liveGap,
             VoteId: VoteId,
-            ShowTag: _showTag);
+            ShowTag: _showTag,
+            ForcedWinner: _forcedWinner);
     }
 
     public void Dispose() {

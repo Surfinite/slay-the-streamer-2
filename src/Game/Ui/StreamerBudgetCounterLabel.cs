@@ -6,7 +6,8 @@ using SlayTheStreamer2.Ti.Internal;
 namespace SlayTheStreamer2.Game.Ui;
 
 /// <summary>
-/// Godot RichTextLabel showing the streamer's per-act card-skip budget. Mounted
+/// Godot RichTextLabel showing the streamer's per-act card-skip budget outside
+/// votes, and the vote-override budget while a chat vote is in progress. Mounted
 /// as a child of the vanilla <c>NCardRewardSelectionScreen</c> so it appears
 /// only while the streamer is viewing the choose-a-card screen — Godot's
 /// natural scene-tree teardown frees the label when that screen closes.
@@ -17,15 +18,24 @@ namespace SlayTheStreamer2.Game.Ui;
 /// shifts when the window is resized — a fixed viewport-fraction anchor would
 /// drift visually).</para>
 ///
-/// <para>While a chat vote is in progress, <see cref="_Process"/> hides the
-/// label so the vote popup has uncontested visual space.</para>
+/// <para>While a chat vote is in progress, <see cref="_Process"/> swaps the
+/// display to the vote-override budget (gold accent) instead of hiding the
+/// label; outside votes it shows the card-skip budget (blue accent).</para>
 ///
 /// <para>Hidden when <c>cardSkipsPerAct == -1</c> (unlimited) or
-/// <c>cardSkipsPerAct == 0</c> (strict).</para>
+/// <c>cardSkipsPerAct == 0</c> (strict) — and, during votes, when the
+/// override budget is off/unlimited or exhausted.</para>
 /// </summary>
-public partial class CardSkipCounterLabel : RichTextLabel {
-    // Vanilla default body font.
+public partial class StreamerBudgetCounterLabel : RichTextLabel {
+    // Vanilla default body font + its bold sibling (both ship in vanilla themes/).
     private const string FontPath = "res://themes/kreon_regular_shared.tres";
+    private const string BoldFontPath = "res://themes/kreon_bold_shared.tres";
+
+    // Vanilla compendium rarity colours (card_library.tscn Uncommon/Rare label
+    // modulates == StsColors.blue / StsColors.gold). Hex literals rather than
+    // StsColors bindings: identical values, zero new cross-branch game bindings.
+    private const string SkipAccentHex = "#87CEEB";       // Uncommon cyan-blue
+    private const string OverrideAccentHex = "#EFC851";   // Rare yellow-gold
 
     // ---- Easy-to-tweak positioning + sizing knobs ----
     // Gap (px) between the Skip button's bottom edge and the label's vertical
@@ -45,8 +55,12 @@ public partial class CardSkipCounterLabel : RichTextLabel {
     private const float FallbackVerticalAnchor = 0.83f;
 
     private Control? _skipButton;
+    private ActBudgetSnapshot _skipSnapshot;
+    private bool _showingOverride;
+    private int _lastOverrideRemaining = int.MinValue;
 
     internal void UpdateText(ActBudgetSnapshot snap) {
+        _skipSnapshot = snap;
         if (snap.LimitThisAct <= 0) {
             Visible = false;
             return;
@@ -56,17 +70,39 @@ public partial class CardSkipCounterLabel : RichTextLabel {
         string streamerName = ModSettings.GetStreamerDisplayName();
         // [center] BBCode horizontally centers the text inside the layout box;
         // _Process positions the box itself relative to the Skip button.
-        Text = $"[center]{streamerName} has {snap.RemainingThisAct} {noun} remaining this act[/center]";
+        Text = $"[center]{streamerName} has [b][color={SkipAccentHex}]{snap.RemainingThisAct} {noun}[/color][/b] remaining this act[/center]";
+    }
+
+    private void SetOverrideText(ActBudgetSnapshot snap) {
+        string noun = snap.RemainingThisAct == 1 ? "vote override" : "vote overrides";
+        string streamerName = ModSettings.GetStreamerDisplayName();
+        Text = $"[center]{streamerName} has [b][color={OverrideAccentHex}]{snap.RemainingThisAct} {noun}[/color][/b] remaining this act[/center]";
     }
 
     public override void _Process(double delta) {
-        // Once a card vote opens, the vote popup owns the visual space — hide the
-        // counter so it doesn't compete.
         if (CardRewardVotePatch.VoteInProgress) {
-            if (Visible) Visible = false;
-            return;
+            // During a vote this label shows the OVERRIDE budget in the same
+            // screen position the skip text occupies. Hidden when the feature
+            // is off (limit 0), unlimited (-1, mirroring the skip label's
+            // unlimited convention), or exhausted (0 remaining) — the last
+            // being exactly the old hide-during-vote behavior.
+            var snap = VoteOverrideBudget.Snapshot();
+            bool show = snap.LimitThisAct > 0 && snap.RemainingThisAct > 0;
+            if (Visible != show) Visible = show;
+            if (!show) { _showingOverride = false; return; }
+            if (!_showingOverride || _lastOverrideRemaining != snap.RemainingThisAct) {
+                SetOverrideText(snap);
+                _showingOverride = true;
+                _lastOverrideRemaining = snap.RemainingThisAct;
+            }
+        } else {
+            if (_showingOverride) {
+                _showingOverride = false;
+                _lastOverrideRemaining = int.MinValue;
+                UpdateText(_skipSnapshot);   // restore skip text + its visibility rules
+            }
+            if (!Visible) Visible = true;
         }
-        if (!Visible) Visible = true;
 
         // Poll the Skip button each frame so the label tracks any aspect-ratio
         // change or button-position tween. The button is center-anchored, so its
@@ -87,8 +123,8 @@ public partial class CardSkipCounterLabel : RichTextLabel {
     /// <see cref="_Process"/> for positioning; pass null to use the
     /// fixed-viewport-Y fallback.
     /// </summary>
-    public static CardSkipCounterLabel AttachTo(Node parent, Control? skipButton) {
-        var label = new CardSkipCounterLabel { Name = "CardSkipCounterLabel" };
+    public static StreamerBudgetCounterLabel AttachTo(Node parent, Control? skipButton) {
+        var label = new StreamerBudgetCounterLabel { Name = "StreamerBudgetCounterLabel" };
         label.BbcodeEnabled = true;
         label.FitContent = true;
         label._skipButton = skipButton;
@@ -131,11 +167,14 @@ public partial class CardSkipCounterLabel : RichTextLabel {
 
     private static void ApplyTheme(RichTextLabel label) {
         var font = ResourceLoader.Load<Font>(FontPath);
+        var bold = ResourceLoader.Load<Font>(BoldFontPath) ?? font;
         if (font is not null) {
             label.AddThemeFontOverride("normal_font", font);
-            label.AddThemeFontOverride("bold_font", font);
             label.AddThemeFontOverride("italics_font", font);
-            label.AddThemeFontOverride("bold_italics_font", font);
+        }
+        if (bold is not null) {
+            label.AddThemeFontOverride("bold_font", bold);
+            label.AddThemeFontOverride("bold_italics_font", bold);
         }
         label.AddThemeFontSizeOverride("normal_font_size", FontSize);
         label.AddThemeFontSizeOverride("bold_font_size", FontSize);

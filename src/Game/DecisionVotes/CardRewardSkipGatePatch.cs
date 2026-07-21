@@ -11,7 +11,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;    // NCardRewardSelection
 using MegaCrit.Sts2.Core.Rewards;                        // CardReward, Reward
 using MegaCrit.Sts2.Core.Runs;                // RunManager, RunState
 using SlayTheStreamer2.Game.Bootstrap;        // SettingsResult, ChatSettings
-using SlayTheStreamer2.Game.Ui;               // CardSkipCounterLabel
+using SlayTheStreamer2.Game.Ui;               // StreamerBudgetCounterLabel
 using SlayTheStreamer2.Ti.Chat;               // ChatConnectionState, OutgoingMessagePriority
 using SlayTheStreamer2.Ti.Internal;           // TiLog
 using SlayTheStreamer2.Ti.Voting;             // Voter
@@ -36,7 +36,7 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// </summary>
 internal static class CardRewardSkipGatePatch {
     private static readonly ActBudgetTracker _tracker = new();
-    private static CardSkipCounterLabel? _activeLabel;
+    private static StreamerBudgetCounterLabel? _activeLabel;
 
     /// <summary>
     /// Reference to the currently-open NRewardsScreen. Set by the _Ready postfix when
@@ -142,7 +142,7 @@ internal static class CardRewardSkipGatePatch {
             return false;
         }
         // _proceedButton is a soft requirement: if missing, label falls back to top-right
-        // (handled in CardSkipCounterLabel.AttachTo). Don't fail Prepare just for the button.
+        // (handled in StreamerBudgetCounterLabel.AttachTo). Don't fail Prepare just for the button.
         if (_proceedButtonField.Value is null) {
             TiLog.Warn("[SlayTheStreamer2][card-skip-gate] _proceedButton field not found; label will fallback to top-right of parent");
         }
@@ -246,7 +246,7 @@ internal static class CardRewardSkipGatePatch {
     }
 
     /// <summary>
-    /// Ensure a CardSkipCounterLabel is attached as a child of the choose-a-card
+    /// Ensure a StreamerBudgetCounterLabel is attached as a child of the choose-a-card
     /// screen and shows the current committed snapshot. Hidden when
     /// <paramref name="actLimit"/> &lt; 0 (unlimited).
     /// Parenting under the screen means Godot's natural scene-tree teardown frees
@@ -262,7 +262,7 @@ internal static class CardRewardSkipGatePatch {
 
         if (_activeLabel is null || !GodotObject.IsInstanceValid(_activeLabel)) {
             try {
-                _activeLabel = CardSkipCounterLabel.AttachTo(parent, skipButton);
+                _activeLabel = StreamerBudgetCounterLabel.AttachTo(parent, skipButton);
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] label attach failed", ex);
                 return;
@@ -421,7 +421,7 @@ internal static class CardRewardSkipGatePatch {
                 // feedback. v0.2 polish: live DisallowSkipping/AllowSkipping toggling
                 // as state changes.
                 //
-                // CardSkipCounterLabel is no longer attached here — it now mounts
+                // StreamerBudgetCounterLabel is no longer attached here — it now mounts
                 // under the choose-a-card sub-screen (NCardRewardSelectionScreen)
                 // so it appears only when the streamer is actually choosing a card,
                 // not the whole time the rewards overview is up. See the postfix
@@ -476,7 +476,7 @@ internal static class CardRewardSkipGatePatch {
     /// auto-frees the label when the streamer dismisses the screen — no
     /// explicit cleanup patch needed. _Ready fires once per screen instance
     /// (each ShowScreen instantiates fresh), so this is a one-and-only attach.
-    /// Hidden during votes via CardSkipCounterLabel._Process polling
+    /// Hidden during votes via StreamerBudgetCounterLabel._Process polling
     /// CardRewardVotePatch.VoteInProgress.
     /// </summary>
     [HarmonyPatch(typeof(NCardRewardSelectionScreen), "_Ready")]

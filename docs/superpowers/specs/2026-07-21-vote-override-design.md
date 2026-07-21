@@ -55,8 +55,10 @@ synthetic-super-vote injection).
   reads `{Streamer} has N card skips remaining this act` with the
   `N card skips` fragment in `StsColors.blue`; while a vote runs it swaps to
   `{Streamer} has N vote overrides remaining this act` with the
-  `N vote overrides` fragment in `StsColors.gold`. Hidden during a vote when 0
-  overrides remain (i.e., exactly today's hide-during-vote behavior). Ancient
+  `N vote overrides` fragment in `StsColors.gold`. An exhausted budget still
+  shows `0 vote overrides remaining` (post-validation amendment 2026-07-21,
+  mirroring the skip counter's display of 0); hidden only when the feature is
+  off (`voteOverridesPerAct == 0`) or unlimited (`-1`). Ancient
   votes get **no counter label** this slice (no natural anchor position in the
   event room; the receipt carries the remaining count) — follow-up if streamers
   ask.
@@ -200,9 +202,10 @@ votes; that branch becomes the swap point:
 - **No vote running**: skip text (today's), `[b]`+`StsColors.blue` on the
   `N card skips` fragment. Hidden states unchanged (limit ≤ 0 → hidden).
 - **Vote running**: override text, `[b]`+`StsColors.gold` on the
-  `N vote overrides` fragment, when overrides remain; hidden when 0 remain,
-  when the feature is disabled (`voteOverridesPerAct == 0`), or when unlimited
-  (`-1`, mirroring the skip label's unlimited convention).
+  `N vote overrides` fragment, including `0` when exhausted (post-validation
+  amendment 2026-07-21 — mirrors the skip counter showing 0); hidden only when
+  the feature is disabled (`voteOverridesPerAct == 0`) or unlimited (`-1`,
+  mirroring the skip label's unlimited convention).
 
 Same node, same Skip-button-anchored positioning machinery, same vote-popup
 visual space (the popup owns the rest of the screen; this label occupies the

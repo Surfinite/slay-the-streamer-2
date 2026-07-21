@@ -83,11 +83,12 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
         if (CardRewardVotePatch.VoteInProgress) {
             // During a vote this label shows the OVERRIDE budget in the same
             // screen position the skip text occupies. Hidden when the feature
-            // is off (limit 0), unlimited (-1, mirroring the skip label's
-            // unlimited convention), or exhausted (0 remaining) — the last
-            // being exactly the old hide-during-vote behavior.
+            // is off (limit 0) or unlimited (-1, mirroring the skip label's
+            // unlimited convention). An exhausted budget still renders as
+            // "0 vote overrides remaining" — Surfinite's post-validation call
+            // (2026-07-21), mirroring how the skip counter shows 0.
             var snap = VoteOverrideBudget.Snapshot();
-            bool show = snap.LimitThisAct > 0 && snap.RemainingThisAct > 0;
+            bool show = snap.LimitThisAct > 0;
             if (Visible != show) Visible = show;
             if (!show) { _showingOverride = false; return; }
             if (!_showingOverride || _lastOverrideRemaining != snap.RemainingThisAct) {

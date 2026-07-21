@@ -750,6 +750,33 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- voteOverridesPerAct (vote-override: streamer mid-vote override budget, default 1) ---
+
+    [Theory]
+    [InlineData("\"voteOverridesPerAct\": 3,", 3, false)]
+    [InlineData("\"voteOverridesPerAct\": 1,", 1, false)]
+    [InlineData("\"voteOverridesPerAct\": 0,", 0, false)]     // 0 = disabled, valid
+    [InlineData("\"voteOverridesPerAct\": -1,", -1, false)]   // -1 = unlimited, valid
+    [InlineData("\"voteOverridesPerAct\": -5,", -1, true)]    // below -1 -> clamp + warning
+    [InlineData("\"voteOverridesPerAct\": \"two\",", 1, true)] // non-int -> default + warning
+    [InlineData("", 1, false)]                                 // missing -> default, no warning
+    public void VoteOverridesPerAct_parses_clamps_and_defaults(string fragment, int expected, bool expectWarning) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(expected, success.Settings.VoteOverridesPerAct);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("voteOverridesPerAct")));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

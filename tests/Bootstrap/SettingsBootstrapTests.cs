@@ -52,6 +52,20 @@ public class SettingsBootstrapTests {
         Assert.Equal(1, (int)json["relicChoices"]!);
     }
 
+    [Fact]
+    public void Template_contains_voteOverridesPerAct_default_1() {
+        var json = JsonNode.Parse(SettingsBootstrap.BuildTemplateJson())!.AsObject();
+        Assert.Equal(1, (int)json["voteOverridesPerAct"]!);
+    }
+
+    [Fact]
+    public void AddMissingKeys_adds_voteOverridesPerAct_to_old_files() {
+        var json = JsonNode.Parse("{\"schemaVersion\":1}")!.AsObject();
+        var added = SettingsBootstrap.AddMissingKeys(json);
+        Assert.Contains("voteOverridesPerAct", added);
+        Assert.Equal(1, (int)json["voteOverridesPerAct"]!);
+    }
+
     // ---------------------------------------------------------------------
     // EnsureFile — create path
     // ---------------------------------------------------------------------

@@ -93,6 +93,22 @@ public class SettingsWriterTests {
     }
 
     [Fact]
+    public void Write_persists_voteOverridesPerAct() {
+        var path = TempPath();
+        try {
+            var settings = MakeSettings() with { VoteOverridesPerAct = 2 };
+            SettingsWriter.Write(path, settings);
+
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert.Equal(2, (int)json["voteOverridesPerAct"]!);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bak")) File.Delete(path + ".bak");
+            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
+        }
+    }
+
+    [Fact]
     public void Write_OverExistingFile_CreatesBakCopyOfPriorContents() {
         var path = TempPath();
         var bak = path + ".bak";

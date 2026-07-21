@@ -34,6 +34,7 @@ public static class SettingsWriter {
         json["voteTallyOnLeft"] = settings.VoteTallyOnLeft;
         json["allowSameBossTwice"] = settings.AllowSameBossTwice;
         json["relicChoices"] = settings.RelicChoices;
+        json["voteOverridesPerAct"] = settings.VoteOverridesPerAct;
 
         WriteAtomic(path, json);
     }

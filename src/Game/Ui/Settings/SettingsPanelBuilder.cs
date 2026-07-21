@@ -183,6 +183,9 @@ internal static class SettingsPanelBuilder {
         AddCardSkipsDropdown(root, current, debouncer);
         AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
         AddDivider(root);
+        AddVoteOverridesDropdown(root, current, debouncer);
+        AddHelpText(root, "Times per act the streamer can override a live vote by clicking\nan option mid-countdown. Clicking Skip mid-vote costs an override,\nnot a card skip. Resets each act.");
+        AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
         AddHelpText(root, "Displays and increments a tag for each vote, e.g.  [b][14][/b]\nChat can vote with [b]#0!14[/b] so delayed votes don't land in the wrong tally.\nCould be useful to combat lag on YT, (might just be confusing).");
@@ -320,6 +323,54 @@ internal static class SettingsPanelBuilder {
         dropdown.ItemSelected += idx => {
             var value = dropdown.GetItemMetadata((int)idx).AsInt32();
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = value });
+        };
+
+        inner.AddChild(dropdown);
+        parent.AddChild(row);
+    }
+
+    private static void AddVoteOverridesDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
+
+        inner.AddChild(MakeRowLabel("Streamer vote overrides / act"));
+
+        var dropdown = new OptionButton {
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(115, 0),
+        };
+        if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
+        dropdown.AddThemeFontSizeOverride("font_size", 22);
+        dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
+
+        (string Label, int Value)[] entries = [
+            ("0  (off)", 0),
+            ("1", 1),
+            ("2", 2),
+            ("3", 3),
+            ("Unlimited", -1)
+        ];
+        int selectedIdx = -1;
+        for (int i = 0; i < entries.Length; i++) {
+            dropdown.AddItem(entries[i].Label);
+            dropdown.SetItemMetadata(i, entries[i].Value);
+            if (entries[i].Value == current.VoteOverridesPerAct) selectedIdx = i;
+        }
+        if (selectedIdx == -1) {
+            dropdown.AddItem($"Custom ({current.VoteOverridesPerAct})");
+            int customIdx = dropdown.ItemCount - 1;
+            dropdown.SetItemMetadata(customIdx, current.VoteOverridesPerAct);
+            selectedIdx = customIdx;
+        }
+        dropdown.Selected = selectedIdx;
+
+        var popup = dropdown.GetPopup();
+        if (_kreonRegular != null) popup.AddThemeFontOverride("font", _kreonRegular);
+        popup.AddThemeFontSizeOverride("font_size", 22);
+
+        dropdown.ItemSelected += idx => {
+            var value = dropdown.GetItemMetadata((int)idx).AsInt32();
+            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { VoteOverridesPerAct = value });
         };
 
         inner.AddChild(dropdown);

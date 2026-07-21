@@ -11,5 +11,6 @@
   "showVoteTag": false,
   "voteTallyOnLeft": false,
   "allowSameBossTwice": false,
-  "relicChoices": 1
+  "relicChoices": 1,
+  "voteOverridesPerAct": 1
 }

@@ -46,7 +46,7 @@ public partial class CardSkipCounterLabel : RichTextLabel {
 
     private Control? _skipButton;
 
-    internal void UpdateText(SkipBudgetSnapshot snap) {
+    internal void UpdateText(ActBudgetSnapshot snap) {
         if (snap.LimitThisAct <= 0) {
             Visible = false;
             return;

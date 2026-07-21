@@ -35,7 +35,7 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// chat's trending vote and then bail.
 /// </summary>
 internal static class CardRewardSkipGatePatch {
-    private static readonly SkipBudgetTracker _tracker = new();
+    private static readonly ActBudgetTracker _tracker = new();
     private static CardSkipCounterLabel? _activeLabel;
 
     /// <summary>
@@ -86,7 +86,7 @@ internal static class CardRewardSkipGatePatch {
     /// observation doesn't fire a spurious "reset" chat receipt.
     /// </summary>
     internal static int ResetBudgetForDevConsole() {
-        int previousUsed = _tracker.ActSkipsUsed;
+        int previousUsed = _tracker.ActUsed;
         _tracker.ResetCounterOnly();
         if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
             _activeLabel.UpdateText(_tracker.Snapshot(BootstrapModSettings.Current?.CardSkipsPerAct ?? 1));
@@ -281,7 +281,7 @@ internal static class CardRewardSkipGatePatch {
     private static void SendSkipReceipt(int actLimit) {
         var coordinator = Voter.Default;
         if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
-        string text = FormatSkipReceipt(_tracker.ActSkipsUsed, actLimit);
+        string text = FormatSkipReceipt(_tracker.ActUsed, actLimit);
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.Normal);
     }
 
@@ -338,13 +338,13 @@ internal static class CardRewardSkipGatePatch {
             int actLimit = BootstrapModSettings.Current?.CardSkipsPerAct ?? 1;
             if (actLimit < 0) return true;   // unlimited — no gating
 
-            if (_tracker.ActSkipsUsed >= actLimit) {
-                TiLog.Info($"[SlayTheStreamer2][card-skip-gate] streamer-Skip click blocked: budget exhausted ({_tracker.ActSkipsUsed}/{actLimit})");
+            if (_tracker.ActUsed >= actLimit) {
+                TiLog.Info($"[SlayTheStreamer2][card-skip-gate] streamer-Skip click blocked: budget exhausted ({_tracker.ActUsed}/{actLimit})");
                 return false;
             }
 
-            _tracker.RecordSkip();
-            TiLog.Info($"[SlayTheStreamer2][card-skip-gate] streamer-Skip click consumed: {_tracker.ActSkipsUsed}/{actLimit}");
+            _tracker.RecordUse();
+            TiLog.Info($"[SlayTheStreamer2][card-skip-gate] streamer-Skip click consumed: {_tracker.ActUsed}/{actLimit}");
 
             if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
                 _activeLabel.UpdateText(_tracker.Snapshot(actLimit));
@@ -456,7 +456,7 @@ internal static class CardRewardSkipGatePatch {
                 if (pending.Total == 0) return;
 
                 for (int i = 0; i < pending.Total; i++) {
-                    _tracker.RecordSkip();
+                    _tracker.RecordUse();
                     SendSkipReceipt(BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
                 }
                 TiLog.Info($"[SlayTheStreamer2][card-skip-gate] AfterOverlayClosed: charged {pending.Total} card-skip(s) on Proceed commit");
@@ -603,8 +603,8 @@ internal static class CardRewardSkipGatePatch {
                 }
 
                 int limit = BootstrapModSettings.Current?.CardSkipsPerAct ?? 1;
-                if (limit >= 0 && _tracker.ActSkipsUsed + pending.Total > limit) {
-                    int remaining = Math.Max(0, limit - _tracker.ActSkipsUsed);
+                if (limit >= 0 && _tracker.ActUsed + pending.Total > limit) {
+                    int remaining = Math.Max(0, limit - _tracker.ActUsed);
                     TiLog.Info($"[SlayTheStreamer2][card-skip-gate] parent Skip blocked: would cost {pending.Total} skip(s); only {remaining}/{limit} budget remaining");
                     return false;
                 }

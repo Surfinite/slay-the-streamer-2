@@ -3,16 +3,18 @@ using System;
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
 /// <summary>
-/// Pure budget arithmetic. Owns the per-act skip counter and run/act change
+/// Pure budget arithmetic. Owns the per-act use counter and run/act change
 /// detection. Main-thread-only — plain ++/= state, no Interlocked.
 /// Run-id is typed as string? to decouple from the actual sts2.dll RunState.Id type.
+/// Generic per-act budget tracker — serves both the card-skip budget and the
+/// vote-override budget.
 /// </summary>
-internal sealed class SkipBudgetTracker {
-    private int _actSkipsUsed;
+internal sealed class ActBudgetTracker {
+    private int _actUsed;
     private int? _lastSeenActIndex;
     private string? _lastSeenRunId;
 
-    public int ActSkipsUsed => _actSkipsUsed;
+    public int ActUsed => _actUsed;
 
     /// <summary>
     /// Returns the reason the budget was reset, if any. Callers (e.g.,
@@ -21,33 +23,33 @@ internal sealed class SkipBudgetTracker {
     /// </summary>
     public BudgetResetReason ObserveRunAndAct(string? runId, int? actIndex) {
         if (runId != null && runId != _lastSeenRunId) {
-            _actSkipsUsed = 0;
+            _actUsed = 0;
             _lastSeenRunId = runId;
             _lastSeenActIndex = actIndex;
             return BudgetResetReason.RunChanged;
         }
         if (actIndex.HasValue && actIndex != _lastSeenActIndex) {
-            _actSkipsUsed = 0;
+            _actUsed = 0;
             _lastSeenActIndex = actIndex;
             return BudgetResetReason.ActChanged;
         }
         return BudgetResetReason.None;
     }
 
-    public bool IsSkipAllowed(int actLimit) {
+    public bool IsUseAllowed(int actLimit) {
         if (actLimit < 0) return true;
-        return _actSkipsUsed < actLimit;
+        return _actUsed < actLimit;
     }
 
-    public void RecordSkip() => _actSkipsUsed++;
+    public void RecordUse() => _actUsed++;
 
-    public SkipBudgetSnapshot Snapshot(int actLimit) => new(
-        UsedThisAct: _actSkipsUsed,
+    public ActBudgetSnapshot Snapshot(int actLimit) => new(
+        UsedThisAct: _actUsed,
         LimitThisAct: actLimit,
-        RemainingThisAct: actLimit < 0 ? int.MaxValue : Math.Max(0, actLimit - _actSkipsUsed));
+        RemainingThisAct: actLimit < 0 ? int.MaxValue : Math.Max(0, actLimit - _actUsed));
 
     internal void ResetForTests() {
-        _actSkipsUsed = 0;
+        _actUsed = 0;
         _lastSeenActIndex = null;
         _lastSeenRunId = null;
     }
@@ -58,11 +60,11 @@ internal sealed class SkipBudgetTracker {
     /// a spurious RunChanged receipt (since we still remember the current run/act).
     /// </summary>
     internal void ResetCounterOnly() {
-        _actSkipsUsed = 0;
+        _actUsed = 0;
     }
 }
 
-internal readonly record struct SkipBudgetSnapshot(int UsedThisAct, int LimitThisAct, int RemainingThisAct);
+internal readonly record struct ActBudgetSnapshot(int UsedThisAct, int LimitThisAct, int RemainingThisAct);
 
 internal enum BudgetResetReason {
     None,

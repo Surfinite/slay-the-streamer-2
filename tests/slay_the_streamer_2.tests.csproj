@@ -24,8 +24,9 @@
     <!--
       Game/DecisionVotes contains Harmony patches that reference
       MegaCrit.Sts2.* / Godot / HarmonyLib types not available to the test
-      project. Exclude them so the rest of the folder (e.g. SkipBudgetTracker
-      from plan-b-2-1 task 5) can still be source-referenced.
+      project. Exclude them so the rest of the folder (e.g. ActBudgetTracker
+      from plan-b-2-1 task 5, renamed from SkipBudgetTracker in vote-override/2)
+      can still be source-referenced.
     -->
     <Compile Remove="..\src\Game\DecisionVotes\AncientVotePatch.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\SpikePatch.cs" />

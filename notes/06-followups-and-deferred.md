@@ -4,6 +4,29 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Vote Override (resolved 2026-07-21)
+
+Streamer can override a running vote (`voteOverridesPerAct`, default 1; -1 unlimited, 0 off) by clicking an option ≥1.5s into the countdown; Skip mid-vote costs an override, not a card skip. Card rewards + ancients; act-variant and boss votes excluded. Spec `docs/superpowers/specs/2026-07-21-vote-override-design.md`, plan `docs/superpowers/plans/2026-07-21-vote-override.md`, commits `vote-override/0`–`/9`, tag `vote-override-complete`.
+
+### Acceptance gate — green (Surfinite, live game + chat, 2026-07-21)
+
+Full plan checklist validated: card override both `cardSkipAsVoteOption` states, skip-override both states, arming window eats the opening double-click, counter swap (blue skips / gold overrides, bold Kreon), 0-override + unlimited behaviors, ancient options clickable-when-override-available, act-transition resets, receipts. One post-validation amendment: exhausted budget now displays "0 vote overrides remaining" during votes (mirrors skip counter showing 0) instead of hiding — `vote-override/9`.
+
+### Architecture-defining outcomes
+
+- `VoteSession.TryCloseNow(forcedWinnerIndex)` is the generic early-resolve primitive: fires the normal `Closed` event (popups/awaiter/resume machinery unchanged), sends no close receipt — caller owns override messaging. `Try` shape = lost-race safety; budget consumed only after `true`.
+- Skip-override when Skip isn't a vote option routes via `_overrideSkipPending` + `Cancel()`; the `OperationCanceledException` handler distinguishes it from run-death cancellation.
+- Final whole-branch review caught a real integration bug: with ancient options left clickable mid-vote, clicks during a chat disconnect could fall through the bail-to-vanilla gates and advance the event under a pending vote. Fixed by hoisting vote-in-progress handling ahead of ALL bail gates in BOTH patches (`vote-override/8`). Rule of thumb for future vote patches: **the `_voteInProgress` branch must precede every `return true` in the prefix.**
+
+### Follow-ups / deferred (minor, from reviews)
+
+- Override counter never shows when `cardSkipsPerAct == -1` (label never attaches for unlimited skips) — streamer with unlimited skips + finite overrides gets no override counter. Document or attach-when-overrides-enabled.
+- `TryCloseNow` duplicates `CloseNow`'s teardown sequence — extract shared helper on next `VoteSession` touch; also add XML doc for its `ArgumentOutOfRangeException` + validation-before-liveness ordering.
+- `ActBudgetTracker.IsUseAllowed` has no production caller (test-only surface).
+- Cosmetics: main-thread-serialization comment on card-patch statics; duplicate `DebugOnlyGetState` fetch in card Prefix; silent font-load fallback in `StreamerBudgetCounterLabel`.
+
+---
+
 ## In-settings mod version looks wrong / may not bump correctly (RESOLVED 2026-06-11)
 
 Resolution: the in-game number was deploy-staleness (install.ps1 not re-run after the 0.1.1 bump). The assembly-version half is fixed in `stream-polish/1`: build.ps1 now reads the manifest's `version` and passes `-p:Version`, so the assembly informational version is `<manifest>+<git sha>` (verified `0.1.1+e041602...` in the built DLL) and `godot.log`'s `mod version:` line now tracks releases. Manifest remains the single source of truth.

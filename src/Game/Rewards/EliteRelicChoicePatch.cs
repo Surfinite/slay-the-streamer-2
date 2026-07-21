@@ -183,9 +183,17 @@ internal static class LinkedSetSignalRewirePatch {
                 // future double-Reload leaving duplicate connections anyway:
                 // strip whatever is currently attached (vanilla's broken
                 // hookup is the only subscriber inside a linked set) before
-                // attaching ours.
+                // attaching ours. SKIP the connection whose target is the
+                // button itself — that one is Godot.NET's internal bridge for
+                // the C# `RewardClaimed` event (listed by
+                // GetSignalConnectionList but refused by Disconnect with a
+                // logged "nonexistent connection" error; 4 per elite offer in
+                // operator validation). Vanilla's broken hookup is a delegate
+                // callable with no target object, so the filter can't miss it.
                 foreach (var conn in button.GetSignalConnectionList(NRewardButton.SignalName.RewardClaimed)) {
-                    button.Disconnect(NRewardButton.SignalName.RewardClaimed, conn["callable"].AsCallable());
+                    var callable = conn["callable"].AsCallable();
+                    if (callable.Target == button) continue;
+                    button.Disconnect(NRewardButton.SignalName.RewardClaimed, callable);
                 }
 
                 var setNode = __instance;

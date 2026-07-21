@@ -1,7 +1,10 @@
 using System.Collections.Generic;
 using System.Linq;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Factories;
+using MegaCrit.Sts2.Core.Nodes.Rewards;
+using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Rooms;
 using SlayTheStreamer2.Game.Bootstrap;
@@ -119,6 +122,102 @@ internal static class LinkedSetRefundPatch {
             RelicReturnHelper.ReturnToPools(__instance.Player, __instance.Relic, sharedBagOnly: false);
         } catch (System.Exception ex) {
             TiLog.Error("[bossy-relics] elite refund failed", ex);
+        }
+    }
+}
+
+/// <summary>
+/// Vanilla's NLinkedRewardSet ships two arity bugs that make its claim-one
+/// UI dormant/never-exercised code (this mod is the only thing that ever
+/// constructs a LinkedRewardSet today):
+///
+/// 1. NLinkedRewardSet.Reload (decompiled v0.109, line 123) wires each child
+///    NRewardButton's RewardClaimed signal to `Callable.From((Action)GetReward)`
+///    - a ZERO-arg callable. But NRewardButton.GetReward (NRewardButton.cs
+///    line 210) emits RewardClaimed WITH ONE argument (the button itself).
+///    The C# trampoline throws `ArgumentException: Invalid argument count
+///    for invoking callable. Expected 0 argument(s), received 1` the instant
+///    a chained relic is claimed, so NLinkedRewardSet.GetReward() - which
+///    would remove the whole group from the screen - never runs. Symptom:
+///    claiming one relic of a linked pair grants it but leaves BOTH visible
+///    and claimable.
+/// 2. Even if bug 1 didn't throw, NLinkedRewardSet.GetReward's own self-emit
+///    (line 141) does `EmitSignal(SignalName.RewardClaimed, Array.Empty
+///    <Variant>())` - ZERO args - against its own signal declared with ONE
+///    parameter (`RewardClaimedEventHandler(NLinkedRewardSet
+///    linkedRewardSet)`), which NRewardsScreen subscribes to with a 1-arg
+///    handler (NRewardsScreen.cs line 312). That mismatch would throw too,
+///    aborting before the trailing QueueFreeSafely().
+///
+/// Rather than patch around GetReward's second bug, this postfix rewires the
+/// button connections Reload just made: disconnect vanilla's broken 0-arg
+/// hookup and reconnect a correct-arity replacement that performs GetReward's
+/// intended effect directly (screen removal + skip-remaining + free), skipping
+/// the doubly-broken self-emit entirely (nothing outside this mod listens for
+/// NLinkedRewardSet.RewardClaimed, so not re-emitting it is harmless).
+///
+/// This rewire is unconditional for any NLinkedRewardSet, not gated to sets
+/// this mod created - only this mod constructs them today. If MegaCrit ever
+/// starts using LinkedRewardSet natively (and fixes the arity bugs), revisit.
+/// </summary>
+[HarmonyPatch(typeof(NLinkedRewardSet), "Reload")]
+internal static class LinkedSetSignalRewirePatch {
+    private static readonly AccessTools.FieldRef<NLinkedRewardSet, Control> RewardContainerRef =
+        AccessTools.FieldRefAccess<NLinkedRewardSet, Control>("_rewardContainer");
+    private static readonly AccessTools.FieldRef<NLinkedRewardSet, NRewardsScreen> RewardsScreenRef =
+        AccessTools.FieldRefAccess<NLinkedRewardSet, NRewardsScreen>("_rewardsScreen");
+
+    /// <summary>Sets already handed off to HandleLinkedClaim, guarding against a
+    /// double-fire if some future path re-enters before QueueFree takes effect.</summary>
+    private static readonly HashSet<ulong> HandledInstanceIds = new();
+
+    static void Postfix(NLinkedRewardSet __instance) {
+        try {
+            var container = RewardContainerRef(__instance);
+            if (container is null) return;
+
+            foreach (var child in container.GetChildren()) {
+                if (child is not NRewardButton button) continue;
+
+                // Reload runs once per Create/SetReward, but guard against a
+                // future double-Reload leaving duplicate connections anyway:
+                // strip whatever is currently attached (vanilla's broken
+                // hookup is the only subscriber inside a linked set) before
+                // attaching ours.
+                foreach (var conn in button.GetSignalConnectionList(NRewardButton.SignalName.RewardClaimed)) {
+                    button.Disconnect(NRewardButton.SignalName.RewardClaimed, conn["callable"].AsCallable());
+                }
+
+                var setNode = __instance;
+                button.Connect(
+                    NRewardButton.SignalName.RewardClaimed,
+                    Callable.From((System.Action<NRewardButton>)(_ => HandleLinkedClaim(setNode))),
+                    0u);
+            }
+        } catch (System.Exception ex) {
+            TiLog.Error("[bossy-relics] LinkedSetSignalRewirePatch failed; linked-set claim-removal may be broken", ex);
+        }
+    }
+
+    private static void HandleLinkedClaim(NLinkedRewardSet setNode) {
+        try {
+            if (!GodotObject.IsInstanceValid(setNode)) return;
+            if (!HandledInstanceIds.Add(setNode.GetInstanceId())) return;
+
+            var screen = RewardsScreenRef(setNode);
+            // The claimed reward already left LinkedRewardSet.Rewards - Reward.OnSelect
+            // calls ParentRewardSet.RemoveReward(this) (see LinkedSetClaimBookkeepingPatch)
+            // BEFORE NRewardButton.GetReward emits RewardClaimed, which is what fires
+            // this handler. So the remaining count IS the unclaimed count.
+            int remaining = setNode.LinkedRewardSet.Rewards.Count;
+            screen.RewardCollectedFrom(setNode);
+            setNode.LinkedRewardSet.OnSkipped();   // refunds every remaining member via LinkedSetRefundPatch
+            HandledInstanceIds.Remove(setNode.GetInstanceId());
+
+            if (GodotObject.IsInstanceValid(setNode)) setNode.QueueFree();
+            TiLog.Info($"[bossy-relics] linked claim handled: group removed, {remaining} unclaimed refunded");
+        } catch (System.Exception ex) {
+            TiLog.Error("[bossy-relics] HandleLinkedClaim failed; linked group may remain stuck on screen", ex);
         }
     }
 }

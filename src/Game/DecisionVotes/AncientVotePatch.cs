@@ -25,6 +25,7 @@ internal static class AncientVotePatch {
     private static int _voteInProgress;
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;
+    private static VoteSession? _activeSession;
 
     /// <summary>True while an ancient-event vote is in flight. Read by the global
     /// map-button guard (<c>TopBarMapButtonGuardPatch</c>) so the streamer can't
@@ -80,7 +81,11 @@ internal static class AncientVotePatch {
     static bool Prefix(NEventRoom __instance, EventOption option, int index) {
         if (_resumeInProgress == 1) return true;
         if (!IsAncientEvent(__instance)) return true;
-        if (option.IsLocked || option.IsProceed) return true;
+        if (option.IsLocked || option.IsProceed) {
+            // During an open vote such clicks must be suppressed, not passed to
+            // vanilla — options stay enabled when an override is available.
+            return _voteInProgress != 1;
+        }
 
         if (TryGetEventOwnerPlayerCount(__instance) is int playerCount && playerCount > 1) {
             if (Interlocked.CompareExchange(ref _multiplayerWarnFired, 1, 0) == 0) {
@@ -117,6 +122,7 @@ internal static class AncientVotePatch {
         }
 
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
+            if (TryOverride(option, index)) return false;
             TiLog.Debug("[SlayTheStreamer2][ancient-vote] repeat click during open vote; suppressed");
             return false;
         }
@@ -151,10 +157,31 @@ internal static class AncientVotePatch {
             return true;
         }
 
+        _activeSession = session;
+
+        // Vote-override budget: observe (reset receipt on act/run change), then
+        // decide whether the option buttons stay clickable. With an override
+        // available, the streamer must be able to click an option mid-vote —
+        // the prefix suppresses everything vanilla-bound anyway. The decision
+        // is stable for this vote: only one vote runs at a time, so the budget
+        // cannot be consumed elsewhere mid-vote.
+        bool overrideAvailable = false;
         try {
-            __instance.Layout?.DisableEventOptions();
-        } catch (Exception ex) {
-            TiLog.Warn($"[SlayTheStreamer2][ancient-vote] DisableEventOptions threw (continuing): {ex.Message}");
+            var rsForObserve = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
+            int? actIdx = rsForObserve?.CurrentActIndex;
+            var overrideReason = VoteOverrideBudget.Observe(rsForObserve?.Rng?.StringSeed, actIdx);
+            VoteOverrideBudget.SendResetReceiptIfAny(overrideReason, actIdx.HasValue ? actIdx.Value + 1 : 0);
+            overrideAvailable = VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
+        } catch { /* observe is best-effort; fall through to vanilla disable */ }
+
+        if (overrideAvailable) {
+            TiLog.Info("[SlayTheStreamer2][ancient-vote] override available; leaving event options clickable");
+        } else {
+            try {
+                __instance.Layout?.DisableEventOptions();
+            } catch (Exception ex) {
+                TiLog.Warn($"[SlayTheStreamer2][ancient-vote] DisableEventOptions threw (continuing): {ex.Message}");
+            }
         }
 
         TiLog.Info($"[SlayTheStreamer2][ancient-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{index}");
@@ -197,6 +224,7 @@ internal static class AncientVotePatch {
             } catch (Exception postEx) {
                 TiLog.Error("[SlayTheStreamer2][ancient-vote] fallback resume Post itself threw; resetting flags", postEx);
                 Interlocked.Exchange(ref _resumeInProgress, 0);
+                _activeSession = null;
                 Interlocked.Exchange(ref _voteInProgress, 0);
             }
         }
@@ -273,6 +301,7 @@ internal static class AncientVotePatch {
             TiLog.Error("[SlayTheStreamer2][ancient-vote] resume threw", ex);
         } finally {
             Interlocked.Exchange(ref _resumeInProgress, 0);
+            _activeSession = null;
             Interlocked.Exchange(ref _voteInProgress, 0);
         }
     }
@@ -280,6 +309,35 @@ internal static class AncientVotePatch {
     private static bool IsAncientEvent(NEventRoom room) {
         var eventModel = _eventField.Value?.GetValue(room);
         return eventModel is AncientEventModel and not DeprecatedAncientEvent;
+    }
+
+    /// <summary>
+    /// Streamer override: an armed click on an ancient option during an open
+    /// vote ends the vote with that option as the winner and consumes one
+    /// override (spec 2026-07-21 §2.4). Ancient options map 1:1 to vote
+    /// indices — no skip concept, no holder mapping. Budget consumed strictly
+    /// AFTER TryCloseNow succeeds.
+    /// </summary>
+    private static bool TryOverride(EventOption option, int index) {
+        try {
+            var session = _activeSession;
+            if (session is null || session.State != VoteSessionState.Open) return false;
+            if (!VoteOverrideBudget.Enabled || VoteOverrideBudget.Remaining <= 0) return false;
+            if (session.Elapsed < VoteOverrideBudget.ArmingDelay) return false;
+            if (index < 0 || index >= session.Options.Count) return false;
+
+            if (!session.TryCloseNow(index)) return false;
+
+            VoteOverrideBudget.RecordUse();
+            string label;
+            try { label = option.Title.GetFormattedText(); } catch { label = $"#{index}"; }
+            VoteOverrideBudget.SendOverrideReceipt(label);
+            TiLog.Info($"[SlayTheStreamer2][ancient-vote] override: streamer forced #{index} ({label}); {VoteOverrideBudget.Remaining} override(s) remaining this act");
+            return true;
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][ancient-vote] override attempt failed; click suppressed", ex);
+            return false;
+        }
     }
 
     private static string GetVoteTitle(NEventRoom room) {

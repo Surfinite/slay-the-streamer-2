@@ -407,6 +407,10 @@ internal static class CardRewardSkipGatePatch {
                     TiLog.Info($"[SlayTheStreamer2][card-skip-gate] budget reset ({resetReason}); Act {(actIndex.HasValue ? humanAct.ToString() : "?")}");
                 }
 
+                // Vote-override budget shares the reset cadence (spec §2.5).
+                var overrideReason = VoteOverrideBudget.Observe(runState.Rng?.StringSeed, actIndex);
+                VoteOverrideBudget.SendResetReceiptIfAny(overrideReason, actIndex.HasValue ? actIndex.Value + 1 : 0);
+
                 // NOTE: Model 2 deliberately omits a population-time DisallowSkipping
                 // call. The OnProceedButtonPressed prefix below is the single source of
                 // truth for whether Proceed is allowed (mandatory-look + budget check).

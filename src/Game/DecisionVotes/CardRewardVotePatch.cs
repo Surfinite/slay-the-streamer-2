@@ -29,6 +29,9 @@ internal static class CardRewardVotePatch {
     private static int _resumeInProgress;
     private static int _chatSkipResumeInProgress;
     private static int _multiplayerWarnFired;
+    private static VoteSession? _activeSession;
+    private static bool _activeIncludeSkip;
+    private static int _overrideSkipPending;
 
     /// <summary>
     /// True iff the patch passed Prepare's hard checks at registration time.
@@ -124,6 +127,84 @@ internal static class CardRewardVotePatch {
             if (extras[i]?.OptionId == "Skip") return i;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Streamer override: an armed click on a card during an open vote ends the
+    /// vote immediately with that card as the winner and consumes one override
+    /// (spec 2026-07-21 §2.3). Returns false — with the click staying suppressed —
+    /// whenever any precondition fails; the caller then logs the normal
+    /// suppressed-click line. Budget is consumed strictly AFTER TryCloseNow
+    /// succeeds (never consume on a lost close-timer race).
+    /// </summary>
+    private static bool TryOverrideWithCard(NCardRewardSelectionScreen screen, NCardHolder clicked) {
+        try {
+            var session = _activeSession;
+            if (session is null || session.State != VoteSessionState.Open) return false;
+            if (!VoteOverrideBudget.Enabled || VoteOverrideBudget.Remaining <= 0) return false;
+            if (session.Elapsed < VoteOverrideBudget.ArmingDelay) return false;
+
+            var holders = GetCurrentHolders(screen);
+            var options = GetCurrentOptions(screen);
+            if (holders is null || options is null) return false;
+            int? cardIndex = FindHolderIndex(holders, clicked);
+            if (cardIndex is null || cardIndex.Value >= options.Count) return false;
+
+            int voteIndex = _activeIncludeSkip ? cardIndex.Value + 1 : cardIndex.Value;
+            string takenLabel = options[cardIndex.Value].Card.Title;
+
+            if (!session.TryCloseNow(voteIndex)) return false;
+
+            VoteOverrideBudget.RecordUse();
+            VoteOverrideBudget.SendOverrideReceipt(takenLabel);
+            TiLog.Info($"[SlayTheStreamer2][card-vote] override: streamer forced #{voteIndex} ({takenLabel}); {VoteOverrideBudget.Remaining} override(s) remaining this act");
+            return true;
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-vote] override attempt failed; click suppressed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Streamer override via the Skip button during an open vote. Consumes an
+    /// OVERRIDE, never a card skip (spec Decision 5). Two sub-cases:
+    /// includeSkip=true — Skip is vote option #0, force it through the normal
+    /// TryCloseNow path (ResumeSkipOnMainThread then applies chat-skip
+    /// semantics, budget-free via _chatSkipResumeInProgress). includeSkip=false
+    /// — Skip is not a vote option, so flag _overrideSkipPending and Cancel();
+    /// HandleVoteAsync routes the cancellation to ResumeSkipOnMainThread.
+    /// </summary>
+    private static bool TryOverrideWithSkip(NCardRewardSelectionScreen screen, int clickedIndex) {
+        try {
+            var session = _activeSession;
+            if (session is null || session.State != VoteSessionState.Open) return false;
+            if (!VoteOverrideBudget.Enabled || VoteOverrideBudget.Remaining <= 0) return false;
+            if (session.Elapsed < VoteOverrideBudget.ArmingDelay) return false;
+
+            var skipIndex = FindSkipAlternativeIndex(screen);
+            if (skipIndex is null || clickedIndex != skipIndex.Value) return false;
+
+            if (_activeIncludeSkip) {
+                if (!session.TryCloseNow(0)) return false;   // Skip is vote option #0
+            } else {
+                Interlocked.Exchange(ref _overrideSkipPending, 1);
+                session.Cancel();
+                if (session.State != VoteSessionState.Cancelled) {
+                    // Lost a race to natural close — revert; do not consume.
+                    Interlocked.Exchange(ref _overrideSkipPending, 0);
+                    return false;
+                }
+            }
+
+            VoteOverrideBudget.RecordUse();
+            VoteOverrideBudget.SendOverrideReceipt("Skip");
+            TiLog.Info($"[SlayTheStreamer2][card-vote] override: streamer forced Skip; {VoteOverrideBudget.Remaining} override(s) remaining this act");
+            return true;
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-vote] skip-override attempt failed; click suppressed", ex);
+            Interlocked.Exchange(ref _overrideSkipPending, 0);
+            return false;
+        }
     }
 
     private static int? TryGetPlayerCount() {
@@ -227,6 +308,7 @@ internal static class CardRewardVotePatch {
 
         // Atomic vote-in-progress flip
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
+            if (TryOverrideWithCard(__instance, cardHolder)) return false;
             TiLog.Debug("[SlayTheStreamer2][card-vote] repeat click during open vote; suppressed");
             return false;
         }
@@ -276,6 +358,15 @@ internal static class CardRewardVotePatch {
             }
         }
 
+        // Vote-override budget: best-effort observe so the counter is fresh even
+        // if this vote fires before any rewards-screen _Ready this act.
+        try {
+            var rsForObserve = RunManager.Instance?.DebugOnlyGetState();
+            int? actIdx = rsForObserve?.CurrentActIndex;
+            var overrideReason = VoteOverrideBudget.Observe(rsForObserve?.Rng?.StringSeed, actIdx);
+            VoteOverrideBudget.SendResetReceiptIfAny(overrideReason, actIdx.HasValue ? actIdx.Value + 1 : 0);
+        } catch { /* observe is best-effort */ }
+
         // Voter.Start with try/catch fallback to vanilla
         VoteSession session;
         try {
@@ -285,6 +376,13 @@ internal static class CardRewardVotePatch {
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }
+
+        // Vote-override context: consulted by the suppressed-click branches.
+        // _overrideSkipPending cleared defensively — a stale flag from a vote
+        // whose Cancel() lost a race must not leak into this vote.
+        _activeSession = session;
+        _activeIncludeSkip = includeSkip;
+        Interlocked.Exchange(ref _overrideSkipPending, 0);
 
         TiLog.Info($"[SlayTheStreamer2][card-vote] opening vote for {optionsSnapshot.Count} options; player clicked #{playerClickIndex}; includeSkip={includeSkip}");
         _ = HandleVoteAsync(coordinator, __instance, session, optionsSnapshot, optionsSig, playerClickIndex, runIdAtStart, includeSkip);
@@ -313,6 +411,20 @@ internal static class CardRewardVotePatch {
             int winnerIndex;
             try {
                 winnerIndex = await session.AwaitWinnerAsync();
+            } catch (OperationCanceledException) {
+                if (Interlocked.Exchange(ref _overrideSkipPending, 0) == 1) {
+                    // Streamer override-skip on a vote with no Skip option: the
+                    // session was cancelled as the transport; apply chat-skip
+                    // semantics (reward consumed, no card-skip budget charge).
+                    TiLog.Info("[SlayTheStreamer2][card-vote] override-skip: routing cancelled session to skip-resume");
+                    coordinator.Dispatcher.Post(() => ResumeSkipOnMainThread(screen, runIdAtStart, optionsSig));
+                    return;
+                }
+                // Non-override cancellation (run death etc.): preserve prior
+                // behavior — fallback resume; liveness checks drop it if the
+                // world moved on.
+                TiLog.Info("[SlayTheStreamer2][card-vote] vote cancelled; falling back to player click");
+                winnerIndex = includeSkip ? playerClickIndex + 1 : playerClickIndex;
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-vote] AwaitWinnerAsync threw; falling back to player click", ex);
                 winnerIndex = includeSkip ? playerClickIndex + 1 : playerClickIndex;
@@ -357,6 +469,7 @@ internal static class CardRewardVotePatch {
                 coordinator.Dispatcher.Post(() => ResumeOnMainThread(screen, playerClickIndex, playerClickIndex, runIdAtStart, optionsSig));
             } catch (Exception postEx) {
                 TiLog.Error("[SlayTheStreamer2][card-vote] fallback resume Post itself threw; resetting flags", postEx);
+                _activeSession = null;
                 Interlocked.Exchange(ref _resumeInProgress, 0);
                 Interlocked.Exchange(ref _voteInProgress, 0);
             }
@@ -437,6 +550,7 @@ internal static class CardRewardVotePatch {
         } catch (Exception ex) {
             TiLog.Error("[SlayTheStreamer2][card-vote] resume threw", ex);
         } finally {
+            _activeSession = null;
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
         }
@@ -491,6 +605,7 @@ internal static class CardRewardVotePatch {
             // so the prefix's streamer-Skip budget gate (which sees a "normal" non-vote
             // invocation) knows to PASS without consuming budget — chat-skip is budget-free
             // by design. _resumeInProgress is NOT set: we're not re-entering SelectCard.
+            _activeSession = null;
             Interlocked.Exchange(ref _voteInProgress, 0);
             Interlocked.Exchange(ref _chatSkipResumeInProgress, 1);
             TiLog.Info($"[SlayTheStreamer2][card-vote] skip-resume: invoking OnAlternateRewardSelected({skipIndex.Value}) (Skip alt, flipped to EndSelectionAndCompleteReward)");
@@ -505,6 +620,7 @@ internal static class CardRewardVotePatch {
             // _resumeInProgress is NOT set in the skip path (we don't re-enter SelectCard).
             // The reset is defensive belt-and-suspenders against future refactor where this
             // path might gain a re-entry. Currently a no-op.
+            _activeSession = null;
             Interlocked.Exchange(ref _resumeInProgress, 0);
             Interlocked.Exchange(ref _voteInProgress, 0);
         }
@@ -607,8 +723,10 @@ internal static class CardRewardVotePatch {
             // (1) Our chat-skip reflective invoke — pass through, no budget cost.
             if (_chatSkipResumeInProgress == 1) return true;
 
-            // (2) Vote in progress — streamer cannot bail via alt-select.
+            // (2) Vote in progress — streamer cannot bail via alt-select, but an
+            // armed Skip click with override budget ends the vote as an override.
             if (_voteInProgress == 1) {
+                if (TryOverrideWithSkip(__instance, index)) return false;
                 TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
                 return false;
             }
@@ -665,8 +783,8 @@ internal static class CardRewardVotePatch {
     /// (no addition) we stay within the 2-alternatives cap that
     /// <see cref="CardRewardAlternative.Generate"/> enforces at line 53-55.
     ///
-    /// Streamer interaction: the Skip *button* is hidden by the sibling
-    /// <see cref="NCardRewardSelectionScreen_Ready_HideSkipButton_Postfix"/>, and
+    /// Streamer interaction: the Skip button remains visible (the vote popup
+    /// anchors its #0 indicator to it when CardSkipAsVoteOption is on), and
     /// changing AfterSelected to <c>EndSelectionAndCompleteReward</c> also reassigns
     /// the alt's hotkey away from <c>MegaInput.cancel</c> (per CardRewardAlternative
     /// ctor line 34), so Escape no longer triggers Skip either. Escape falls through

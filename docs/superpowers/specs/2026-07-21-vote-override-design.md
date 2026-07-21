@@ -160,6 +160,23 @@ label. Same static override-context pattern (current session) as the card
 patch. `VoteOverrideBudget.Observe` is called in the prefix before the budget
 check.
 
+**Plan-time discovery (2026-07-21, amends the "identical branch" claim):**
+unlike card votes, the ancient patch calls
+`__instance.Layout?.DisableEventOptions()` at vote start — the option buttons
+are NOT clickable during the vote, so the suppressed-click branch is only a
+race guard there. Two additions make the override reachable:
+
+1. **Skip `DisableEventOptions()` when an override is available at vote start**
+   (`VoteOverridesPerAct != 0` and remaining > 0). The decision is stable for
+   the vote's duration — only one vote runs at a time, so the budget can't be
+   consumed elsewhere mid-vote. With no overrides available, options are
+   disabled exactly as today.
+2. **Guard the locked/proceed pass-through**: the prefix's existing
+   `option.IsLocked || option.IsProceed → return true` would let such clicks
+   reach vanilla mid-vote once options stay enabled. Add an earlier check:
+   while `_voteInProgress == 1`, locked/proceed clicks return `false`
+   (suppressed), never `true`.
+
 ### 2.5 Budget tracker generalization
 
 Rename `SkipBudgetTracker` → `ActBudgetTracker` (+ `SkipBudgetSnapshot` →
@@ -191,13 +208,15 @@ Same node, same Skip-button-anchored positioning machinery, same vote-popup
 visual space (the popup owns the rest of the screen; this label occupies the
 position the skip text vacates).
 
-Colour via BBCode `[color=]` using `StsColors.blue` / `StsColors.gold`
-(seam-legal: the label lives in `src/Game/Ui`, which may reference MegaCrit
-types). Bold: the label's theme currently maps `bold_font` to regular Kreon, so
-`[b]` alone renders regular — locate a vanilla bold Kreon `.tres` in
-`decompiled/sts2-assets/themes/`; if none ships, use a `FontVariation` with
-`variation_embolden` over regular Kreon. Colour is the primary differentiator;
-bold is best-effort on top.
+Colour via BBCode `[color=]` using hex literals `#87CEEB` (skips) / `#EFC851`
+(overrides) — the exact values of `StsColors.blue` / `StsColors.gold`, kept as
+literals rather than `StsColors` bindings so the feature adds zero new
+cross-branch game-member bindings (plan-time amendment; Surfinite confirmed
+exact-match to the compendium is not required). Bold: vanilla ships
+`res://themes/kreon_bold_shared.tres` (verified in `decompiled/sts2-assets/themes/`)
+— map it to the label's `bold_font` theme override; no synthetic
+`FontVariation` needed. Colour is the primary differentiator; bold stacks on
+top.
 
 ## 4. Settings plumbing
 
@@ -259,7 +278,6 @@ the `RelicChoices` end-to-end pattern (`bossy-relics/2`):
 - Release context: bundled with Bossy Relics into **v0.2.0** (manifest bump,
   GitHub release, Workshop upload) — release work is outside this slice.
 - Game compat: any newly bound game member must exist on both v0.109.0 beta and
-  v0.107.1 non-beta. The only NEW binding this design introduces is
-  `StsColors.blue` / `StsColors.gold` (verified present in the v0.109.0
-  decompile; verify against v0.107.1 during plan-time compat check — expected
-  fine, `StsColors` is a long-stable vanilla helper).
+  v0.107.1 non-beta. This design introduces NO new game-member bindings
+  (rarity colours are hex literals, not `StsColors` references; every game
+  member touched is already bound by existing patches).

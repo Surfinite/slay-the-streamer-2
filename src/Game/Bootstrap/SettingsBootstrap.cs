@@ -58,6 +58,7 @@ public static class SettingsBootstrap {
         ["allowSameBossTwice"]   = false,
         ["relicChoices"]         = 1,
         ["voteOverridesPerAct"]  = 1,
+        ["cursedOverrides"]      = false,
     };
 
     /// <summary>

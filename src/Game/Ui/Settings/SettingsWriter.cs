@@ -35,6 +35,7 @@ public static class SettingsWriter {
         json["allowSameBossTwice"] = settings.AllowSameBossTwice;
         json["relicChoices"] = settings.RelicChoices;
         json["voteOverridesPerAct"] = settings.VoteOverridesPerAct;
+        json["cursedOverrides"] = settings.CursedOverrides;
 
         WriteAtomic(path, json);
     }

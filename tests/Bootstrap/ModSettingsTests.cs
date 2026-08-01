@@ -777,6 +777,30 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- cursedOverrides (cursed-overrides: override spends add a random curse, default false) ---
+
+    [Theory]
+    [InlineData("\"cursedOverrides\": true,", true, false)]
+    [InlineData("\"cursedOverrides\": false,", false, false)]
+    [InlineData("\"cursedOverrides\": \"yes\",", false, true)]  // non-bool -> default + warning
+    [InlineData("", false, false)]                               // missing -> default, no warning
+    public void CursedOverrides_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(expected, success.Settings.CursedOverrides);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("cursedOverrides")));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

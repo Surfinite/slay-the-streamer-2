@@ -39,6 +39,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\RunLiveness.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\OverlayOcclusion.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\SeedCompat.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\CursedOverrides.cs" />
   </ItemGroup>
 
   <ItemGroup>

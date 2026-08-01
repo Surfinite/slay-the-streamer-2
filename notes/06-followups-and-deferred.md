@@ -4,6 +4,33 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Cursed Overrides (resolved 2026-08-01)
+
+Each vote-override spend adds a random curse card to the streamer's deck (`cursedOverrides`, bool, default off; tickbox under the Vote Overrides dropdown). Pool = `CurseCardPool` filtered by the game's `CanBeGeneratedByModifiers` flag (10 curses as of v0.110.0); receipt extends the override receipt ("Cursed Overrides: gained X!"); in-game visual is vanilla's card-added preview via `CardPileCmd.AddCursesToDeck`. Spec `docs/superpowers/specs/2026-08-01-cursed-overrides-design.md`, plan `docs/superpowers/plans/2026-08-01-cursed-overrides.md`, commits `cursed-overrides/0`–`/7`, tag `cursed-overrides-complete`.
+
+### Acceptance gate — green (Surfinite, live game + chat, 2026-08-01)
+
+All seven gate items validated: three override paths curse + receipt correctly, setting-off identical to v0.2.0, exhausted-budget no-op, save-quit → Continue persists the curse, panel tickbox persists. Also verified on the game's **default branch**: curses work there too (see v110-compat below for the act-variant regression that test surfaced).
+
+### Architecture-defining outcomes
+
+- Final whole-branch review caught the setting-off path doing game-state reads (player resolve / `_eventField` reflection) before the toggle check, violating the spec's "off = zero game-state contact" guarantee — fixed with `CursedOverrides.Enabled` short-circuits at all entry points (`cursed-overrides/7`). Rule of thumb: **an off-by-default feature's gate check is the FIRST statement on every path, before any game-API contact.**
+- `CurseRoll.cs` (pure picker, rides test glob) / `CursedOverrides.cs` (game-side, `Compile Remove`d) is the established split for DecisionVotes features needing both testable logic and MegaCrit types.
+
+### Follow-ups / deferred (minor, from reviews)
+
+- Skip/override budgets refill to full act values after save-quit → close game → relaunch → Continue (`ActBudgetTracker` is in-memory; fresh statics classify the resumed run as `RunChanged`). Visible to chat via the "reset to N" receipt, and generous rather than punishing — accepted for now (Surfinite, 2026-08-01). Fix if wanted: sidecar state file (runId, actIndex, usedCounts) beside the settings JSON, loaded once at startup; stale entries self-heal via `RunChanged`.
+- `SendOverrideReceipt` pass-through has no direct unit test (formatter fully tested; operator gate covers end-to-end).
+- Unused `using System.Linq` was removed from `CurseRollTests` in the final fix wave; the probabilistic 500-draw coverage test is plan-mandated and accepted.
+
+---
+
+## v0.110.0 cross-branch compat: `StartRunLobby.Players` (v110-compat, 2026-08-01)
+
+Game v0.110.0's lobby refactor changed `StartRunLobby.Players` from `List<LobbyPlayer>` to `List<StartRunLobbyPlayer>`. A mod built against v0.110 throws `MissingMethodException` calling it on the older default branch — thrown at JIT time from the CALL SITE in `ActVariantVotePatch.Prefix` (outside `TryGetPlayerCount`'s own try/catch), so the prefix's catch passed through to vanilla and the act-variant vote silently never fired on the default branch. Curses/card/boss/ancient votes were unaffected (`RunState.Players` uses the unchanged `Player` type). Surfaced by Surfinite testing Cursed Overrides on the default branch 2026-08-01; fixed `v110-compat/1` by binding `Players` reflectively and counting via non-generic `ICollection` (SeedCompat pattern). **Game-update compat passes must check the member diff against BOTH live branches, not just old-vs-new** — any changed generic return type on a directly-called member is a cross-branch break even when the call site "still compiles."
+
+---
+
 ## Vote Override (resolved 2026-07-21)
 
 Streamer can override a running vote (`voteOverridesPerAct`, default 1; -1 unlimited, 0 off) by clicking an option ≥1.5s into the countdown; Skip mid-vote costs an override, not a card skip. Card rewards + ancients; act-variant and boss votes excluded. Spec `docs/superpowers/specs/2026-07-21-vote-override-design.md`, plan `docs/superpowers/plans/2026-07-21-vote-override.md`, commits `vote-override/0`–`/9`, tag `vote-override-complete`.

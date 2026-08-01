@@ -340,8 +340,9 @@ internal static class AncientVotePatch {
             if (!session.TryCloseNow(index)) return false;
 
             VoteOverrideBudget.RecordUse();
-            var owner = (_eventField.Value?.GetValue(room) as EventModel)?.Owner;
-            string? curseTitle = CursedOverrides.TryRollCurse(owner);
+            string? curseTitle = CursedOverrides.Enabled
+                ? CursedOverrides.TryRollCurse((_eventField.Value?.GetValue(room) as EventModel)?.Owner)
+                : null;
             string label;
             try { label = option.Title.GetFormattedText(); } catch { label = $"#{index}"; }
             VoteOverrideBudget.SendOverrideReceipt(label, curseTitle);

@@ -25,10 +25,16 @@ internal static class CursedOverrides {
     /// vanilla's subsequent rolls.</summary>
     private static readonly Random _rng = new();
 
+    /// <summary>Whether the cursedOverrides setting is on. Check this before
+    /// any game-state contact — spec §3.1 guarantees zero game-state contact
+    /// when the setting is off.</summary>
+    internal static bool Enabled => BootstrapModSettings.Current?.CursedOverrides ?? false;
+
     /// <summary>Rolls and fire-and-forget-adds a curse for the local player.
     /// Card-reward override sites use this (the screen acts for the local
     /// player). Returns the curse Title for the receipt, or null.</summary>
     internal static string? TryRollCurseForLocalPlayer() {
+        if (!Enabled) return null;
         try {
             var players = RunManager.Instance?.DebugOnlyGetState()?.Players;
             var local = players?.FirstOrDefault(p => LocalContext.IsMe(p));
@@ -43,7 +49,7 @@ internal static class CursedOverrides {
     /// (ancient path passes the event Owner). Null player: Warn, no curse.</summary>
     internal static string? TryRollCurse(Player? player) {
         try {
-            if (!(BootstrapModSettings.Current?.CursedOverrides ?? false)) return null;
+            if (!Enabled) return null;
             if (player is null) {
                 TiLog.Warn("[SlayTheStreamer2][cursed-override] no player in reach; no curse");
                 return null;
@@ -59,7 +65,7 @@ internal static class CursedOverrides {
 
             var picked = CurseRoll.PickCurse(pool, _rng);
             TaskHelper.RunSafely(CardPileCmd.AddCursesToDeck(new[] { picked }, player));
-            TiLog.Info($"[SlayTheStreamer2][cursed-override] {picked.Id.Entry} added to deck for override spend");
+            TiLog.Info($"[SlayTheStreamer2][cursed-override] {picked.Id.Entry} queued for deck add on override spend");
             return picked.Title;
         } catch (Exception ex) {
             TiLog.Warn($"[SlayTheStreamer2][cursed-override] curse roll failed; override proceeds uncursed: {ex.Message}");

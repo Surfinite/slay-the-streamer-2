@@ -203,8 +203,25 @@ internal static partial class ActVariantVotePatch {
         }
     }
 
+    /// <summary>
+    /// StartRunLobby.Players changed its generic return type in game v0.110.0
+    /// (List&lt;LobbyPlayer&gt; -> List&lt;StartRunLobbyPlayer&gt;), so a direct
+    /// call compiles against exactly one branch and throws
+    /// MissingMethodException at JIT time on the other — from the CALL SITE in
+    /// Prefix, outside this method's try/catch (surfaced 2026-08-01 testing
+    /// the default branch: act-variant vote silently passed through to
+    /// vanilla). Bind reflectively and count via non-generic ICollection,
+    /// which List&lt;T&gt; implements on both branches. Same pattern as
+    /// SeedCompat.
+    /// </summary>
+    private static readonly Lazy<PropertyInfo?> _lobbyPlayersProperty = new(() =>
+        AccessTools.Property(typeof(StartRunLobby), "Players"));
+
     private static int? TryGetPlayerCount(StartRunLobby lobby) {
-        try { return lobby?.Players?.Count; } catch { return null; }
+        try {
+            if (lobby is null) return null;
+            return (_lobbyPlayersProperty.Value?.GetValue(lobby) as System.Collections.ICollection)?.Count;
+        } catch { return null; }
     }
 
     private static void LogBailAndRelease(

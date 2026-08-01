@@ -186,6 +186,10 @@ internal static class SettingsPanelBuilder {
         AddVoteOverridesDropdown(root, current, debouncer);
         AddHelpText(root, "Times per act the streamer can override a live vote by clicking\nan option mid-countdown. Clicking Skip mid-vote costs an override,\nnot a card skip. Resets each act.");
         AddDivider(root);
+        AddCheckboxRow(root, "Cursed Overrides", current.CursedOverrides,
+            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CursedOverrides = value }));
+        AddHelpText(root, "Each vote override also adds a random curse card to your deck.");
+        AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
         AddHelpText(root, "Displays and increments a tag for each vote, e.g.  [b][14][/b]\nChat can vote with [b]#0!14[/b] so delayed votes don't land in the wrong tally.\nCould be useful to combat lag on YT, (might just be confusing).");

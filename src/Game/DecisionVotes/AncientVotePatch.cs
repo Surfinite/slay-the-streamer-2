@@ -93,7 +93,7 @@ internal static class AncientVotePatch {
         // during a chat disconnect would otherwise reach vanilla and advance
         // the event under a pending vote).
         if (_voteInProgress == 1) {
-            if (TryOverride(option, index)) return false;
+            if (TryOverride(__instance, option, index)) return false;
             TiLog.Debug("[SlayTheStreamer2][ancient-vote] click during open vote; suppressed");
             return false;
         }
@@ -133,7 +133,7 @@ internal static class AncientVotePatch {
         }
 
         if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) {
-            if (TryOverride(option, index)) return false;
+            if (TryOverride(__instance, option, index)) return false;
             TiLog.Debug("[SlayTheStreamer2][ancient-vote] repeat click during open vote; suppressed");
             return false;
         }
@@ -329,7 +329,7 @@ internal static class AncientVotePatch {
     /// indices — no skip concept, no holder mapping. Budget consumed strictly
     /// AFTER TryCloseNow succeeds.
     /// </summary>
-    private static bool TryOverride(EventOption option, int index) {
+    private static bool TryOverride(NEventRoom room, EventOption option, int index) {
         try {
             var session = _activeSession;
             if (session is null || session.State != VoteSessionState.Open) return false;
@@ -340,9 +340,11 @@ internal static class AncientVotePatch {
             if (!session.TryCloseNow(index)) return false;
 
             VoteOverrideBudget.RecordUse();
+            var owner = (_eventField.Value?.GetValue(room) as EventModel)?.Owner;
+            string? curseTitle = CursedOverrides.TryRollCurse(owner);
             string label;
             try { label = option.Title.GetFormattedText(); } catch { label = $"#{index}"; }
-            VoteOverrideBudget.SendOverrideReceipt(label);
+            VoteOverrideBudget.SendOverrideReceipt(label, curseTitle);
             TiLog.Info($"[SlayTheStreamer2][ancient-vote] override: streamer forced #{index} ({label}); {VoteOverrideBudget.Remaining} override(s) remaining this act");
             return true;
         } catch (Exception ex) {

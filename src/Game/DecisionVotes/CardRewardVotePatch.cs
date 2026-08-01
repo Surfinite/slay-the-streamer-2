@@ -156,7 +156,8 @@ internal static class CardRewardVotePatch {
             if (!session.TryCloseNow(voteIndex)) return false;
 
             VoteOverrideBudget.RecordUse();
-            VoteOverrideBudget.SendOverrideReceipt(takenLabel);
+            string? curseTitle = CursedOverrides.TryRollCurseForLocalPlayer();
+            VoteOverrideBudget.SendOverrideReceipt(takenLabel, curseTitle);
             TiLog.Info($"[SlayTheStreamer2][card-vote] override: streamer forced #{voteIndex} ({takenLabel}); {VoteOverrideBudget.Remaining} override(s) remaining this act");
             return true;
         } catch (Exception ex) {
@@ -197,7 +198,8 @@ internal static class CardRewardVotePatch {
             }
 
             VoteOverrideBudget.RecordUse();
-            VoteOverrideBudget.SendOverrideReceipt("Skip");
+            string? curseTitle = CursedOverrides.TryRollCurseForLocalPlayer();
+            VoteOverrideBudget.SendOverrideReceipt("Skip", curseTitle);
             TiLog.Info($"[SlayTheStreamer2][card-vote] override: streamer forced Skip; {VoteOverrideBudget.Remaining} override(s) remaining this act");
             return true;
         } catch (Exception ex) {

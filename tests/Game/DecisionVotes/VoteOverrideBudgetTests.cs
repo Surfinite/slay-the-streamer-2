@@ -14,6 +14,22 @@ public class VoteOverrideBudgetTests {
         string name, string taken, int limit, int remaining, string expected) =>
         Assert.Equal(expected, VoteOverrideBudget.FormatOverrideReceipt(name, taken, limit, remaining));
 
+    [Theory]
+    [InlineData("Surfinite", "Ricochet", "Injury", 2, 1,
+        "Surfinite overrode the vote and took Ricochet. Cursed Overrides: gained Injury! 1 override remaining this act")]
+    [InlineData("Surfinite", "Skip", "Doubt", 1, 0,
+        "Surfinite overrode the vote and took Skip. Cursed Overrides: gained Doubt! 0 overrides remaining this act")]
+    [InlineData("Surfinite", "Ricochet", "Writhe", -1, 2147483647,
+        "Surfinite overrode the vote and took Ricochet. Cursed Overrides: gained Writhe!")]  // unlimited: no count
+    public void FormatOverrideReceipt_appends_curse_clause_when_present(
+        string name, string taken, string curse, int limit, int remaining, string expected) =>
+        Assert.Equal(expected, VoteOverrideBudget.FormatOverrideReceipt(name, taken, limit, remaining, curse));
+
+    [Fact]
+    public void FormatOverrideReceipt_null_curse_is_unchanged() =>
+        Assert.Equal("Surfinite overrode the vote and took Ricochet. 1 override remaining this act",
+            VoteOverrideBudget.FormatOverrideReceipt("Surfinite", "Ricochet", 2, 1, null));
+
     [Fact]
     public void FormatResetReceipt_names_limit_and_act() =>
         Assert.Equal("Vote overrides reset to 1 for Act 2", VoteOverrideBudget.FormatResetReceipt(1, 2));

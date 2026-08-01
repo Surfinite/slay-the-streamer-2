@@ -33,11 +33,14 @@ internal static class VoteOverrideBudget {
 
     public static void RecordUse() => _tracker.RecordUse();
 
-    /// <summary>Pure formatter, unit-tested. Unlimited (limit &lt; 0) omits the count.</summary>
-    internal static string FormatOverrideReceipt(string streamerName, string takenLabel, int limit, int remaining) {
-        if (limit < 0) return $"{streamerName} overrode the vote and took {takenLabel}.";
+    /// <summary>Pure formatter, unit-tested. Unlimited (limit &lt; 0) omits the count.
+    /// Non-null curseTitle appends the Cursed Overrides clause (spec 2026-08-01 §5).</summary>
+    internal static string FormatOverrideReceipt(
+            string streamerName, string takenLabel, int limit, int remaining, string? curseTitle = null) {
+        string curse = curseTitle is null ? "" : $" Cursed Overrides: gained {curseTitle}!";
+        if (limit < 0) return $"{streamerName} overrode the vote and took {takenLabel}.{curse}";
         string noun = remaining == 1 ? "override" : "overrides";
-        return $"{streamerName} overrode the vote and took {takenLabel}. {remaining} {noun} remaining this act";
+        return $"{streamerName} overrode the vote and took {takenLabel}.{curse} {remaining} {noun} remaining this act";
     }
 
     internal static string FormatResetReceipt(int limit, int humanActNumber) =>
@@ -45,11 +48,11 @@ internal static class VoteOverrideBudget {
 
     /// <summary>Replaces the vote's normal close receipt (TryCloseNow sends none).
     /// High priority to match the close receipt it stands in for.</summary>
-    public static void SendOverrideReceipt(string takenLabel) {
+    public static void SendOverrideReceipt(string takenLabel, string? curseTitle = null) {
         var coordinator = Voter.Default;
         if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
         string text = FormatOverrideReceipt(
-            BootstrapModSettings.GetStreamerDisplayName(), takenLabel, Limit, Remaining);
+            BootstrapModSettings.GetStreamerDisplayName(), takenLabel, Limit, Remaining, curseTitle);
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.High);
     }
 

@@ -45,6 +45,7 @@ Per-task commits to `main` with a slice-specific prefix:
 - 2026-06 stream-feedback fixes (FrostPrime live findings): `stream-polish/N:`
 - Bossy Relics (pick-1-of-N relic rewards): `bossy-relics/N:`
 - Vote Override (streamer overrides a running vote): `vote-override/N:`
+- Release prep (manifest bump, README, changeNote): `release/vX.Y.Z:`
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 
@@ -109,6 +110,10 @@ Maintenance task: `notes/youtube-fixture-refresh.md` documents the monthly captu
 ### 0-indexed chat vote options
 
 Chat votes are 0-indexed: `#0`, `#1`, `#2`, ... matching Tempus's StS1 mod convention. **Do not regress to 1-indexed** — most C# instincts pull toward `array[i+1]` UI labels, but the user preference is explicit. `VoteSession`, `VoteCoordinator`, `EnglishReceipts`, and `VoteTallyLabel` all assume 0-indexing end-to-end. Future vote-bearing decisions (B.2.2 Ancients, B.2.3 map, B.3 boss) must follow the same convention.
+
+### Vote override / forced close
+
+`VoteSession.TryCloseNow(forcedWinnerIndex)` is the generic early-resolve primitive (fires the normal `Closed` event — popups/awaiter/resume machinery need no changes). Two contract points: it sends **NO close receipt** (the caller owns override messaging — streamer name + budget are game-side concepts), and callers must consume override budget **only when it returns `true`** (false = lost the close-timer race). Shared budget surface: `VoteOverrideBudget` in `src/Game/DecisionVotes/`.
 
 ### Test-fake triad and `VoteSessionTestBase`
 
@@ -178,3 +183,4 @@ Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the
 - **StS2's asset cache can free Godot resources out from under static C# caches between screens** ("Unloading N missed cache assets"). A statically cached `Font`/`Texture2D`/`StyleBox` whose native side was freed throws `ObjectDisposedException: Cannot access a disposed object` on next use — seen re-opening the mod manager after abandoning runs. Guard every static Godot-resource cache with `GodotObject.IsInstanceValid(...)` before reuse and recreate when stale. Reference: `SettingsPanelBuilder.Revalidate` (`stream-polish/4`).
 - **`ActModel.SetSecondBossEncounter` does NOT refresh any UI** — unlike `MapCmd.SetBossEncounter`, which sets the model AND calls `NRun.Instance.GlobalUi.TopBar.BossIcon.RefreshBossIcon()` + `NMapScreen.Instance?.SetMap(rs.Map, rs.Rng.Seed, clearDrawings: false)`. There is no `MapCmd.SetSecondBossEncounter`. Any code that swaps the A10 DoubleBoss second boss must replicate that refresh manually (guard with `TestMode.IsOff`), or the combat loads the right boss but the top-bar icon and the map's `SecondBossMapPoint` keep showing vanilla's pre-swap second boss. `NTopBarBossIcon.RefreshBossIcon()` re-reads BOTH `Act.BossEncounter` and `Act.SecondBossEncounter`, so one call updates both icons. Reference: `BossVotePatch.ApplySecondBossSwap` (`boss-2round/2`). Surfaced in operator validation 2026-06-05.
 - **Bossy Relics' wrapper-select relies on `Hook.AfterRewardTaken` resolving synchronously** (true on v0.107.1/v0.108/v0.109 — zero awaiting overrides). If a future game version adds a genuinely-async `AfterRewardTaken` override, the `LinkedRewardSet` wrapper's `SuccessfullySelected` can land after the completion check and the elite rewards set never completes. Check this on every game-update compat pass (see `EliteRelicChoicePatch` comment).
+- **Vote-patch prefixes: the `_voteInProgress` branch must precede EVERY `return true` (bail-to-vanilla) gate.** Both card and ancient patches originally checked MP/chat-readability gates first — harmless while mid-vote clicks were physically impossible, but vote overrides made options clickable mid-vote, and a click during a chat disconnect (`Reconnecting`) passed the chat gate straight into vanilla, advancing the game under a suspended vote (double-apply risk on resume). Fixed in `vote-override/8` by hoisting vote-in-progress handling ahead of all bail gates. Any new vote patch must order: `_resumeInProgress` pass-through → `_voteInProgress` suppress/override → only then bail-to-vanilla gates.

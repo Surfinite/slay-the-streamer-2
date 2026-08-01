@@ -2,7 +2,7 @@
   "title": "Slay the Streamer 2",
   "description": "Twitch and YouTube chat votes on the streamer's choices: run start (act variant), Neow and mid-run Ancient blessings, card rewards, and act bosses. Inspired by Tempus's Slay the Streamer for StS1.\n\nConfiguration lives in %APPDATA%\\SlayTheSpire2\\slay_the_streamer_2.json and in the in-game Mods screen once connected.\n\nSetup guide and README: https://github.com/Surfinite/slay-the-streamer-2\n\nDemo: https://www.twitch.tv/videos/2782280062",
   "visibility": null,
-  "changeNote": "v0.2.0: Vote overrides - the streamer can overrule a running vote (default once per act) by clicking an option mid-countdown; works on card rewards and Ancient blessings, Skip mid-vote costs an override, and a 1.5s guard stops the opening double-click spending one by accident. Relic choices - treasure chests and elite kills can offer 2-4 relics; pick one, the rest return to the relic pool.",
+  "changeNote": "v0.2.1: Cursed Overrides (off by default) - when enabled, every vote override the streamer spends also adds a random curse card to their deck, announced in chat. Requested by FrostPrime. Also fixes the Act 1 variant vote not firing on the game's default branch (v0.107.1), and verifies compatibility with game Beta v0.110.0.",
   "tags": [],
   "dependencies": [],
   "contentDescriptors": []

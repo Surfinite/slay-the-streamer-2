@@ -120,7 +120,7 @@ Votes time out after 30 seconds by default (configurable, 10–120s).
 
 | Decision | Description |
 |---|---|
-| **Card rewards** | After each fight, chat picks which of the 3 cards is added to your deck. Chat can also skip if you enable it. |
+| **Card rewards** | After each fight, chat picks which of the 3 cards is added to your deck. Chat can also skip if you enable it. An optional setting limits these votes to rewards earned from combat — card-rewards given by events and relics become free streamer picks. |
 | **Ancient relics** | When you encounter an Ancient event (Pael, Tezcatara, Orobas, Nonupeipe, Tanx, Vakuu, Darv), chat picks the relic. |
 | **Act boss** | When you click "Proceed" out of a treasure chest, chat picks which of 3 candidate bosses you'll face at the end of the act. Bosses get animated combat-idle portraits. |
 | **Act 1 variant** | When you click "Embark", chat picks Underdocks vs Overgrowth before the run starts. (Toggleable.) |
@@ -154,6 +154,7 @@ Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list.
 - **Vote on Act 1 variant** — turn the pre-run Underdocks/Overgrowth vote on or off.
 - **Allow same boss twice (A10)** — Ascension 10's final act has two bosses and chat votes on both; when on, the second vote is allowed to pick the same boss back-to-back.
 - **Allow chat to skip** — when on, chat can vote `#0` to skip a card reward.
+- **Card-reward votes only occur after combat** *(new in v0.2.2)* — when on, chat only votes on card rewards earned from combat. Card-rewards given by events and relics (Orrery, Dream Catcher, the Draft modifier, etc.) are always free streamer picks — no vote, no skip budget. Off by default.
 - **Streamer card skips / act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
 - **Streamer vote overrides / act** — how many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). While a card-reward or Ancient vote is counting down, click the option you want (or Skip) and the vote ends instantly with your pick. Skipping mid-vote costs an override, not a card skip. Clicks within the first ~1.5 seconds of a vote countdown are ignored, so that an accidental double-click to open the vote would never spend an override you didn't intend to.
 - **Cursed Overrides** — when on, each vote override you spend also adds a random curse card to your deck. Off by default.

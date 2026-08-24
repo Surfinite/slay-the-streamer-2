@@ -40,6 +40,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\OverlayOcclusion.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\SeedCompat.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CursedOverrides.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\CombatOriginTags.cs" />
   </ItemGroup>
 
   <ItemGroup>

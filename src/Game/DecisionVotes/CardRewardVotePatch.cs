@@ -294,6 +294,17 @@ internal static class CardRewardVotePatch {
             return false;
         }
 
+        // Combat-only scope gate (card-scope): with combatCardVotesOnly on, only
+        // combat-origin rewards vote — relic obtains, pure event rewards, Dream
+        // Catcher, and Draft picks fall through to vanilla, streamer-free. Must
+        // stay AFTER the vote-in-progress branch (prefix-ordering landmine) and
+        // is safe before the other bail gates: it consults only settings + the
+        // tag table, never game state.
+        if (!CombatOriginTags.ShouldVoteOnActiveReward()) {
+            TiLog.Info("[SlayTheStreamer2][card-vote] non-combat card reward - vote skipped (streamer picks freely)");
+            return true;
+        }
+
         // Multiplayer bail
         int? playerCount = TryGetPlayerCount();
         if (playerCount is int n && n > 1) {
@@ -814,8 +825,14 @@ internal static class CardRewardVotePatch {
     internal static class CardRewardAlternative_Generate_Postfix {
         static bool Prepare() => true;
 
-        static void Postfix(ref IReadOnlyList<CardRewardAlternative> __result) {
+        static void Postfix(CardReward cardReward, ref IReadOnlyList<CardRewardAlternative> __result) {
             try {
+                // card-scope: streamer-free rewards keep vanilla Skip semantics
+                // (EndSelectionAndDoNotCompleteReward + Escape hotkey) — the flip
+                // below exists to serve chat-skip votes and the streamer skip
+                // budget, neither of which applies to an out-of-scope reward.
+                if (!CombatOriginTags.ShouldVoteOn(cardReward)) return;
+
                 // Vanilla Generate() builds a List<>. Downcast to mutate in place; if a
                 // future build returns a different IReadOnlyList implementation, fall back
                 // to copying into a new List and assigning __result.

@@ -160,7 +160,7 @@ internal static class CardRewardSkipGatePatch {
     }
 
     /// <summary>
-    /// True iff the button is an NRewardButton wrapping a CardReward.
+    /// True iff the button is an NRewardButton wrapping a vote-scoped CardReward.
     /// Direct property access — NRewardButton.Reward is a public property.
     ///
     /// SpecialCardReward is deliberately NOT gateable: it has no selection
@@ -170,11 +170,16 @@ internal static class CardRewardSkipGatePatch {
     /// (Thieving Hopper recovered card, Lantern Key), so it must neither
     /// block Proceed nor charge skip budget. Surfaced live on FrostPrime's
     /// stream 2026-06-08: the gate made a recovered stolen card un-declinable.
+    ///
+    /// card-scope: rewards outside the vote scope (combatCardVotesOnly on +
+    /// non-combat-origin) are likewise not gateable — no vote fires for them,
+    /// so mandatory-look and skip budget must not apply either ("streamer
+    /// picks freely" means genuinely free).
     /// </summary>
     private static bool IsCardRewardButton(Control button) {
         if (!GodotObject.IsInstanceValid(button)) return false;
         if (button is not NRewardButton rb) return false;
-        return rb.Reward is CardReward;
+        return rb.Reward is CardReward cr && CombatOriginTags.ShouldVoteOn(cr);
     }
 
     /// <summary>
@@ -214,9 +219,11 @@ internal static class CardRewardSkipGatePatch {
         foreach (var b in buttons) {
             if (!GodotObject.IsInstanceValid(b)) continue;
             if (b is not NRewardButton rb) continue;
-            // SpecialCardReward (sibling of CardReward, no sub-screen) is not
-            // gateable — see IsCardRewardButton doc comment.
-            if (rb.Reward is not CardReward) continue;
+            // SpecialCardReward (sibling of CardReward, no sub-screen) and
+            // out-of-vote-scope rewards (card-scope) are not gateable — see
+            // IsCardRewardButton doc comment.
+            if (rb.Reward is not CardReward cr) continue;
+            if (!CombatOriginTags.ShouldVoteOn(cr)) continue;
             total++;
             if (!_openedCardRewardButtonIds.Contains(rb.GetInstanceId())) unopened++;
         }
@@ -325,6 +332,11 @@ internal static class CardRewardSkipGatePatch {
     internal static bool TryConsumeStreamerSkip(NCardRewardSelectionScreen subScreen) {
         try {
             if (!ShouldEnforceSkipGate()) return true;
+
+            // card-scope: out-of-vote-scope reward → vanilla Skip, no budget
+            // contact (its Skip alt was never flipped, so vanilla's
+            // keep-claimable semantics apply too).
+            if (!CombatOriginTags.ShouldVoteOnActiveReward()) return true;
 
             var runState = TryGetRunState();
             if (runState is null) return true;
@@ -486,6 +498,9 @@ internal static class CardRewardSkipGatePatch {
         static void Postfix(NCardRewardSelectionScreen __instance) {
             try {
                 if (!ShouldEnforceSkipGate()) return;
+                // card-scope: no budget counter on a streamer-free sub-screen —
+                // the skip budget doesn't apply there, so the label would lie.
+                if (!CombatOriginTags.ShouldVoteOnActiveReward()) return;
                 var runState = TryGetRunState();
                 if (runState is null) return;
                 try {

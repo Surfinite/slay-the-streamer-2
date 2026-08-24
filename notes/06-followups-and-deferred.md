@@ -4,6 +4,34 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Combat-only card-reward votes (card-scope, implemented 2026-08-24 — operator gate PENDING)
+
+`combatCardVotesOnly` (bool, default off = every card-reward screen votes, the shipped v0.2.1 behavior). Checkbox "Card-reward votes only occur after combat". When on, chat votes only on combat-origin card rewards; relic obtains (Orrery/Kaleidoscope/Glass Eye/Lost Coffer, incl. via Neow), pure event rewards (Future of Potions, Trial, Brain Leech, Colorful Philosophers, Crystal Sphere), Dream Catcher, and Draft-modifier picks are streamer-free — **fully vanilla**: no vote, no mandatory-look, no skip-budget charge, vanilla Skip semantics (reward stays claimable), no budget counter label. Combat rewards (map/?/event fights incl. Punch-Off, The Hunt bonus, Prayer Wheel / White Star extras) vote as before. Ported from SabotageTheStreamer's rig-proven scope/ slice (handoff `notes/handoff-2026-08-24-combat-only-card-votes.md`); commits `card-scope/1`–`/3`.
+
+Mechanism: `CombatOriginTags` tags CardRewards at `Hook.BeforeCombatRewardOffered` (sole call site `CombatRoom.OfferRoomEndRewards`, per-set, post-generation; save-resume re-tags); screen→reward capture via `CardReward.OnSelect` prefix; single predicate `CombatOriginTags.ShouldVoteOn` consulted by the vote prefix, skip-gate counting, streamer-Skip budget, Skip-alt flip, and label attach. Fail-safe: unknown/untagged ⇒ no vote (streamer free); patch-registration failure ⇒ toggle inoperative, all rewards vote again (one-time Warn).
+
+### Operator validation matrix (adapt sister repo's notes/57; run with checkbox ON unless stated)
+
+- [ ] Normal combat card reward → vote fires (regression); log shows `[card-scope] tagged N combat-origin card reward(s)`
+- [ ] Console `relic KALEIDOSCOPE` → card screen opens, NO vote, streamer picks/skips freely, no budget contact; log shows `non-combat card reward - vote skipped`
+- [ ] Dev-forced pure event card reward (e.g. Future of Potions) → no vote
+- [ ] The Hunt fatal-kill bonus reward → vote fires
+- [ ] Checkbox OFF regression pass → everything votes again (incl. a relic-obtain reward)
+- [ ] Flip checkbox mid-run both directions → next reward screen honors the new value
+- [ ] Save → quit → Continue mid-combat-reward → re-tag automatic, vote still opens
+- [ ] Kaleidoscope-class obtain immediately post-combat is still streamer-free (accepted divergence: its set has Room==null despite the fight)
+
+### Game-update compat watchlist additions (run against a FRESH decompile — the committed tree can lag; this feature was verified against v0.111.0 via fresh ilspycmd on `src/sts2.dll`)
+
+```
+grep -rn "Room is CombatRoom" <fresh>/RewardsSet.cs        # discriminator alive
+grep -rn "BeforeCombatRewardOffered" <fresh>/              # Hook def + CombatRoom call + AbstractModel/model overrides
+grep -rn "OfferForRoomEnd" <fresh>/                        # definition only, still ZERO callers
+grep -rn "EnterCombatWithoutExitingEvent" <fresh>/         # still the sole event-fight door
+```
+
+---
+
 ## Cursed Overrides (resolved 2026-08-01)
 
 Each vote-override spend adds a random curse card to the streamer's deck (`cursedOverrides`, bool, default off; tickbox under the Vote Overrides dropdown). Pool = `CurseCardPool` filtered by the game's `CanBeGeneratedByModifiers` flag (10 curses as of v0.110.0); receipt extends the override receipt ("Cursed Overrides: gained X!"); in-game visual is vanilla's card-added preview via `CardPileCmd.AddCursesToDeck`. Spec `docs/superpowers/specs/2026-08-01-cursed-overrides-design.md`, plan `docs/superpowers/plans/2026-08-01-cursed-overrides.md`, commits `cursed-overrides/0`–`/7`, tag `cursed-overrides-complete`.

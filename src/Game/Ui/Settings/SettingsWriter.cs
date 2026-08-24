@@ -36,6 +36,7 @@ public static class SettingsWriter {
         json["relicChoices"] = settings.RelicChoices;
         json["voteOverridesPerAct"] = settings.VoteOverridesPerAct;
         json["cursedOverrides"] = settings.CursedOverrides;
+        json["combatCardVotesOnly"] = settings.CombatCardVotesOnly;
 
         WriteAtomic(path, json);
     }

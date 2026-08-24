@@ -21,7 +21,8 @@ public sealed record ChatSettings(
     bool AllowSameBossTwice = false,
     int RelicChoices = 1,
     int VoteOverridesPerAct = 1,
-    bool CursedOverrides = false);
+    bool CursedOverrides = false,
+    bool CombatCardVotesOnly = false);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -263,9 +264,16 @@ public static class ModSettings {
                 else warnings.Add("cursedOverrides is not a boolean; using default (false)");
             }
 
+            bool combatCardVotesOnly = false;
+            if (root.TryGetProperty("combatCardVotesOnly", out var combatOnlyProp)) {
+                if (combatOnlyProp.ValueKind == JsonValueKind.True) combatCardVotesOnly = true;
+                else if (combatOnlyProp.ValueKind == JsonValueKind.False) combatCardVotesOnly = false;
+                else warnings.Add("combatCardVotesOnly is not a boolean; using default (false)");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, combatCardVotesOnly),
                 warnings);
         }
     }

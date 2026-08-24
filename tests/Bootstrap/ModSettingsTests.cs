@@ -801,6 +801,30 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- combatCardVotesOnly (card-scope: chat votes only on combat-origin card rewards, default false) ---
+
+    [Theory]
+    [InlineData("\"combatCardVotesOnly\": true,", true, false)]
+    [InlineData("\"combatCardVotesOnly\": false,", false, false)]
+    [InlineData("\"combatCardVotesOnly\": \"yes\",", false, true)]  // non-bool -> default + warning
+    [InlineData("", false, false)]                                   // missing -> default, no warning
+    public void CombatCardVotesOnly_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(expected, success.Settings.CombatCardVotesOnly);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("combatCardVotesOnly")));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

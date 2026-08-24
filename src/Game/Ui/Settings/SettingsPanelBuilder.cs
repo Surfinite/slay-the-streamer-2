@@ -180,6 +180,10 @@ internal static class SettingsPanelBuilder {
         AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));
         AddDivider(root);
+        AddCheckboxRow(root, "Card-reward votes only occur after combat", current.CombatCardVotesOnly,
+            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CombatCardVotesOnly = value }));
+        AddHelpText(root, "When on, chat only votes on card rewards earned from combat.\nEvent, relic (Orrery etc.) and Draft card picks are streamer-free,\nwith no skip budget or mandatory look.");
+        AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);
         AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
         AddDivider(root);

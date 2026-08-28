@@ -145,8 +145,9 @@ Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the
 | Pre-spec landscape research (settings UI hook surface + tunable-knobs inventory) | `notes/09-settings-and-tunable-knobs.md` |
 | Pre-spec landscape research (B.3 act boss vote feasibility) | `notes/10-boss-vote-feasibility.md` |
 | Pre-spec landscape research (Bossy Relics pick-1-of-N relic rewards) | `notes/11-bossy-relics-investigation.md` |
+| Pre-spec landscape research (every card-choice surface: reward screen vs `CardSelectCmd` families, vote-shape problem, candidate rulings for FrostPrime) | `notes/13-card-choice-surfaces-inventory.md` |
 | StS2 asset extraction workflow (`.pck` → `decompiled/sts2-assets/`) | `notes/asset-extraction.md` |
-| Decompiled game source (regenerable, gitignored) | `decompiled/sts2/MegaCrit/sts2/...` |
+| Decompiled game source (regenerable, gitignored) | `decompiled/sts2-v0.111.0/` (fresh, XML-free, 2026-08-28 — grep THIS); `decompiled/sts2/` is a stale May-2026 tree; `decompiled/sts2-v0.107.1/` = default branch |
 | Reference repos (gitignored, cloned per-workspace) | `references/SlayTheStreamer-sts1/` (Tempus's StS1 original — feature reference only, no license, no code copy); `references/STS2FirstMod/` (jiegec's StS2 modding toolkit reference) |
 
 ---

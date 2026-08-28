@@ -22,7 +22,7 @@ public sealed record ChatSettings(
     int RelicChoices = 1,
     int VoteOverridesPerAct = 1,
     bool CursedOverrides = false,
-    bool CombatCardVotesOnly = false);
+    bool CombatCardVotesOnly = true);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -264,11 +264,14 @@ public static class ModSettings {
                 else warnings.Add("cursedOverrides is not a boolean; using default (false)");
             }
 
-            bool combatCardVotesOnly = false;
+            // Default flipped false->true post-v0.2.2 (Surfinite, 2026-08-24): post-combat-only
+            // votes are the more intuitive baseline. Files that booted v0.2.2 already carry an
+            // explicit false via the additive migration, so only never-stamped files see this.
+            bool combatCardVotesOnly = true;
             if (root.TryGetProperty("combatCardVotesOnly", out var combatOnlyProp)) {
                 if (combatOnlyProp.ValueKind == JsonValueKind.True) combatCardVotesOnly = true;
                 else if (combatOnlyProp.ValueKind == JsonValueKind.False) combatCardVotesOnly = false;
-                else warnings.Add("combatCardVotesOnly is not a boolean; using default (false)");
+                else warnings.Add("combatCardVotesOnly is not a boolean; using default (true)");
             }
 
             var creds = new ChatCredentials(username, oauthToken);

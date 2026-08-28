@@ -14,5 +14,5 @@
   "relicChoices": 1,
   "voteOverridesPerAct": 1,
   "cursedOverrides": false,
-  "combatCardVotesOnly": false
+  "combatCardVotesOnly": true
 }

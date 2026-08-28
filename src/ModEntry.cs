@@ -189,6 +189,7 @@ public static class ModEntry {
                     dispatcher);
                 Voter.Default = Coordinator;
                 VoterNamePoolHook.Attach(Coordinator);
+                VoterSpeechPatch.Attach(multi, dispatcher);
 
                 // D8 receipts: startup (one-shot on Twitch connect) + YT state-change
                 // (120s debounce). Twitch is the only platform receipts are sent on (D3).

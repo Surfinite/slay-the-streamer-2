@@ -42,6 +42,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\CursedOverrides.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CombatOriginTags.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\VoterNamesPatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\VoterSpeechPatch.cs" />
   </ItemGroup>
 
   <ItemGroup>

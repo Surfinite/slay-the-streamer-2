@@ -196,10 +196,10 @@ internal static class SettingsPanelBuilder {
         AddDivider(root);
         AddCheckboxRow(root, "Name enemies after chat voters", current.NameEnemiesAfterVoters,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NameEnemiesAfterVoters = value }));
-        AddHelpText(root, "Enemies are named after chatters who vote. Everyone gets a turn\nbefore anyone gets a second enemy (repeats become \"Jr.\", then \"III\").");
+        AddHelpText(root, "Enemies are named after chatters who vote.");
         AddDivider(root);
         AddEnemyChatSecondsDropdown(root, current, debouncer);
-        AddHelpText(root, "How long a named enemy shows its chatter's messages in a speech bubble.\nBubble text is the raw chat message - your channel moderation is the filter.\nOff disables bubbles. Only applies while enemy naming is on.");
+        AddHelpText(root, "How long a named enemy shows its chatter's messages in a speech bubble.\nOff disables bubbles. Only applies while enemy naming is on.");
         AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));

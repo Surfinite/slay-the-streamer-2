@@ -4,13 +4,15 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
-## Voter enemy names (voter-names, implemented 2026-08-28 — operator gate PENDING)
+## Voter enemy names (voter-names, resolved 2026-08-28)
 
 `nameEnemiesAfterVoters` (bool, default on) — combat enemies get named after chatters who vote, shown under their intent icons; the pool rotates fairly (everyone gets a turn before anyone gets a second enemy; repeats decorated "Jr.", then "III"). `namedEnemiesSpeakSeconds` (int, default 5, 0 = off, only takes effect while naming is on) — a named enemy also speaks its chatter's raw messages as in-game speech bubbles for the configured duration (BBCode-stripped, truncated, cooldown = max(5s, duration)); channel moderation is the content filter. *(Was a `namedEnemiesSpeak` bool through `voter-names/10`; replaced pre-release with the duration knob on operator feedback 2026-08-28 — a stale bool key in settings files is ignored.)* Spec `docs/superpowers/specs/2026-08-28-voter-enemy-names-design.md`, plan `docs/superpowers/plans/2026-08-28-voter-enemy-names.md`, commits `voter-names/1`–`/12`.
 
 Mechanism: `SessionStarted` feeds the voter pool → `VoterNamesPatch`'s `UpdateBounds` postfix draws/labels enemy names under intent icons → `VoterSpeechPatch` repeats the named voter's chat via `NSpeechBubbleVfx`.
 
-### Operator validation matrix (voter-names; PENDING)
+### Operator validation matrix (voter-names; GREEN 2026-08-28 — Surfinite, live game + chat)
+
+All items validated except two left open as low-risk: **YT voters in the pool** (needs a live YT stream; YT flows through the identical VoterKey path the Twitch tests cover — FrostPrime's next stream doubles as the check) and **long-name shrink-to-fit** (needs an account with a 25-char name; pure width math). Post-gate tweaks folded in before release: intent shift raised 40→72 (`voter-names/11`), bubble duration became the `namedEnemiesSpeakSeconds` knob (`voter-names/12`).
 
 - [ ] No votes yet → combat enemies unnamed, fully vanilla layout (no intent shift)
 - [ ] After first vote → next combat names enemies; log `[voter-names] named <ID> after '<name>'`

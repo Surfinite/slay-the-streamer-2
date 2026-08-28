@@ -14,6 +14,8 @@ Mechanism: `SessionStarted` feeds the voter pool → `VoterNamesPatch`'s `Update
 
 All items validated except two left open as low-risk: **YT voters in the pool** (needs a live YT stream; YT flows through the identical VoterKey path the Twitch tests cover — FrostPrime's next stream doubles as the check) and **long-name shrink-to-fit** (needs an account with a 25-char name; pure width math). Post-gate tweaks folded in before release: intent shift raised 40→72 (`voter-names/11`), bubble duration became the `namedEnemiesSpeakSeconds` knob (`voter-names/12`).
 
+**Default-branch verification (2026-08-28, Workshop v0.3.0 on game v0.107.1):** names, fairness rotation, and speech bubbles all fully working — no degrade needed. (The same run confirmed `combatCardVotesOnly` is inoperative there; see the card-scope entry.)
+
 - [ ] No votes yet → combat enemies unnamed, fully vanilla layout (no intent shift)
 - [ ] After first vote → next combat names enemies; log `[voter-names] named <ID> after '<name>'`
 - [ ] Fairness: with 2 test voters, 3+ enemies → both names appear before any "Jr."
@@ -37,7 +39,9 @@ New bound game-surface contacts to re-verify on every game update: `NCreature.Up
 
 ---
 
-## Combat-only card-reward votes (card-scope, implemented 2026-08-24 — operator gate PENDING)
+## Combat-only card-reward votes (card-scope, resolved 2026-08-28; gate green 2026-08-28 pre-v0.2.2, default flipped ON in v0.3.0)
+
+**Default-branch limitation (verified live 2026-08-28 on game v0.107.1):** `Hook.BeforeCombatRewardOffered` doesn't exist on the default branch (added to the game post-v0.107.1), so `CombatOriginTags` skips registration (one Error log) and the toggle goes inoperative by design — all card rewards vote, one-time Warn. Expected log pair, not a bug. Documented in the v0.3.0 release notes + README. Self-heals on any future default-branch update that ships the hook.
 
 `combatCardVotesOnly` (bool, default off = every card-reward screen votes, the shipped v0.2.1 behavior). Checkbox "Card-reward votes only occur after combat". When on, chat votes only on combat-origin card rewards; relic obtains (Orrery/Kaleidoscope/Glass Eye/Lost Coffer, incl. via Neow), pure event rewards (Future of Potions, Trial, Brain Leech, Colorful Philosophers, Crystal Sphere), Dream Catcher, and Draft-modifier picks are streamer-free — **fully vanilla**: no vote, no mandatory-look, no skip-budget charge, vanilla Skip semantics (reward stays claimable), no budget counter label. Combat rewards (map/?/event fights incl. Punch-Off, The Hunt bonus, Prayer Wheel / White Star extras) vote as before. Ported from SabotageTheStreamer's rig-proven scope/ slice (handoff `notes/handoff-2026-08-24-combat-only-card-votes.md`); commits `card-scope/1`–`/3`.
 

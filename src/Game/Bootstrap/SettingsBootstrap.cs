@@ -60,6 +60,8 @@ public static class SettingsBootstrap {
         ["voteOverridesPerAct"]  = 1,
         ["cursedOverrides"]      = false,
         ["combatCardVotesOnly"]  = true,
+        ["nameEnemiesAfterVoters"] = true,
+        ["namedEnemiesSpeak"]      = true,
     };
 
     /// <summary>

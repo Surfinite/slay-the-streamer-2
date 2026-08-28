@@ -827,6 +827,52 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // --- nameEnemiesAfterVoters / namedEnemiesSpeak (voter-names, both default true) ---
+
+    [Theory]
+    [InlineData("\"nameEnemiesAfterVoters\": true,", true, false)]
+    [InlineData("\"nameEnemiesAfterVoters\": false,", false, false)]
+    [InlineData("\"nameEnemiesAfterVoters\": \"yes\",", true, true)]  // non-bool -> default + warning
+    [InlineData("", true, false)]                                     // missing -> default, no warning
+    public void NameEnemiesAfterVoters_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(expected, success.Settings.NameEnemiesAfterVoters);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("nameEnemiesAfterVoters")));
+        } finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData("\"namedEnemiesSpeak\": true,", true, false)]
+    [InlineData("\"namedEnemiesSpeak\": false,", false, false)]
+    [InlineData("\"namedEnemiesSpeak\": \"yes\",", true, true)]
+    [InlineData("", true, false)]
+    public void NamedEnemiesSpeak_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var result = ModSettings.Load(path);
+            var success = Assert.IsType<SettingsResult.Success>(result);
+            Assert.Equal(expected, success.Settings.NamedEnemiesSpeak);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("namedEnemiesSpeak")));
+        } finally { File.Delete(path); }
+    }
+
     private static string WriteTempJson(string contents) {
         var path = Path.Combine(Path.GetTempPath(), "modsettings_test_" + Guid.NewGuid() + ".json");
         File.WriteAllText(path, contents);

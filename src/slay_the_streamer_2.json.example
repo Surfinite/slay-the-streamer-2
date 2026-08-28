@@ -14,5 +14,7 @@
   "relicChoices": 1,
   "voteOverridesPerAct": 1,
   "cursedOverrides": false,
-  "combatCardVotesOnly": true
+  "combatCardVotesOnly": true,
+  "nameEnemiesAfterVoters": true,
+  "namedEnemiesSpeak": true
 }

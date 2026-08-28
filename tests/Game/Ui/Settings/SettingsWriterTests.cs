@@ -141,6 +141,23 @@ public class SettingsWriterTests {
     }
 
     [Fact]
+    public void Write_persists_voter_name_settings() {
+        var path = TempPath();
+        try {
+            var settings = MakeSettings() with { NameEnemiesAfterVoters = false, NamedEnemiesSpeak = false };
+            SettingsWriter.Write(path, settings);
+
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert.False((bool)json["nameEnemiesAfterVoters"]!);
+            Assert.False((bool)json["namedEnemiesSpeak"]!);
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bak")) File.Delete(path + ".bak");
+            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
+        }
+    }
+
+    [Fact]
     public void Write_OverExistingFile_CreatesBakCopyOfPriorContents() {
         var path = TempPath();
         var bak = path + ".bak";

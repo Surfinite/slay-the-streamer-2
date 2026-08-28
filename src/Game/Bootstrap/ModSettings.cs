@@ -22,7 +22,9 @@ public sealed record ChatSettings(
     int RelicChoices = 1,
     int VoteOverridesPerAct = 1,
     bool CursedOverrides = false,
-    bool CombatCardVotesOnly = true);
+    bool CombatCardVotesOnly = true,
+    bool NameEnemiesAfterVoters = true,
+    bool NamedEnemiesSpeak = true);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -274,9 +276,23 @@ public static class ModSettings {
                 else warnings.Add("combatCardVotesOnly is not a boolean; using default (true)");
             }
 
+            bool nameEnemiesAfterVoters = true;
+            if (root.TryGetProperty("nameEnemiesAfterVoters", out var nameEnemiesProp)) {
+                if (nameEnemiesProp.ValueKind == JsonValueKind.True) nameEnemiesAfterVoters = true;
+                else if (nameEnemiesProp.ValueKind == JsonValueKind.False) nameEnemiesAfterVoters = false;
+                else warnings.Add("nameEnemiesAfterVoters is not a boolean; using default (true)");
+            }
+
+            bool namedEnemiesSpeak = true;
+            if (root.TryGetProperty("namedEnemiesSpeak", out var enemiesSpeakProp)) {
+                if (enemiesSpeakProp.ValueKind == JsonValueKind.True) namedEnemiesSpeak = true;
+                else if (enemiesSpeakProp.ValueKind == JsonValueKind.False) namedEnemiesSpeak = false;
+                else warnings.Add("namedEnemiesSpeak is not a boolean; using default (true)");
+            }
+
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, combatCardVotesOnly),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, combatCardVotesOnly, nameEnemiesAfterVoters, namedEnemiesSpeak),
                 warnings);
         }
     }

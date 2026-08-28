@@ -194,6 +194,14 @@ internal static class SettingsPanelBuilder {
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CursedOverrides = value }));
         AddHelpText(root, "Each vote override also adds a random curse card to your deck.");
         AddDivider(root);
+        AddCheckboxRow(root, "Name enemies after chat voters", current.NameEnemiesAfterVoters,
+            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NameEnemiesAfterVoters = value }));
+        AddHelpText(root, "Enemies are named after chatters who vote. Everyone gets a turn\nbefore anyone gets a second enemy (repeats become \"Jr.\", then \"III\").");
+        AddDivider(root);
+        AddCheckboxRow(root, "Named enemies repeat their voter's chat", current.NamedEnemiesSpeak,
+            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NamedEnemiesSpeak = value }));
+        AddHelpText(root, "A named enemy speaks its chatter's messages in a speech bubble.\nBubble text is the raw chat message - your channel moderation is the filter.\nOnly applies while enemy naming is on.");
+        AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
         AddHelpText(root, "Displays and increments a tag for each vote, e.g.  [b][14][/b]\nChat can vote with [b]#0!14[/b] so delayed votes don't land in the wrong tally.\nCould be useful to combat lag on YT, (might just be confusing).");

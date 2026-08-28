@@ -24,6 +24,7 @@ public sealed class VoteSession : IDisposable {
     private readonly DateTimeOffset _openedAt;
     private readonly Dictionary<int, int> _tallies;
     private readonly Dictionary<string, int> _votersByKey = new();
+    private readonly Dictionary<string, string> _displayNamesByKey = new();
     private readonly IReadOnlyList<string> _configuredPlatforms;
     private readonly Dictionary<(string Platform, int OptionIndex), int> _talliesByPlatform = new();
     private readonly Dictionary<string, DateTimeOffset> _lastVoteByPlatform = new();
@@ -54,6 +55,14 @@ public sealed class VoteSession : IDisposable {
     public TimeSpan TimeRemaining => MaxZero(_openedAt + Duration - _clock.UtcNow);
     public TimeSpan Elapsed => _clock.UtcNow - _openedAt;
     public IReadOnlyDictionary<int, int> Tallies => new Dictionary<int, int>(_tallies);
+    /// <summary>
+    /// DisplayName per VoterKey for everyone whose vote was accepted, retained
+    /// for the voter-names feature. Bounded by the MaxVoters cap (the same
+    /// early-return that bounds _votersByKey). Copy-on-read snapshot; valid in
+    /// every state — harvest on Closed/Cancelled.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> VoterDisplayNames =>
+        new Dictionary<string, string>(_displayNamesByKey);
     public IReadOnlyList<string> ConfiguredPlatforms => _configuredPlatforms;
     public IReadOnlyDictionary<(string Platform, int OptionIndex), int>? TalliesByPlatform =>
         _configuredPlatforms.Count > 1 ? _talliesByPlatform : null;
@@ -181,6 +190,7 @@ public sealed class VoteSession : IDisposable {
             _tallies[prior]--;
         }
         _votersByKey[key] = idx;
+        _displayNamesByKey[key] = msg.DisplayName;
         _tallies[idx]++;
 
         // Per-platform side-dict maintenance.

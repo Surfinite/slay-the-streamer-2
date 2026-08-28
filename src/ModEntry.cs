@@ -9,6 +9,7 @@ using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using SlayTheStreamer2.Game.Bootstrap;
 using BootstrapModSettings = SlayTheStreamer2.Game.Bootstrap.ModSettings;
+using SlayTheStreamer2.Game.DecisionVotes;
 using SlayTheStreamer2.Godot;
 using SlayTheStreamer2.Ti.Chat;
 using SlayTheStreamer2.Ti.Chat.YouTubeChat;
@@ -187,6 +188,7 @@ public static class ModEntry {
                     scheduler,
                     dispatcher);
                 Voter.Default = Coordinator;
+                VoterNamePoolHook.Attach(Coordinator);
 
                 // D8 receipts: startup (one-shot on Twitch connect) + YT state-change
                 // (120s debounce). Twitch is the only platform receipts are sent on (D3).

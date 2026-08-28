@@ -198,9 +198,8 @@ internal static class SettingsPanelBuilder {
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NameEnemiesAfterVoters = value }));
         AddHelpText(root, "Enemies are named after chatters who vote. Everyone gets a turn\nbefore anyone gets a second enemy (repeats become \"Jr.\", then \"III\").");
         AddDivider(root);
-        AddCheckboxRow(root, "Named enemies repeat their voter's chat", current.NamedEnemiesSpeak,
-            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NamedEnemiesSpeak = value }));
-        AddHelpText(root, "A named enemy speaks its chatter's messages in a speech bubble.\nBubble text is the raw chat message - your channel moderation is the filter.\nOnly applies while enemy naming is on.");
+        AddEnemyChatSecondsDropdown(root, current, debouncer);
+        AddHelpText(root, "How long a named enemy shows its chatter's messages in a speech bubble.\nBubble text is the raw chat message - your channel moderation is the filter.\nOff disables bubbles. Only applies while enemy naming is on.");
         AddDivider(root);
         AddCheckboxRow(root, "Show vote tag", current.ShowVoteTag,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { ShowVoteTag = value }));
@@ -387,6 +386,56 @@ internal static class SettingsPanelBuilder {
         dropdown.ItemSelected += idx => {
             var value = dropdown.GetItemMetadata((int)idx).AsInt32();
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { VoteOverridesPerAct = value });
+        };
+
+        inner.AddChild(dropdown);
+        parent.AddChild(row);
+    }
+
+    private static void AddEnemyChatSecondsDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
+
+        inner.AddChild(MakeRowLabel("Enemy chat message duration"));
+
+        var dropdown = new OptionButton {
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(115, 0),
+        };
+        if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
+        dropdown.AddThemeFontSizeOverride("font_size", 22);
+        dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
+
+        (string Label, int Value)[] entries = [
+            ("Off", 0),
+            ("1s", 1),
+            ("2s", 2),
+            ("3s", 3),
+            ("5s", 5),
+            ("8s", 8),
+            ("10s", 10)
+        ];
+        int selectedIdx = -1;
+        for (int i = 0; i < entries.Length; i++) {
+            dropdown.AddItem(entries[i].Label);
+            dropdown.SetItemMetadata(i, entries[i].Value);
+            if (entries[i].Value == current.NamedEnemiesSpeakSeconds) selectedIdx = i;
+        }
+        if (selectedIdx == -1) {
+            dropdown.AddItem($"Custom ({current.NamedEnemiesSpeakSeconds}s)");
+            int customIdx = dropdown.ItemCount - 1;
+            dropdown.SetItemMetadata(customIdx, current.NamedEnemiesSpeakSeconds);
+            selectedIdx = customIdx;
+        }
+        dropdown.Selected = selectedIdx;
+
+        var popup = dropdown.GetPopup();
+        if (_kreonRegular != null) popup.AddThemeFontOverride("font", _kreonRegular);
+        popup.AddThemeFontSizeOverride("font_size", 22);
+
+        dropdown.ItemSelected += idx => {
+            var value = dropdown.GetItemMetadata((int)idx).AsInt32();
+            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NamedEnemiesSpeakSeconds = value });
         };
 
         inner.AddChild(dropdown);

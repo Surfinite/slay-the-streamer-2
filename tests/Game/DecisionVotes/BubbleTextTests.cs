@@ -44,8 +44,4 @@ public class BubbleTextTests {
         Assert.Equal(new string('x', 64) + "...", result);
     }
 
-    [Fact]
-    public void RawCharCount_ignores_spaces() {
-        Assert.Equal(10, BubbleText.RawCharCount("hello there"));
-    }
 }

@@ -61,7 +61,7 @@ public static class SettingsBootstrap {
         ["cursedOverrides"]      = false,
         ["combatCardVotesOnly"]  = true,
         ["nameEnemiesAfterVoters"] = true,
-        ["namedEnemiesSpeak"]      = true,
+        ["namedEnemiesSpeakSeconds"] = 5,
     };
 
     /// <summary>

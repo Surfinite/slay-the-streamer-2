@@ -38,7 +38,7 @@ public static class SettingsWriter {
         json["cursedOverrides"] = settings.CursedOverrides;
         json["combatCardVotesOnly"] = settings.CombatCardVotesOnly;
         json["nameEnemiesAfterVoters"] = settings.NameEnemiesAfterVoters;
-        json["namedEnemiesSpeak"] = settings.NamedEnemiesSpeak;
+        json["namedEnemiesSpeakSeconds"] = settings.NamedEnemiesSpeakSeconds;
 
         WriteAtomic(path, json);
     }

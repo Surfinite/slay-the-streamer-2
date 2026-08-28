@@ -25,7 +25,4 @@ internal static class BubbleText {
         }
         return text;
     }
-
-    /// <summary>Display-duration input: char count sans spaces (vanilla TalkCmd's rule).</summary>
-    public static int RawCharCount(string text) => text.Replace(" ", "").Length;
 }

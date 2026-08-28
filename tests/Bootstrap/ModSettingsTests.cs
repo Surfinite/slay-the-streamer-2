@@ -851,12 +851,17 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
+    // namedEnemiesSpeakSeconds: bubble display duration; 0 = off; replaced the
+    // v-unreleased namedEnemiesSpeak bool (Surfinite operator feedback 2026-08-28).
     [Theory]
-    [InlineData("\"namedEnemiesSpeak\": true,", true, false)]
-    [InlineData("\"namedEnemiesSpeak\": false,", false, false)]
-    [InlineData("\"namedEnemiesSpeak\": \"yes\",", true, true)]
-    [InlineData("", true, false)]
-    public void NamedEnemiesSpeak_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
+    [InlineData("\"namedEnemiesSpeakSeconds\": 0,", 0, false)]     // 0 = off, valid
+    [InlineData("\"namedEnemiesSpeakSeconds\": 5,", 5, false)]
+    [InlineData("\"namedEnemiesSpeakSeconds\": 30,", 30, false)]   // max, valid
+    [InlineData("\"namedEnemiesSpeakSeconds\": 31,", 30, true)]    // above max -> clamp + warning
+    [InlineData("\"namedEnemiesSpeakSeconds\": -1,", 0, true)]     // below 0 -> clamp + warning
+    [InlineData("\"namedEnemiesSpeakSeconds\": \"long\",", 5, true)] // non-int -> default + warning
+    [InlineData("", 5, false)]                                     // missing -> default, no warning
+    public void NamedEnemiesSpeakSeconds_parses_clamps_and_defaults(string fragment, int expected, bool expectWarning) {
         var path = WriteTempJson($$"""
         {
             "schemaVersion": 1, "channel": "x", "username": "y",
@@ -868,8 +873,8 @@ public class ModSettingsTests {
         try {
             var result = ModSettings.Load(path);
             var success = Assert.IsType<SettingsResult.Success>(result);
-            Assert.Equal(expected, success.Settings.NamedEnemiesSpeak);
-            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("namedEnemiesSpeak")));
+            Assert.Equal(expected, success.Settings.NamedEnemiesSpeakSeconds);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("namedEnemiesSpeakSeconds")));
         } finally { File.Delete(path); }
     }
 

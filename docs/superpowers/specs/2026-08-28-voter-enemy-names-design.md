@@ -216,6 +216,13 @@ label — follow the PortraitFit precedent at implementation time).
 
 ## 10. Decisions log
 
+- 2026-08-28 post-operator-pass (Surfinite): `namedEnemiesSpeak` (bool)
+  replaced pre-release by `namedEnemiesSpeakSeconds` (int, default 5, 0 =
+  off) — bubbles show for a fixed configured duration instead of vanilla's
+  per-char formula, which read too short; intent shift raised 40→72px
+  (name gap 6→38px) after the intent damage number overlapped the name.
+  §2/§6 as originally written describe the pre-pivot design.
+
 - 2026-08-28 (Surfinite): default ON for both settings; bundle release with
   the `combatCardVotesOnly` default flip (no v0.2.3; ships as v0.3.0).
 - 2026-08-28 (Surfinite): Jr./Roman decorations; session-lifetime pool;

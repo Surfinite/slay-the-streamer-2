@@ -6,7 +6,7 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ## Voter enemy names (voter-names, implemented 2026-08-28 — operator gate PENDING)
 
-`nameEnemiesAfterVoters` (bool, default on) — combat enemies get named after chatters who vote, shown under their intent icons; the pool rotates fairly (everyone gets a turn before anyone gets a second enemy; repeats decorated "Jr.", then "III"). `namedEnemiesSpeak` (bool, default on, only takes effect while naming is on) — a named enemy also speaks its chatter's raw messages as in-game speech bubbles (BBCode-stripped, truncated, cooldown-limited); channel moderation is the content filter. Spec `docs/superpowers/specs/2026-08-28-voter-enemy-names-design.md`, plan `docs/superpowers/plans/2026-08-28-voter-enemy-names.md`, commits `voter-names/1`–`/9`.
+`nameEnemiesAfterVoters` (bool, default on) — combat enemies get named after chatters who vote, shown under their intent icons; the pool rotates fairly (everyone gets a turn before anyone gets a second enemy; repeats decorated "Jr.", then "III"). `namedEnemiesSpeakSeconds` (int, default 5, 0 = off, only takes effect while naming is on) — a named enemy also speaks its chatter's raw messages as in-game speech bubbles for the configured duration (BBCode-stripped, truncated, cooldown = max(5s, duration)); channel moderation is the content filter. *(Was a `namedEnemiesSpeak` bool through `voter-names/10`; replaced pre-release with the duration knob on operator feedback 2026-08-28 — a stale bool key in settings files is ignored.)* Spec `docs/superpowers/specs/2026-08-28-voter-enemy-names-design.md`, plan `docs/superpowers/plans/2026-08-28-voter-enemy-names.md`, commits `voter-names/1`–`/12`.
 
 Mechanism: `SessionStarted` feeds the voter pool → `VoterNamesPatch`'s `UpdateBounds` postfix draws/labels enemy names under intent icons → `VoterSpeechPatch` repeats the named voter's chat via `NSpeechBubbleVfx`.
 
@@ -20,9 +20,9 @@ Mechanism: `SessionStarted` feeds the voter pool → `VoterNamesPatch`'s `Update
 - [ ] Name hides during enemy attack animation and in fast-mode instant kills (mirrors intent fade)
 - [ ] Hover nameplate (vanilla) unaffected; bestiary and boss-vote popup show NO names
 - [ ] Boss + mid-combat summon get names; player creature never named
-- [ ] Bubble: named voter's message appears from their enemy; 8s cooldown holds under spam; `[b]test[/b]` renders as `(b)test(/b)`; >64-char message truncates with "..."
+- [ ] Bubble: named voter's message appears from their enemy for the configured seconds; cooldown (max of 5s and the duration) holds under spam; `[b]test[/b]` renders as `(b)test(/b)`; >64-char message truncates with "..."
 - [ ] Bubble suppressed while a vote popup is open
-- [ ] `namedEnemiesSpeak` off → names yes, bubbles no; `nameEnemiesAfterVoters` off mid-run → labels vanish on next layout pass, vanilla layout back
+- [ ] `namedEnemiesSpeakSeconds` = Off → names yes, bubbles no; `nameEnemiesAfterVoters` off mid-run → labels vanish on next layout pass, vanilla layout back
 - [ ] Both off → full vanilla; MP run → full vanilla
 - [ ] Save-quit → Continue mid-combat → fresh names appear (accepted divergence)
 - [ ] YT + Twitch voters both enter the pool (check `[voter-names] pool now N` log line)

@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using Godot;
 using MegaCrit.Sts2.Core.Helpers;        // AddChildSafely
 using MegaCrit.Sts2.Core.Nodes.Vfx;      // NSpeechBubbleVfx
-using MegaCrit.Sts2.Core.Saves;          // SaveManager, FastModeType
 using MegaCrit.Sts2.Core.Settings;       // VfxColor
 using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Ti.Chat;
@@ -21,7 +19,6 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// main-thread dispatcher. Pure cosmetics; every path try/catch → Warn.
 /// </summary>
 internal static class VoterSpeechPatch {
-    private static readonly TimeSpan Cooldown = TimeSpan.FromSeconds(8);
     private static readonly Dictionary<string, DateTimeOffset> _lastBubbleByVoter = new();
     private static IMainThreadDispatcher? _dispatcher;
 
@@ -33,7 +30,9 @@ internal static class VoterSpeechPatch {
     private static void OnMessage(object? sender, ChatMessage msg) {
         try {
             var settings = ModSettings.Current;
-            if (settings is null || !settings.NamedEnemiesSpeak || !settings.NameEnemiesAfterVoters) return;
+            if (settings is null || !settings.NameEnemiesAfterVoters) return;
+            int speakSeconds = settings.NamedEnemiesSpeakSeconds;
+            if (speakSeconds <= 0) return;   // 0 = bubbles off
             var dispatcher = _dispatcher;
             if (dispatcher is null) return;
 
@@ -43,19 +42,23 @@ internal static class VoterSpeechPatch {
 
             // Cooldown check on the chat thread (cheap, racy-tolerant: worst
             // case one extra bubble). The dictionary is only mutated here.
+            // Cooldown = display duration (floor 5s): the next bubble may start
+            // right as the previous expires, and the floor keeps an anti-spam
+            // gap even at very short durations.
+            var cooldown = TimeSpan.FromSeconds(Math.Max(5, speakSeconds));
             lock (_lastBubbleByVoter) {
                 var now = DateTimeOffset.UtcNow;
-                if (_lastBubbleByVoter.TryGetValue(voterKey, out var last) && now - last < Cooldown) return;
+                if (_lastBubbleByVoter.TryGetValue(voterKey, out var last) && now - last < cooldown) return;
                 _lastBubbleByVoter[voterKey] = now;
             }
 
-            dispatcher.Post(() => ShowBubbleOnMainThread(voterKey, text));
+            dispatcher.Post(() => ShowBubbleOnMainThread(voterKey, text, speakSeconds));
         } catch (Exception ex) {
             TiLog.Warn($"[SlayTheStreamer2][voter-names] bubble handler failed: {ex.Message}");
         }
     }
 
-    private static void ShowBubbleOnMainThread(string voterKey, string text) {
+    private static void ShowBubbleOnMainThread(string voterKey, string text, int speakSeconds) {
         try {
             if (OverlayOcclusion.IsOccludingOverlayVisible()) return;   // popup up: bubble would be buried
             foreach (var (node, key) in VoterNamesPatch.NamedLivingCreatures()) {
@@ -63,9 +66,10 @@ internal static class VoterSpeechPatch {
                 var creature = node.Entity;
                 if (creature is null || creature.IsDead) return;
 
-                bool fast = SaveManager.Instance.PrefsSave.FastMode == FastModeType.Fast;
-                double seconds = Math.Max(0.5, BubbleText.RawCharCount(text) * (fast ? 0.10 : 0.12));
-                var vfx = NSpeechBubbleVfx.Create(text, creature, seconds, VfxColor.White);
+                // Fixed display duration from settings (was vanilla's per-char
+                // formula; operator feedback 2026-08-28: per-char read too short
+                // and a "how long" knob is the more intuitive control).
+                var vfx = NSpeechBubbleVfx.Create(text, creature, speakSeconds, VfxColor.White);
                 if (vfx != null) {
                     creature.GetVfxContainer()?.AddChildSafely(vfx);
                     TiLog.Info($"[SlayTheStreamer2][voter-names] bubble from '{voterKey}' ({text.Length} chars)");

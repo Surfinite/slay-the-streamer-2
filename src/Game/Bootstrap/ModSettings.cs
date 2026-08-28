@@ -24,7 +24,7 @@ public sealed record ChatSettings(
     bool CursedOverrides = false,
     bool CombatCardVotesOnly = true,
     bool NameEnemiesAfterVoters = true,
-    bool NamedEnemiesSpeak = true);
+    int NamedEnemiesSpeakSeconds = 5);
 
 public abstract record SettingsResult {
     public sealed record Success(ChatSettings Settings, IReadOnlyList<string> Warnings) : SettingsResult;
@@ -283,16 +283,27 @@ public static class ModSettings {
                 else warnings.Add("nameEnemiesAfterVoters is not a boolean; using default (true)");
             }
 
-            bool namedEnemiesSpeak = true;
-            if (root.TryGetProperty("namedEnemiesSpeak", out var enemiesSpeakProp)) {
-                if (enemiesSpeakProp.ValueKind == JsonValueKind.True) namedEnemiesSpeak = true;
-                else if (enemiesSpeakProp.ValueKind == JsonValueKind.False) namedEnemiesSpeak = false;
-                else warnings.Add("namedEnemiesSpeak is not a boolean; using default (true)");
+            // Replaced the unreleased namedEnemiesSpeak bool (operator feedback
+            // 2026-08-28): duration in seconds, 0 = bubbles off. A leftover
+            // namedEnemiesSpeak key in existing files is ignored harmlessly.
+            int namedEnemiesSpeakSeconds = 5;
+            if (root.TryGetProperty("namedEnemiesSpeakSeconds", out var speakSecondsProp)) {
+                if (speakSecondsProp.ValueKind != JsonValueKind.Number || !speakSecondsProp.TryGetInt32(out var rawSpeakSecs)) {
+                    warnings.Add("namedEnemiesSpeakSeconds is not an integer; using default (5)");
+                } else if (rawSpeakSecs < 0) {
+                    warnings.Add($"namedEnemiesSpeakSeconds {rawSpeakSecs} below minimum; clamped to 0 (off)");
+                    namedEnemiesSpeakSeconds = 0;
+                } else if (rawSpeakSecs > 30) {
+                    warnings.Add($"namedEnemiesSpeakSeconds {rawSpeakSecs} above maximum; clamped to 30");
+                    namedEnemiesSpeakSeconds = 30;
+                } else {
+                    namedEnemiesSpeakSeconds = rawSpeakSecs;
+                }
             }
 
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, combatCardVotesOnly, nameEnemiesAfterVoters, namedEnemiesSpeak),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, combatCardVotesOnly, nameEnemiesAfterVoters, namedEnemiesSpeakSeconds),
                 warnings);
         }
     }

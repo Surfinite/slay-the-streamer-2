@@ -144,12 +144,12 @@ public class SettingsWriterTests {
     public void Write_persists_voter_name_settings() {
         var path = TempPath();
         try {
-            var settings = MakeSettings() with { NameEnemiesAfterVoters = false, NamedEnemiesSpeak = false };
+            var settings = MakeSettings() with { NameEnemiesAfterVoters = false, NamedEnemiesSpeakSeconds = 0 };
             SettingsWriter.Write(path, settings);
 
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             Assert.False((bool)json["nameEnemiesAfterVoters"]!);
-            Assert.False((bool)json["namedEnemiesSpeak"]!);
+            Assert.Equal(0, (int)json["namedEnemiesSpeakSeconds"]!);
         } finally {
             if (File.Exists(path)) File.Delete(path);
             if (File.Exists(path + ".bak")) File.Delete(path + ".bak");

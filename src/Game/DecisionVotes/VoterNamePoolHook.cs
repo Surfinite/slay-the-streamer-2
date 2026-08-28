@@ -27,10 +27,12 @@ internal static class VoterNamePoolHook {
 
     private static void Harvest(object? sender, VoteSession session) {
         try {
+            int voterCount;
             lock (Gate) {
                 Pool.AddVoters(session.VoterDisplayNames);
+                voterCount = Pool.DistinctVoterCount;
             }
-            TiLog.Info($"[SlayTheStreamer2][voter-names] pool now {Pool.DistinctVoterCount} distinct voter(s)");
+            TiLog.Info($"[SlayTheStreamer2][voter-names] pool now {voterCount} distinct voter(s)");
         } catch (Exception ex) {
             TiLog.Warn($"[SlayTheStreamer2][voter-names] voter harvest failed: {ex.Message}");
         }

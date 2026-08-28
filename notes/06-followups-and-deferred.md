@@ -4,6 +4,31 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Voter enemy names (voter-names, implemented 2026-08-28 — operator gate PENDING)
+
+`nameEnemiesAfterVoters` (bool, default on) — combat enemies get named after chatters who vote, shown under their intent icons; the pool rotates fairly (everyone gets a turn before anyone gets a second enemy; repeats decorated "Jr.", then "III"). `namedEnemiesSpeak` (bool, default on, only takes effect while naming is on) — a named enemy also speaks its chatter's raw messages as in-game speech bubbles (BBCode-stripped, truncated, cooldown-limited); channel moderation is the content filter. Spec `docs/superpowers/specs/2026-08-28-voter-enemy-names-design.md`, plan `docs/superpowers/plans/2026-08-28-voter-enemy-names.md`, commits `voter-names/1`–`/9`.
+
+Mechanism: `SessionStarted` feeds the voter pool → `VoterNamesPatch`'s `UpdateBounds` postfix draws/labels enemy names under intent icons → `VoterSpeechPatch` repeats the named voter's chat via `NSpeechBubbleVfx`.
+
+### Operator validation matrix (voter-names; PENDING)
+
+- [ ] No votes yet → combat enemies unnamed, fully vanilla layout (no intent shift)
+- [ ] After first vote → next combat names enemies; log `[voter-names] named <ID> after '<name>'`
+- [ ] Fairness: with 2 test voters, 3+ enemies → both names appear before any "Jr."
+- [ ] "Jr." then "III" appear only after pool exhaustion (1 voter, several enemies)
+- [ ] Intent icons shifted up; name bobs in sync with first icon; multi-icon move (MultiAttack+Buff) still centered
+- [ ] Name hides during enemy attack animation and in fast-mode instant kills (mirrors intent fade)
+- [ ] Hover nameplate (vanilla) unaffected; bestiary and boss-vote popup show NO names
+- [ ] Boss + mid-combat summon get names; player creature never named
+- [ ] Bubble: named voter's message appears from their enemy; 8s cooldown holds under spam; `[b]test[/b]` renders as `(b)test(/b)`; >64-char message truncates with "..."
+- [ ] Bubble suppressed while a vote popup is open
+- [ ] `namedEnemiesSpeak` off → names yes, bubbles no; `nameEnemiesAfterVoters` off mid-run → labels vanish on next layout pass, vanilla layout back
+- [ ] Both off → full vanilla; MP run → full vanilla
+- [ ] Save-quit → Continue mid-combat → fresh names appear (accepted divergence)
+- [ ] YT + Twitch voters both enter the pool (check `[voter-names] pool now N` log line)
+
+---
+
 ## Combat-only card-reward votes (card-scope, implemented 2026-08-24 — operator gate PENDING)
 
 `combatCardVotesOnly` (bool, default off = every card-reward screen votes, the shipped v0.2.1 behavior). Checkbox "Card-reward votes only occur after combat". When on, chat votes only on combat-origin card rewards; relic obtains (Orrery/Kaleidoscope/Glass Eye/Lost Coffer, incl. via Neow), pure event rewards (Future of Potions, Trial, Brain Leech, Colorful Philosophers, Crystal Sphere), Dream Catcher, and Draft-modifier picks are streamer-free — **fully vanilla**: no vote, no mandatory-look, no skip-budget charge, vanilla Skip semantics (reward stays claimable), no budget counter label. Combat rewards (map/?/event fights incl. Punch-Off, The Hunt bonus, Prayer Wheel / White Star extras) vote as before. Ported from SabotageTheStreamer's rig-proven scope/ slice (handoff `notes/handoff-2026-08-24-combat-only-card-votes.md`); commits `card-scope/1`–`/3`.

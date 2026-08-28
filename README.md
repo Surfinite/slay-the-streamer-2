@@ -137,6 +137,7 @@ The mod also plays nicely with two vanilla Custom Mode modifiers:
 - **Vote overrides** *(new in v0.2)* — a per-act budget (default 1) to overrule chat: while a card-reward or Ancient vote is counting down, just click the option you want — or Skip — and the vote ends instantly with your pick. Chat is told, e.g. `Surfinite overrode the vote and took Ricochet. 0 overrides remaining this act`. Skipping mid-vote costs an override, not a card skip.
 - **Relic choices** *(new in v0.2)* — treasure chests and elite kills can offer 2–4 relics instead of 1; you pick one and the rest go back into the relic pool.
 - **Cursed Overrides** *(new in v0.2.1, off by default)* — overriding chat has a price: every vote override you spend also adds a **random curse card** to your deck, with the vanilla card-added animation and a chat receipt naming the curse (`… Cursed Overrides: gained Injury!`). The curse is drawn uniformly from the game's generic curse pool (special-purpose curses like Ascender's Bane are excluded).
+- **Enemies named after voters** *(new in v0.3.0, on by default)* — enemy creatures are named after chatters who vote, shown under their intent icons. Everyone gets a turn before anyone gets a second enemy (repeats become "Jr.", then "III"). With the companion setting on, a named enemy also **speaks its chatter's messages** as in-game speech bubbles. Bubble text is the raw chat message — your channel moderation is the content filter (turn just the bubbles off if that concerns you).
 
 ---
 
@@ -158,6 +159,8 @@ Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list.
 - **Streamer card skips / act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
 - **Streamer vote overrides / act** — how many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). While a card-reward or Ancient vote is counting down, click the option you want (or Skip) and the vote ends instantly with your pick. Skipping mid-vote costs an override, not a card skip. Clicks within the first ~1.5 seconds of a vote countdown are ignored, so that an accidental double-click to open the vote would never spend an override you didn't intend to.
 - **Cursed Overrides** — when on, each vote override you spend also adds a random curse card to your deck. Off by default.
+- **Name enemies after chat voters** — enemies get named after chatters who vote; fair rotation, repeats decorated "Jr."/"III". On by default.
+- **Named enemies repeat their voter's chat** — a named enemy speaks its chatter's messages in a speech bubble (raw message text; your channel moderation is the filter). On by default; only applies while naming is on.
 - **Show vote tag** — show the `[NN]` vote-ID tag in chat receipts and the on-screen tally. Helpful if your YT chat has stream delay.
 - **Vote tally side** — which side of the screen the on-screen tally overlay sits on.
 - **Relic choices** — how many relics you get to choose from per treasure chest and elite kill (1–4, default 1). You pick one; the rest go back into the relic pool. 1 = vanilla behavior. Not a chat vote — this is streamer-only.

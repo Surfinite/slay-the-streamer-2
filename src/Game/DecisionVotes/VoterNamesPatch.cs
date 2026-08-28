@@ -21,8 +21,14 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// try/catch → Warn; no game-state contact anywhere.
 /// </summary>
 internal static class VoterNamesPatch {
-    internal const float IntentShiftPx = 40f;
-    internal const float NameGapPx = 6f;   // gap between shifted icons and the label
+    // Icon-to-name separation is NameGapPx alone; the name's absolute screen
+    // position is (NameGapPx - IntentShiftPx) relative to the unshifted icon
+    // bottom, so raising both by the same delta lifts the icons without moving
+    // the name. 40/6 shipped in the first operator pass with the intent's
+    // damage number (which renders below the icon's rect) overlapping the
+    // name — raised +32 on Surfinite's feedback 2026-08-28.
+    internal const float IntentShiftPx = 72f;
+    internal const float NameGapPx = 38f;   // gap between shifted icons and the label
 
     private sealed class Assignment {
         public required string VoterKey;

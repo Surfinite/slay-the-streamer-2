@@ -106,6 +106,7 @@ internal static class VoterNamesPatch {
 
                 var label = existing.Label;
                 label.Size = new Vector2(Math.Max(container.Size.X, 300f), 30f);
+                label.FitToWidth(label.Size.X);
                 label.SetBasePosition(new Vector2(
                     originalPos.X + container.Size.X * 0.5f - label.Size.X * 0.5f,
                     originalPos.Y + container.Size.Y - IntentShiftPx + NameGapPx));

@@ -70,7 +70,7 @@ internal static class VoterSpeechPatch {
                     creature.GetVfxContainer()?.AddChildSafely(vfx);
                     TiLog.Info($"[SlayTheStreamer2][voter-names] bubble from '{voterKey}' ({text.Length} chars)");
                 }
-                return;   // one enemy per voter key by construction
+                return;   // first match wins; after pool exhaustion the same key can be on several enemies — any of them speaking is acceptable
             }
         } catch (Exception ex) {
             TiLog.Warn($"[SlayTheStreamer2][voter-names] bubble create failed: {ex.Message}");

@@ -26,6 +26,12 @@ Mechanism: `SessionStarted` feeds the voter pool → `VoterNamesPatch`'s `Update
 - [ ] Both off → full vanilla; MP run → full vanilla
 - [ ] Save-quit → Continue mid-combat → fresh names appear (accepted divergence)
 - [ ] YT + Twitch voters both enter the pool (check `[voter-names] pool now N` log line)
+- [ ] Toggle naming OFF then ON mid-run → the same enemy re-shows its previously cached name (intentional; confirm it reads as expected)
+- [ ] Longest decorated name (25-char name + " XIV") shrinks to fit rather than overflowing the intent-group width
+
+### Game-update compat watchlist additions
+
+New bound game-surface contacts to re-verify on every game update: `NCreature.UpdateBounds(Node)` (private; postfix target), `NCreature.IntentContainer` / `.Entity` (public), `NSpeechBubbleVfx.Create(string, Creature, double, VfxColor)`, `Creature.GetVfxContainer()`, `SaveManager.Instance.PrefsSave.FastMode`, `Hook`-free: this feature has no Hook contacts.
 
 ---
 

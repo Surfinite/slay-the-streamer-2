@@ -16,10 +16,12 @@ namespace SlayTheStreamer2.Game.Ui;
 internal sealed partial class VoterNameLabel : Label {
     private const string KreonPath = "res://themes/kreon_regular_glyph_space_one.tres";
     private const int FontSize = 24;
+    private const int MinFontSize = 12;
 
     private Control? _container;      // the creature's IntentContainer
     private float _bobPhase;
     private Vector2 _basePosition;    // set by VoterNamesPatch on every UpdateBounds
+    private Font? _font;              // resolved font used for shrink-to-fit measurement
 
     public static VoterNameLabel? TryCreate(string decoratedName, NCreature creature) {
         try {
@@ -38,6 +40,7 @@ internal sealed partial class VoterNameLabel : Label {
             label.AddThemeFontSizeOverride("font_size", FontSize);
             if (ResourceLoader.Exists(KreonPath) && ResourceLoader.Load(KreonPath) is Font kreon) {
                 label.AddThemeFontOverride("font", kreon);
+                label._font = kreon;
             }
             return label;
         } catch (Exception ex) {
@@ -48,6 +51,27 @@ internal sealed partial class VoterNameLabel : Label {
 
     /// <summary>Called by the UpdateBounds postfix after vanilla lays the container out.</summary>
     public void SetBasePosition(Vector2 basePosition) => _basePosition = basePosition;
+
+    /// <summary>
+    /// Spec §5 shrink-to-fit: steps the font size down from <see cref="FontSize"/>
+    /// toward <see cref="MinFontSize"/> until the decorated name's measured width
+    /// fits maxWidth (the intent-group width the patch just assigned to Size.X).
+    /// </summary>
+    public void FitToWidth(float maxWidth) {
+        try {
+            var font = _font ?? GetThemeDefaultFont();
+            if (font is null) return;
+
+            int size = FontSize;
+            while (size > MinFontSize &&
+                   font.GetStringSize(Text, HorizontalAlignment.Left, -1, size).X > maxWidth) {
+                size--;
+            }
+            AddThemeFontSizeOverride("font_size", size);
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][voter-names] shrink-to-fit failed: {ex.Message}");
+        }
+    }
 
     public override void _Process(double delta) {
         var container = _container;

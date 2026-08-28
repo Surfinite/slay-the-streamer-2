@@ -23,6 +23,16 @@ public sealed class VoteCoordinator : IDisposable {
     public IChatConsumer Chat => _chat;
     public IReadOnlyList<string> ConfiguredPlatforms => _configuredPlatforms;
     public IMainThreadDispatcher Dispatcher => _dispatcher;
+
+    /// <summary>
+    /// Raised synchronously inside Start(...) with the newly created session,
+    /// after CurrentSession is set. Single wiring point for cross-cutting
+    /// observers (the voter-name pool harvests each session's voters on its
+    /// terminal events). Subscriber exceptions are swallowed with a Warn —
+    /// an observer must never break vote creation.
+    /// </summary>
+    public event EventHandler<VoteSession>? SessionStarted;
+
     public VoteSession? CurrentSession { get; private set; }
 
     public VoteCoordinator(
@@ -79,6 +89,12 @@ public sealed class VoteCoordinator : IDisposable {
         session.Closed += OnSessionEnded;
         session.Cancelled += OnSessionEnded;
         SetFastPolling(true);
+
+        try {
+            SessionStarted?.Invoke(this, session);
+        } catch (Exception ex) {
+            TiLog.Warn($"[VoteCoordinator] SessionStarted subscriber threw: {ex.Message}");
+        }
 
         return session;
     }

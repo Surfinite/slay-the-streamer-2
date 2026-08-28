@@ -146,4 +146,26 @@ public class VoteCoordinatorTests {
         s.CloseNow();
         Assert.Null(c.CurrentSession);
     }
+
+    [Fact]
+    public void SessionStarted_fires_with_the_new_session() {
+        var coordinator = NewCoord();
+        VoteSession? seen = null;
+        coordinator.SessionStarted += (_, s) => seen = s;
+
+        var session = coordinator.Start("test", new[] { "A", "B" }, TimeSpan.FromSeconds(30));
+
+        Assert.Same(session, seen);
+    }
+
+    [Fact]
+    public void SessionStarted_subscriber_exception_does_not_break_start() {
+        var coordinator = NewCoord();
+        coordinator.SessionStarted += (_, _) => throw new InvalidOperationException("boom");
+
+        var session = coordinator.Start("test", new[] { "A", "B" }, TimeSpan.FromSeconds(30));
+
+        Assert.NotNull(session);
+        Assert.Equal(VoteSessionState.Open, session.State);
+    }
 }

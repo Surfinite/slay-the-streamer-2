@@ -4,6 +4,12 @@ Living list of things flagged during sessions that need attention later. Updated
 
 ---
 
+## Voter-name raffle rework (name-raffle, 2026-08-31)
+
+Replaced the least-used fairness draw with a ticket raffle (`name-raffle/1`): one ticket per vote session participated in (session harvest is deduped by voter key, so number-spam can't farm tickets), enemy-name draws weighted by ticket count, winner's tickets zero out and re-accrue on later votes. When all tickets are spent the draw falls back to uniform among least-drawn, so every enemy still gets a name (Surfinite's pick over leaving enemies unnamed). Jr./Roman decoration unchanged, now keyed off times-drawn. Pool remains process-lifetime — still never cleared.
+
+- [ ] **Deferred by choice — leading `@` on YouTube names.** Investigated 2026-08-31: the `@` names are NOT reply-text leakage (`VoteSession` stores only the message author's display name); they're YouTube handles — the scraper's `authorName.simpleText` IS the `@handle` for most accounts post-handles-rollout, so effectively every YT voter carries one. Surfinite chose to keep them (signals "this is a YT voter") but may revisit. If revisited: strip a single leading `@` in `VoterNamePool.CleanName` (covers labels + speech bubbles, one line + tests, already in the test glob).
+
 ## Voter enemy names (voter-names, resolved 2026-08-28)
 
 `nameEnemiesAfterVoters` (bool, default on) — combat enemies get named after chatters who vote, shown under their intent icons; the pool rotates fairly (everyone gets a turn before anyone gets a second enemy; repeats decorated "Jr.", then "III"). `namedEnemiesSpeakSeconds` (int, default 5, 0 = off, only takes effect while naming is on) — a named enemy also speaks its chatter's raw messages as in-game speech bubbles for the configured duration (BBCode-stripped, truncated, cooldown = max(5s, duration)); channel moderation is the content filter. *(Was a `namedEnemiesSpeak` bool through `voter-names/10`; replaced pre-release with the duration knob on operator feedback 2026-08-28 — a stale bool key in settings files is ignored.)* Spec `docs/superpowers/specs/2026-08-28-voter-enemy-names-design.md`, plan `docs/superpowers/plans/2026-08-28-voter-enemy-names.md`, commits `voter-names/1`–`/12`.

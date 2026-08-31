@@ -2,7 +2,7 @@
   "title": "Slay the Streamer 2",
   "description": "Twitch and YouTube chat votes on the streamer's choices: run start (act variant), Neow and mid-run Ancient blessings, card rewards, and act bosses. Inspired by Tempus's Slay the Streamer for StS1.\n\nConfiguration lives in %APPDATA%\\SlayTheSpire2\\slay_the_streamer_2.json and in the in-game Mods screen once connected.\n\nSetup guide and README: https://github.com/Surfinite/slay-the-streamer-2\n\nDemo: https://www.twitch.tv/videos/2782280062",
   "visibility": null,
-  "changeNote": "v0.3.0: enemies are now named after chat voters (on by default) - fair rotation so everyone gets a turn before repeats (which become 'Jr.', then 'III'), shown under the intent icons. Named enemies also speak their chatter's messages as in-game speech bubbles (configurable duration, 0 = off; raw message text - your channel moderation is the filter). Also: 'Card-reward votes only occur after combat' now defaults ON for new installs (existing configs keep their saved value). Tested against game Beta v0.111.0.",
+  "changeNote": "v0.3.1: enemy naming is now a raffle weighted by participation - every vote a chatter takes part in earns one ticket (one per vote, number-spam doesn't help), each enemy draws a name by ticket, and being drawn spends that chatter's tickets until they vote again. Frequent voters get named more often; repeat draws still become 'Jr.', then 'III'. If the raffle ever runs dry (quiet chat), it falls back to the previous fair rotation so enemies always get names. Tested against game Beta v0.111.0.",
   "tags": [],
   "dependencies": [],
   "contentDescriptors": []

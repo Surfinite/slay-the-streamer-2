@@ -6,10 +6,14 @@ using System.Text;
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
 /// <summary>
-/// voter-names: session-lifetime fairness pool. Uniform-random among the
-/// LEAST-used voters (strict rule per spec §4: nobody gets a second enemy
-/// until every distinct voter has had one), decorated by use-count:
-/// 1 → bare name, 2 → "Name Jr.", n≥3 → "Name III/IV/…" (StS1 homage).
+/// voter-names: session-lifetime raffle pool. Each vote session a voter
+/// participates in mints one ticket (AddVoters is called once per session
+/// with deduped voters, so number-spam within a window can't farm tickets).
+/// Draws are weighted by ticket count; the winner's tickets zero out and
+/// re-accrue on future votes. When every ticket is spent, falls back to
+/// uniform-random among the LEAST-drawn voters so enemies always get names.
+/// Decoration by times-drawn: 1 → bare name, 2 → "Name Jr.",
+/// n≥3 → "Name III/IV/…" (StS1 homage).
 /// Pure BCL — rides the test glob (CurseRoll precedent). NOT thread-safe by
 /// itself; all callers are main-thread or marshal first (see VoterNamePoolHook).
 /// </summary>
@@ -18,7 +22,8 @@ internal sealed class VoterNamePool {
 
     private sealed class Entry {
         public required string DisplayName;
-        public int UsedCount;
+        public int Tickets;
+        public int TimesDrawn;
     }
 
     private readonly Dictionary<string, Entry> _voters = new();
@@ -35,9 +40,10 @@ internal sealed class VoterNamePool {
             var name = CleanName(rawName);
             if (name is null) continue;
             if (_voters.TryGetValue(key, out var existing)) {
-                existing.DisplayName = name;   // people rename; used-count preserved
+                existing.DisplayName = name;   // people rename; counters preserved
+                existing.Tickets++;
             } else {
-                _voters[key] = new Entry { DisplayName = name };
+                _voters[key] = new Entry { DisplayName = name, Tickets = 1 };
             }
         }
     }
@@ -47,13 +53,25 @@ internal sealed class VoterNamePool {
         voterKey = string.Empty;
         if (_voters.Count == 0) return false;
 
-        int minUsed = _voters.Values.Min(e => e.UsedCount);
-        var candidates = _voters.Where(kv => kv.Value.UsedCount == minUsed).ToList();
-        var picked = candidates[_random.Next(candidates.Count)];
+        KeyValuePair<string, Entry> picked;
+        int totalTickets = _voters.Values.Sum(e => e.Tickets);
+        if (totalTickets > 0) {
+            int roll = _random.Next(totalTickets);
+            picked = default;
+            foreach (var kv in _voters) {
+                roll -= kv.Value.Tickets;
+                if (roll < 0) { picked = kv; break; }
+            }
+        } else {
+            int minDrawn = _voters.Values.Min(e => e.TimesDrawn);
+            var candidates = _voters.Where(kv => kv.Value.TimesDrawn == minDrawn).ToList();
+            picked = candidates[_random.Next(candidates.Count)];
+        }
 
-        picked.Value.UsedCount++;
+        picked.Value.Tickets = 0;
+        picked.Value.TimesDrawn++;
         voterKey = picked.Key;
-        decoratedName = Decorate(picked.Value.DisplayName, picked.Value.UsedCount);
+        decoratedName = Decorate(picked.Value.DisplayName, picked.Value.TimesDrawn);
         return true;
     }
 

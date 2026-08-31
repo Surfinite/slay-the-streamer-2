@@ -100,6 +100,55 @@ public class VoterNamePoolTests {
         }
     }
 
+    [Fact]
+    public void Draw_probability_scales_with_ticket_count() {
+        int aliceFirst = 0;
+        for (int seed = 0; seed < 400; seed++) {
+            var pool = new VoterNamePool(new Random(seed));
+            pool.AddVoters(Voters(("a", "Alice"), ("b", "Bob")));   // session 1: both vote
+            pool.AddVoters(Voters(("a", "Alice")));                  // sessions 2+3: only Alice
+            pool.AddVoters(Voters(("a", "Alice")));                  // Alice 3 tickets, Bob 1
+            Assert.True(pool.TryTakeName(out _, out var key));
+            if (key == "a") aliceFirst++;
+        }
+        // Weighted raffle: P(Alice first) = 3/4 -> ~300 of 400. Uniform
+        // least-used (the old rule) would land ~200 and fail this range.
+        Assert.InRange(aliceFirst, 260, 340);
+    }
+
+    [Fact]
+    public void Voting_again_after_being_drawn_restores_raffle_priority() {
+        // Seed-independent: the sole ticket holder must ALWAYS win the draw,
+        // even against a voter with an equal times-drawn count.
+        for (int seed = 0; seed < 100; seed++) {
+            var pool = Pool(seed);
+            pool.AddVoters(Voters(("a", "Alice"), ("b", "Bob")));
+            Assert.True(pool.TryTakeName(out _, out _));
+            Assert.True(pool.TryTakeName(out _, out _));   // both drawn once; all tickets spent
+
+            pool.AddVoters(Voters(("a", "Alice")));         // Alice votes again -> only live ticket
+            Assert.True(pool.TryTakeName(out var name, out var key));
+            Assert.Equal("a", key);
+            Assert.Equal("Alice Jr.", name);
+        }
+    }
+
+    [Fact]
+    public void When_no_tickets_remain_fallback_is_least_drawn() {
+        var pool = Pool();
+        pool.AddVoters(Voters(("a", "Alice"), ("b", "Bob")));
+        var drawn = new List<string>();
+        for (int i = 0; i < 4; i++) {
+            Assert.True(pool.TryTakeName(out var name, out var key));
+            drawn.Add(key);
+            if (i >= 2) Assert.EndsWith(" Jr.", name);   // draws 3+4 are fallback repeats
+        }
+        // Tickets cover draws 1-2 (one each); fallback covers 3-4 and must
+        // still rotate through least-drawn: nobody hits III before both are Jr.
+        Assert.Equal(2, drawn.Take(2).Distinct().Count());
+        Assert.Equal(2, drawn.Skip(2).Distinct().Count());
+    }
+
     [Theory]
     [InlineData(3, "III")]
     [InlineData(4, "IV")]

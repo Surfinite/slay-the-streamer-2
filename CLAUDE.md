@@ -45,6 +45,7 @@ Per-task commits to `main` with a slice-specific prefix:
 - 2026-06 stream-feedback fixes (FrostPrime live findings): `stream-polish/N:`
 - Bossy Relics (pick-1-of-N relic rewards): `bossy-relics/N:`
 - Vote Override (streamer overrides a running vote): `vote-override/N:`
+- Voter-name raffle rework (ticket-weighted name draws): `name-raffle/N:`
 - Release prep (manifest bump, README, changeNote): `release/vX.Y.Z:`
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.

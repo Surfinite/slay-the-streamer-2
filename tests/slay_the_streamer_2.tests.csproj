@@ -46,6 +46,9 @@
     <Compile Remove="..\src\Game\DecisionVotes\RelicOriginTags.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RestSiteOriginTags.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RewardAuthority.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\RemovalRecords.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\IRemovalSurface.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\RemovalVoteFlow.cs" />
   </ItemGroup>
 
   <ItemGroup>

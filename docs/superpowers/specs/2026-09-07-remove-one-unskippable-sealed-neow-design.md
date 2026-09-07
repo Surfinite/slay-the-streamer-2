@@ -164,12 +164,14 @@ Before the first click the screen shows a status line under the banner:
 "Click any option to start the removal vote." (new line; the only text in this slice that
 has not been rig-tested in Sabotage, because the Sabo's screen has no click-to-start).
 
-Options. Vote labels are the card titles in holder order plus, when the reward has a Skip
-alternative, `Skip` as the LAST index (unlike the pick vote, where Skip is #0 when
-`cardSkipAsVoteOption` is on; here Skip is always present when the reward allows it,
-independent of that setting, because Skip is a removable option and not a chat pick).
-`RemoveVoteOptionLabels.Build(cardTitles, hasSkip)` / `ResolveRemovedIndex` are pure and
-unit-tested. A reward with fewer than 2 removable options (1 card, no Skip) is degenerate:
+Options. When the reward has a Skip alternative, `Skip` is `#0` and the cards follow as
+`#1..#N` in holder order, the same numbering chat already knows from pick votes (ruling
+2026-09-07: consistency over "cards first"). Skip is always present when the reward allows
+it, independent of `cardSkipAsVoteOption`, because here Skip is a removable option and not
+a chat pick. With no Skip alternative the cards are `#0..#N-1`. The existing
+`CardRewardOptionLabels.Build(cardTitles, includeSkip)` / `ResolveCardIndex` already
+implement exactly this mapping and are reused; the removal record stores the resolved
+card index or the Skip flag, never the vote index. A reward with fewer than 2 removable options (1 card, no Skip) is degenerate:
 no vote, streamer picks (Info log).
 
 Session. `coordinator.Start("Remove an option", labels, voteDuration, showTag,
@@ -255,9 +257,10 @@ static, returns the instance, and assigns `_cards` BY REFERENCE (watchlist item)
   string targets; keyboard confirm funnels through the same handlers): inside the vanilla
   350 ms open debounce (`Time.GetTicksMsec() - _openedTicks <= 350`) return true so vanilla
   drops the click itself (a click consumed by us in that window would look like a dead
-  screen). Otherwise the same state machine as section 3: first click starts the vote (Skip
-  index = `cards.Count`), clicks during the vote are suppressed or override, clicks after the
-  removal run `RemovalClickRules`.
+  screen). Otherwise the same state machine as section 3: first click starts the vote (vote
+  labels via `CardRewardOptionLabels.Build(titles, canSkip)`, so Skip is `#0` when
+  `canSkip`; the screen-side Skip control maps to that index), clicks during the vote are
+  suppressed or override, clicks after the removal run `RemovalClickRules`.
 - Resume applies the record to the bound screen and paints; the removal record is keyed on
   the context (there is no `CardReward`), so a screen that closes and re-opens for the same
   relic obtain cannot happen (the command awaits one screen); the record dies with the context.
@@ -441,9 +444,13 @@ predicate. The set is a constant; a settings list is a follow-up if wanted. Cons
 ## 8. Settings, receipts and README
 
 - `combatCardVotesOnly` default flips to `false` in `ChatSettings`, `SettingsBootstrap` and
-  the `.json.example`. No migration of existing files: v0.3.0's bootstrap wrote `true` into
-  every file, so installs keep `true` until the streamer flips the checkbox; the release
-  notes and README say so, and Tristan is told directly.
+  the `.json.example`. No migration of existing files. Files that existed at v0.2.2 were
+  written `false` by that version's bootstrap and the v0.3.0 default flip never touched
+  them; only files first created on v0.3.x carry `true`. Tristan's file is in the first
+  group (he never ticked the box, and told Surfinite on 2026-09-07 that event card votes are
+  "too chat favoured", i.e. he wanted something at those rewards rather than nothing), so Off
+  is exactly what he gets with no action. The release notes and README say what Off now
+  means.
 - Checkbox label unchanged; help text becomes: "On: chat only votes on card rewards earned
   from combat; other card rewards are free picks. Off (default): chat votes to remove one
   option on Ancient-relic and Dream Catcher card rewards, and event or shop-relic card
@@ -483,7 +490,7 @@ predicate. The set is a constant; a settings list is a follow-up if wanted. Cons
 Unit (`tests/`, `[Collection("TiLog.Sink")]` where logging is touched; source includes are
 surgical per CLAUDE.md): `AuthorityRules` full table incl. both switch states and the
 unregistered-combat-tag stand-down; `RemovalClickRules` incl. reroll and budget 0;
-`RemoveVoteOptionLabels` build and resolve; `RemoveVoteReceipts` open/close/tie/override
+`CardRewardOptionLabels` reuse for removal votes (Skip #0); `RemoveVoteReceipts` open/close/tie/override
 strings; `AuthorityLoc` (no em dash, no "strike", keys present against the asset fixture,
 idempotent, Lead first); `RelicTextRegistry` round trip and learn-once; `TalismanPickRules`
 (distinct, deterministic, take >= count, take = 0).

@@ -820,6 +820,7 @@ internal static class CardRewardVotePatch {
 
             if (mode == AuthorityMode.RemoveOne) {
                 if (!clickedSkip) return true;                                     // Reroll etc: vanilla
+                if (TryGetPlayerCount() is int n && n > 1) return true;            // multiplayer: vanilla
                 var surface = CardRewardRemovalSurface.For(__instance);
                 if (surface is null) return true;
                 var record = RemovalVoteFlow.EffectiveRecord(surface);

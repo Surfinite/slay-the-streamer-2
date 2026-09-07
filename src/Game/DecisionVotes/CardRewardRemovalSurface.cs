@@ -102,7 +102,6 @@ internal sealed class CardRewardRemovalSurface : IRemovalSurface {
                 if (record is not null) {
                     // Holders tween into place over 0.5 s on show; paint them next frame so the
                     // holder list is populated and sorted.
-                    __instance.CallDeferred(Node.MethodName.SetProcess, true);
                     Callable.From(() => RemovalVoteFlow.ApplyRecordVisuals(surface, record)).CallDeferred();
                 }
             } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][card-remove] ready presenter failed", ex); }

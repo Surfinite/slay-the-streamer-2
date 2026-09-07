@@ -25,23 +25,29 @@ internal sealed partial class RemovalStatusLine : Control {
             MouseFilter = MouseFilterEnum.Ignore,
             AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
         };
-        line._banner = bannerAnchor;
-        line._text = textProvider;
-        line._label = new Label {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            MouseFilter = MouseFilterEnum.Ignore,
-            AnchorLeft = 0, AnchorTop = 0, AnchorRight = 0, AnchorBottom = 0,
-        };
-        var font = ResourceLoader.Load<Font>(FontPath);
-        if (font is not null) line._label.AddThemeFontOverride("font", font);
-        line._label.AddThemeColorOverride("font_color", TextColor);
-        line._label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
-        line._label.AddThemeConstantOverride("shadow_offset_x", 2);
-        line._label.AddThemeConstantOverride("shadow_offset_y", 2);
-        line._label.AddThemeFontSizeOverride("font_size", FontSize);
-        line.AddChild(line._label);
-        parent.AddChild(line);
+        try {
+            line._banner = bannerAnchor;
+            line._text = textProvider;
+            line._label = new Label {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                MouseFilter = MouseFilterEnum.Ignore,
+                AnchorLeft = 0, AnchorTop = 0, AnchorRight = 0, AnchorBottom = 0,
+            };
+            var font = ResourceLoader.Load<Font>(FontPath);
+            if (font is not null) line._label.AddThemeFontOverride("font", font);
+            line._label.AddThemeColorOverride("font_color", TextColor);
+            line._label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
+            line._label.AddThemeConstantOverride("shadow_offset_x", 2);
+            line._label.AddThemeConstantOverride("shadow_offset_y", 2);
+            line._label.AddThemeFontSizeOverride("font_size", FontSize);
+            line.AddChild(line._label);
+            if (!GodotObject.IsInstanceValid(parent)) {
+                TiLog.Warn("[SlayTheStreamer2][remove-one] status line attach: parent invalid");
+            } else {
+                parent.AddChild(line);
+            }
+        } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][remove-one] status line attach failed", ex); }
         return line;
     }
 

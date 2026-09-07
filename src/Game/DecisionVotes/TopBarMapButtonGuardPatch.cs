@@ -49,6 +49,10 @@ internal static class TopBarMapButtonGuardPatch {
             TiLog.Info("[SlayTheStreamer2][map-guard] map button blocked: act-variant vote in progress");
             return false;
         }
+        if (ChooseACardRemovePatch.VoteInProgress) {
+            TiLog.Info("[SlayTheStreamer2][map-guard] map button blocked: choose-a-card removal vote in progress");
+            return false;
+        }
         if (CardRewardSkipGatePatch.IsRewardsScreenActive) {
             TiLog.Info("[SlayTheStreamer2][map-guard] map button blocked: rewards screen still open (must engage chat or pick cards before navigating)");
             return false;

@@ -61,15 +61,18 @@ internal sealed partial class CardRewardVotePopup : Control {
 
     private readonly VoteSession _session;
     private readonly IMainThreadDispatcher _dispatcher;
-    private readonly NCardRewardSelectionScreen _screen;
+    private readonly Node _screen;                         // was NCardRewardSelectionScreen
+    private readonly IReadOnlyList<Control> _cardHolders;
+    private readonly Control? _skipControl;
     private readonly bool _includeSkip;
+    private readonly bool _removeMode;
     private readonly Func<bool>? _isRunDying;
     private readonly Func<bool>? _isOccludingOverlayVisible;
 
     private CanvasLayer? _canvasLayer;
     private Label? _titleLabel;
     private Label? _timerLabel;
-    private Control? _bannerAnchor;
+    private readonly Control? _bannerAnchor;
 
     private sealed class OptionLabels {
         public required int VoteIndex;
@@ -89,19 +92,62 @@ internal sealed partial class CardRewardVotePopup : Control {
     private static readonly Lazy<FieldInfo?> _cardRowField =
         new(() => AccessTools.Field(typeof(NCardRewardSelectionScreen), "_cardRow"));
 
+    /// <summary>Card-reward screen convenience: resolves holders (sorted by X), the Skip
+    /// alternative button (first child of UI/RewardAlternatives) and the UI/Banner anchor.</summary>
     public CardRewardVotePopup(
-            VoteSession session,
-            IMainThreadDispatcher dispatcher,
-            NCardRewardSelectionScreen screen,
-            bool includeSkip,
-            Func<bool>? isRunDying = null,
-            Func<bool>? isOccludingOverlayVisible = null) {
+            VoteSession session, IMainThreadDispatcher dispatcher, NCardRewardSelectionScreen screen,
+            bool includeSkip, Func<bool>? isRunDying = null, Func<bool>? isOccludingOverlayVisible = null)
+        : this(session, dispatcher, screen,
+               ResolveCardHolders(screen), TryFindSkipButton(screen), screen.GetNodeOrNull<Control>("UI/Banner"),
+               includeSkip, removeMode: false, isRunDying, isOccludingOverlayVisible) { }
+
+    /// <summary>General form, used by both screen families (spec section 4).</summary>
+    public CardRewardVotePopup(
+            VoteSession session, IMainThreadDispatcher dispatcher, Node screen,
+            IReadOnlyList<Control> cardHolders, Control? skipControl, Control? bannerAnchor,
+            bool includeSkip, bool removeMode,
+            Func<bool>? isRunDying = null, Func<bool>? isOccludingOverlayVisible = null) {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _screen = screen ?? throw new ArgumentNullException(nameof(screen));
+        _cardHolders = cardHolders;
+        _skipControl = skipControl;
+        _bannerAnchor = bannerAnchor;
         _includeSkip = includeSkip;
+        _removeMode = removeMode;
         _isRunDying = isRunDying;
         _isOccludingOverlayVisible = isOccludingOverlayVisible;
+    }
+
+    private static IReadOnlyList<Control> ResolveCardHolders(NCardRewardSelectionScreen screen) {
+        var cardRow = _cardRowField.Value?.GetValue(screen) as Control;
+        if (cardRow is null) {
+            TiLog.Warn("[SlayTheStreamer2][card-vote-popup] _cardRow field not found on screen; per-card indicators omitted");
+            return Array.Empty<Control>();
+        }
+        // Sort by Position.X so vote indices align with visual left-to-right order
+        // (chat expects #1 = leftmost card). Vanilla NGridCardHolder.OnFocus calls
+        // MoveToFrontSafely(), which reorders Godot's child list when a card gets
+        // focus — without this sort, the focused/clicked card lands at the end of
+        // GetChildren() and the labels mis-align. Mirrors GetCurrentHolders in
+        // CardRewardVotePatch.cs.
+        return cardRow.GetChildren().OfType<NCardHolder>().OrderBy(h => h.Position.X).Cast<Control>().ToList();
+    }
+
+    /// <summary>
+    /// First child of "UI/RewardAlternatives" is the Skip alternative button per
+    /// vanilla <c>CardRewardAlternative.Generate</c> ordering. Returns null if the
+    /// container is absent or empty (e.g., CanSkip=false rewards).
+    /// </summary>
+    private static Control? TryFindSkipButton(NCardRewardSelectionScreen screen) {
+        try {
+            var container = screen.GetNodeOrNull<Control>("UI/RewardAlternatives");
+            if (container is null || container.GetChildCount() == 0) return null;
+            return container.GetChild(0) as Control;
+        } catch (Exception ex) {
+            TiLog.Warn($"[SlayTheStreamer2][card-vote-popup] TryFindSkipButton threw: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>
@@ -129,9 +175,10 @@ internal sealed partial class CardRewardVotePopup : Control {
         string voteHint = _session.ShowTag
             ? $"[{_session.VoteId:D2}] — "
             : "";
+        string titleBody = _removeMode ? "Chat is choosing which option to remove" : "Pick the worst option.";
         _titleLabel = new Label {
             Name = "Title",
-            Text = $"{voteHint}Pick the worst option.",
+            Text = $"{voteHint}{titleBody}",
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             MouseFilter = MouseFilterEnum.Ignore,
@@ -158,7 +205,6 @@ internal sealed partial class CardRewardVotePopup : Control {
         // "Choose a Card" banner across aspect-ratio changes. Banner is at
         // UI/Banner with center anchors, so its absolute Y shifts when the
         // viewport size changes; a fixed offset_top would drift visually.
-        _bannerAnchor = _screen.GetNodeOrNull<Control>("UI/Banner");
         if (_bannerAnchor is null) {
             TiLog.Warn("[SlayTheStreamer2][card-vote-popup] UI/Banner not found; timer falls back to fixed-Y placement");
         }
@@ -193,7 +239,7 @@ internal sealed partial class CardRewardVotePopup : Control {
             });
         }
 
-        _closedHandler = (_, _) => _dispatcher.Post(SafeQueueFree);
+        _closedHandler = (_, _) => _dispatcher.Post(() => { PaintWinnerIfRemoveMode(); SafeQueueFree(); });
         _cancelledHandler = (_, _) => _dispatcher.Post(SafeQueueFree);
         _session.Closed += _closedHandler;
         _session.Cancelled += _cancelledHandler;
@@ -209,49 +255,23 @@ internal sealed partial class CardRewardVotePopup : Control {
     private IEnumerable<(Control Anchor, int VoteIndex, bool IsSkip)> ResolveAnchors() {
         var results = new List<(Control, int, bool)>();
         int voteCursor = 0;
-
         if (_includeSkip) {
-            var skipButton = TryFindSkipButton();
-            if (skipButton is not null) {
-                results.Add((skipButton, voteCursor, true));
-            } else {
-                TiLog.Warn("[SlayTheStreamer2][card-vote-popup] could not locate Skip button; #0 indicator omitted");
-            }
+            if (_skipControl is not null) results.Add((_skipControl, voteCursor, true));
+            else TiLog.Warn("[SlayTheStreamer2][card-vote-popup] no Skip control; #0 indicator omitted");
             voteCursor++;
         }
-
-        var cardRow = _cardRowField.Value?.GetValue(_screen) as Control;
-        if (cardRow is null) {
-            TiLog.Warn("[SlayTheStreamer2][card-vote-popup] _cardRow field not found on screen; per-card indicators omitted");
-            return results;
-        }
-        // Sort by Position.X so vote indices align with visual left-to-right order
-        // (chat expects #1 = leftmost card). Vanilla NGridCardHolder.OnFocus calls
-        // MoveToFrontSafely(), which reorders Godot's child list when a card gets
-        // focus — without this sort, the focused/clicked card lands at the end of
-        // GetChildren() and the labels mis-align. Mirrors GetCurrentHolders in
-        // CardRewardVotePatch.cs.
-        foreach (var holder in cardRow.GetChildren().OfType<NCardHolder>().OrderBy(h => h.Position.X)) {
-            results.Add((holder, voteCursor, false));
-            voteCursor++;
-        }
+        foreach (var holder in _cardHolders) { results.Add((holder, voteCursor, false)); voteCursor++; }
         return results;
     }
 
-    /// <summary>
-    /// First child of "UI/RewardAlternatives" is the Skip alternative button per
-    /// vanilla <c>CardRewardAlternative.Generate</c> ordering. Returns null if the
-    /// container is absent or empty (e.g., CanSkip=false rewards).
-    /// </summary>
-    private Control? TryFindSkipButton() {
+    private void PaintWinnerIfRemoveMode() {
+        if (!_removeMode) return;
         try {
-            var container = _screen.GetNodeOrNull<Control>("UI/RewardAlternatives");
-            if (container is null || container.GetChildCount() == 0) return null;
-            return container.GetChild(0) as Control;
-        } catch (Exception ex) {
-            TiLog.Warn($"[SlayTheStreamer2][card-vote-popup] TryFindSkipButton threw: {ex.Message}");
-            return null;
-        }
+            if (_session.WinnerIndex is not int winner) return;
+            foreach (var lbl in _optionLabels) {
+                if (lbl.VoteIndex == winner) { RemovalVisuals.PaintRemoved(lbl.Anchor, _screen); return; }
+            }
+        } catch (Exception ex) { TiLog.Warn($"[SlayTheStreamer2][card-vote-popup] winner paint failed: {ex.Message}"); }
     }
 
     public override void _Process(double delta) {

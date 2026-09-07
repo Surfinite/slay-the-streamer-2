@@ -87,6 +87,7 @@ internal static class RemovalVoteFlow {
             }
             coordinator.Dispatcher.Post(() => {
                 try { Apply(surface, snapshot, winner); }
+                catch (Exception ex) { TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] removal apply threw; nothing recorded", ex); }
                 finally { Finish(onFinished); }
             });
         } catch (Exception ex) {
@@ -102,36 +103,44 @@ internal static class RemovalVoteFlow {
     }
 
     private static void Apply(IRemovalSurface surface, object? snapshot, int winner) {
-        if (!GodotObject.IsInstanceValid(surface.ScreenNode)) {
-            TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] screen gone before the removal applied; nothing recorded");
-            return;
+        try {
+            if (!GodotObject.IsInstanceValid(surface.ScreenNode)) {
+                TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] screen gone before the removal applied; nothing recorded");
+                return;
+            }
+            if (RunLiveness.IsRunDying()) {
+                TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] run dying before the removal applied; nothing recorded");
+                return;
+            }
+            if (!surface.OptionsMatch(snapshot)) {
+                TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] options changed during the vote (reroll?); nothing recorded");
+                return;
+            }
+            var titles = surface.CardTitles();
+            int? cardIndex = CardRewardOptionLabels.ResolveCardIndex(winner, surface.HasSkip);
+            RemovalRecord record = cardIndex is null
+                ? new RemovalRecord(RemovalClickRules.SkipIndex, CardRewardOptionLabels.SkipLabel, snapshot)
+                : new RemovalRecord(cardIndex.Value, cardIndex.Value < titles.Count ? titles[cardIndex.Value] : "an option", snapshot);
+            RemovalRecords.Set(surface.RecordKey, record);
+            ApplyRecordVisuals(surface, record);
+            TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] chat removed {(record.IsSkip ? "Skip" : $"#{record.RemovedIndex} {record.RemovedLabel}")}");
+        } catch (Exception ex) {
+            TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] removal apply threw; nothing recorded", ex);
         }
-        if (RunLiveness.IsRunDying()) {
-            TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] run dying before the removal applied; nothing recorded");
-            return;
-        }
-        if (!surface.OptionsMatch(snapshot)) {
-            TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] options changed during the vote (reroll?); nothing recorded");
-            return;
-        }
-        var titles = surface.CardTitles();
-        int? cardIndex = CardRewardOptionLabels.ResolveCardIndex(winner, surface.HasSkip);
-        RemovalRecord record = cardIndex is null
-            ? new RemovalRecord(RemovalClickRules.SkipIndex, CardRewardOptionLabels.SkipLabel, snapshot)
-            : new RemovalRecord(cardIndex.Value, cardIndex.Value < titles.Count ? titles[cardIndex.Value] : "an option", snapshot);
-        RemovalRecords.Set(surface.RecordKey, record);
-        ApplyRecordVisuals(surface, record);
-        TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] chat removed {(record.IsSkip ? "Skip" : $"#{record.RemovedIndex} {record.RemovedLabel}")}");
     }
 
     /// <summary>Paint the removed option (idempotent: the popup already tweened it once)
     /// and make it unclickable when no override budget remains.</summary>
     internal static void ApplyRecordVisuals(IRemovalSurface surface, RemovalRecord record) {
-        var control = record.IsSkip ? surface.SkipControl() : IndexOrNull(surface.CardHolders(), record.RemovedIndex);
-        if (control is null) return;
-        RemovalVisuals.PaintRemoved(control, surface.ScreenNode);
-        bool canOverride = VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
-        RemovalVisuals.SetClickable(control, canOverride);
+        try {
+            var control = record.IsSkip ? surface.SkipControl() : IndexOrNull(surface.CardHolders(), record.RemovedIndex);
+            if (control is null) return;
+            RemovalVisuals.PaintRemoved(control, surface.ScreenNode);
+            bool canOverride = VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
+            RemovalVisuals.SetClickable(control, canOverride);
+        } catch (Exception ex) {
+            TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] removal apply threw; nothing recorded", ex);
+        }
     }
 
     private static Control? IndexOrNull(IReadOnlyList<Control> list, int i) => i >= 0 && i < list.Count ? list[i] : null;

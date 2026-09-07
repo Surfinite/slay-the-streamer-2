@@ -56,6 +56,15 @@ internal static class VoteOverrideBudget {
         _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.High);
     }
 
+    /// <summary>Removal-vote flavour of the override receipt (spec section 3.2).</summary>
+    public static void SendRemovalOverrideReceipt(string takenLabel, string? curseTitle = null) {
+        var coordinator = Voter.Default;
+        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+        string text = RemoveVoteReceipts.FormatOverride(
+            BootstrapModSettings.GetStreamerDisplayName(), takenLabel, Limit, Remaining, curseTitle);
+        _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.High);
+    }
+
     /// <summary>Mirrors the skip budget's reset receipt suppression rules:
     /// nothing for limit &lt;= 0 (off/unlimited) or unknown act.</summary>
     public static void SendResetReceiptIfAny(BudgetResetReason reason, int humanActNumber) {

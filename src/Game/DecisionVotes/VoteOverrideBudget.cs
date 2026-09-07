@@ -33,36 +33,45 @@ internal static class VoteOverrideBudget {
 
     public static void RecordUse() => _tracker.RecordUse();
 
+    /// <summary>Shared override-receipt text builder: "{streamerName} {action} and took {takenLabel}..."
+    /// Unlimited (limit &lt; 0) omits the count. Non-null curseTitle appends the Cursed Overrides clause.</summary>
+    internal static string FormatOverrideText(
+            string streamerName, string action, string takenLabel, int limit, int remaining, string? curseTitle = null) {
+        string curse = curseTitle is null ? "" : $" Cursed Overrides: gained {curseTitle}!";
+        if (limit < 0) return $"{streamerName} {action} and took {takenLabel}.{curse}";
+        string noun = remaining == 1 ? "override" : "overrides";
+        return $"{streamerName} {action} and took {takenLabel}.{curse} {remaining} {noun} remaining this act";
+    }
+
     /// <summary>Pure formatter, unit-tested. Unlimited (limit &lt; 0) omits the count.
     /// Non-null curseTitle appends the Cursed Overrides clause (spec 2026-08-01 §5).</summary>
     internal static string FormatOverrideReceipt(
-            string streamerName, string takenLabel, int limit, int remaining, string? curseTitle = null) {
-        string curse = curseTitle is null ? "" : $" Cursed Overrides: gained {curseTitle}!";
-        if (limit < 0) return $"{streamerName} overrode the vote and took {takenLabel}.{curse}";
-        string noun = remaining == 1 ? "override" : "overrides";
-        return $"{streamerName} overrode the vote and took {takenLabel}.{curse} {remaining} {noun} remaining this act";
-    }
+            string streamerName, string takenLabel, int limit, int remaining, string? curseTitle = null) =>
+        FormatOverrideText(streamerName, "overrode the vote", takenLabel, limit, remaining, curseTitle);
 
     internal static string FormatResetReceipt(int limit, int humanActNumber) =>
         $"Vote overrides reset to {limit} for Act {humanActNumber}";
 
+    /// <summary>Send high-priority message via the default coordinator, if connected.</summary>
+    private static void SendHighPriority(string text) {
+        var coordinator = Voter.Default;
+        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
+        _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.High);
+    }
+
     /// <summary>Replaces the vote's normal close receipt (TryCloseNow sends none).
     /// High priority to match the close receipt it stands in for.</summary>
     public static void SendOverrideReceipt(string takenLabel, string? curseTitle = null) {
-        var coordinator = Voter.Default;
-        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
         string text = FormatOverrideReceipt(
             BootstrapModSettings.GetStreamerDisplayName(), takenLabel, Limit, Remaining, curseTitle);
-        _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.High);
+        SendHighPriority(text);
     }
 
     /// <summary>Removal-vote flavour of the override receipt (spec section 3.2).</summary>
     public static void SendRemovalOverrideReceipt(string takenLabel, string? curseTitle = null) {
-        var coordinator = Voter.Default;
-        if (coordinator?.Chat?.State != ChatConnectionState.ConnectedReadWrite) return;
         string text = RemoveVoteReceipts.FormatOverride(
             BootstrapModSettings.GetStreamerDisplayName(), takenLabel, Limit, Remaining, curseTitle);
-        _ = coordinator.Chat.SendMessageAsync(text, OutgoingMessagePriority.High);
+        SendHighPriority(text);
     }
 
     /// <summary>Mirrors the skip budget's reset receipt suppression rules:

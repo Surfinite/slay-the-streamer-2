@@ -39,10 +39,6 @@ public static class RemoveVoteReceipts {
         return body + " " + outcome;
     }
 
-    public static string FormatOverride(string streamerName, string takenLabel, int limit, int remaining, string? curseTitle) {
-        string curse = curseTitle is null ? "" : $" Cursed Overrides: gained {curseTitle}!";
-        if (limit < 0) return $"{streamerName} overrode chat's removal and took {takenLabel}.{curse}";
-        string noun = remaining == 1 ? "override" : "overrides";
-        return $"{streamerName} overrode chat's removal and took {takenLabel}.{curse} {remaining} {noun} remaining this act";
-    }
+    public static string FormatOverride(string streamerName, string takenLabel, int limit, int remaining, string? curseTitle) =>
+        VoteOverrideBudget.FormatOverrideText(streamerName, "overrode chat's removal", takenLabel, limit, remaining, curseTitle);
 }

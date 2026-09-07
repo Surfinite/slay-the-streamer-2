@@ -8,12 +8,12 @@ namespace SlayTheStreamer2.Tests.Game.DecisionVotes;
 
 public class RemoveVoteReceiptsTests {
     private static VoteSnapshot Snap(int? winner = null, int? tieAmong = null, bool noVotes = false,
-            IReadOnlyDictionary<int, int>? tallies = null, bool showTag = false, int voteId = 7) {
+            IReadOnlyDictionary<int, int>? tallies = null, bool showTag = false, int voteId = 7, TimeSpan? disconnectGap = null) {
         var opts = new List<VoteOption> { new(0, "Skip"), new(1, "Bash"), new(2, "Defend") };
         return new VoteSnapshot("remove-x", "Remove an option", opts, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(12),
             tallies ?? new Dictionary<int, int> { [0] = 0, [1] = 0, [2] = 0 },
             winner is null ? VoteSessionState.Open : VoteSessionState.Closed,
-            winner, tieAmong, noVotes, TimeSpan.Zero, voteId, showTag);
+            winner, tieAmong, noVotes, disconnectGap ?? TimeSpan.Zero, voteId, showTag);
     }
 
     [Fact]
@@ -50,6 +50,18 @@ public class RemoveVoteReceiptsTests {
     public void Close_ThreeWayTie() {
         var text = RemoveVoteReceipts.Format(Snap(winner: 2, tieAmong: 3), ReceiptKind.Close, "Surfinite");
         Assert.Equal("3-way tie! Chat removed 2: Defend randomly. Surfinite picks from the rest.", text);
+    }
+
+    [Fact]
+    public void Close_TwoWayTie_NamesBoth() {
+        var text = RemoveVoteReceipts.Format(Snap(winner: 2, tieAmong: 2, tallies: new Dictionary<int, int> { [0] = 0, [1] = 2, [2] = 2 }), ReceiptKind.Close, "Surfinite");
+        Assert.Equal("Tie between 1 Bash and 2 Defend. Chat removed 2: Defend randomly. Surfinite picks from the rest.", text);
+    }
+
+    [Fact]
+    public void Close_WithDisconnectGap_MentionsOfflineSeconds() {
+        var text = RemoveVoteReceipts.Format(Snap(winner: 1, disconnectGap: TimeSpan.FromSeconds(7)), ReceiptKind.Close, "Surfinite");
+        Assert.Equal("Chat removed 1: Bash (chat was offline 7s during voting). Surfinite picks from the rest.", text);
     }
 
     [Fact]

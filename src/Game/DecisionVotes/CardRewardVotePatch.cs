@@ -217,6 +217,49 @@ internal static class CardRewardVotePatch {
         }
     }
 
+    /// <summary>RemoveOne on the card-reward screen (spec section 3). Returns the prefix
+    /// result: false = click consumed, true = vanilla proceeds.</summary>
+    private static bool HandleRemoveOneCardClick(NCardRewardSelectionScreen screen, NCardHolder cardHolder) {
+        try {
+            var surface = CardRewardRemovalSurface.For(screen);
+            if (surface is null) return true;
+            if (TryGetPlayerCount() is int n && n > 1) return true;                  // multiplayer: vanilla
+            var record = RemovalVoteFlow.EffectiveRecord(surface);
+            if (record is null) {
+                if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) return false;
+                if (!RemovalVoteFlow.TryStart(surface, onFinished: () => Interlocked.Exchange(ref _voteInProgress, 0))) {
+                    Interlocked.Exchange(ref _voteInProgress, 0);
+                    return true;                                                     // bail: streamer picks freely
+                }
+                return false;                                                        // the click only started the vote
+            }
+            int? clicked = surface.IndexOf(cardHolder);
+            if (clicked is null) return true;
+            return JudgeRemovalClick(clicked.Value, record, surface.Options()[clicked.Value].Card.Title, "card-remove");
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][card-remove] click handling threw; vanilla proceeds", ex);
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+    }
+
+    /// <summary>Shared verdict application for both screen families.</summary>
+    internal static bool JudgeRemovalClick(int clicked, RemovalRecord record, string takenLabel, string logTag) {
+        var verdict = RemovalClickRules.Judge(clicked, record.RemovedIndex, VoteOverrideBudget.Enabled ? VoteOverrideBudget.Remaining : 0);
+        switch (verdict) {
+            case RemovalClickVerdict.Allow: return true;
+            case RemovalClickVerdict.AllowWithOverride:
+                VoteOverrideBudget.RecordUse();
+                string? curse = CursedOverrides.TryRollCurseForLocalPlayer();
+                VoteOverrideBudget.SendRemovalOverrideReceipt(takenLabel, curse);
+                TiLog.Info($"[SlayTheStreamer2][{logTag}] override: streamer took the removed option ({takenLabel}); {VoteOverrideBudget.Remaining} override(s) remaining this act");
+                return true;
+            default:
+                TiLog.Debug($"[SlayTheStreamer2][{logTag}] click on the removed option denied (no override budget)");
+                return false;
+        }
+    }
+
     static bool Prepare(MethodBase? original) {
         if (original is null) {
             // Registration-time. Hard checks: vote target shape — failure aborts patch.
@@ -284,24 +327,33 @@ internal static class CardRewardVotePatch {
         // Hard guards
         if (!GodotObject.IsInstanceValid(__instance) || !GodotObject.IsInstanceValid(cardHolder)) return true;
 
-        // Vote in progress: nothing may fall through to vanilla. Must run
-        // BEFORE the multiplayer/chat bail-to-vanilla gates — a mid-vote click
-        // during a chat disconnect would otherwise reach vanilla SelectCard
-        // and claim a card under a pending vote.
+        // Vote in progress: nothing may fall through to vanilla. Must run BEFORE the
+        // bail-to-vanilla gates. A removal vote is handled first: a streamer click
+        // during its countdown is an override that TAKES the clicked card (no removal).
         if (_voteInProgress == 1) {
+            if (RemovalVoteFlow.IsActive) {
+                var surfaceNow = CardRewardRemovalSurface.For(__instance);
+                string label = surfaceNow?.IndexOf(cardHolder) is int ci && ci < surfaceNow.Options().Count
+                    ? surfaceNow.Options()[ci].Card.Title : "a card";
+                if (RemovalVoteFlow.TryOverrideDuringVote(label)) {
+                    _activeSession = null;
+                    Interlocked.Exchange(ref _voteInProgress, 0);
+                    return true;   // vanilla takes the clicked card
+                }
+                TiLog.Debug("[SlayTheStreamer2][card-remove] click during removal vote; suppressed");
+                return false;
+            }
             if (TryOverrideWithCard(__instance, cardHolder)) return false;
             TiLog.Debug("[SlayTheStreamer2][card-vote] repeat click during open vote; suppressed");
             return false;
         }
 
-        // Combat-only scope gate (card-scope): with combatCardVotesOnly on, only
-        // combat-origin rewards vote — relic obtains, pure event rewards, Dream
-        // Catcher, and Draft picks fall through to vanilla, streamer-free. Must
-        // stay AFTER the vote-in-progress branch (prefix-ordering landmine) and
-        // is safe before the other bail gates: it consults only settings + the
-        // tag table, never game state.
-        if (!CombatOriginTags.ShouldVoteOnActiveReward()) {
-            TiLog.Info("[SlayTheStreamer2][card-vote] non-combat card reward - vote skipped (streamer picks freely)");
+        // Per-origin mode (spec section 2). RemoveOne: click-to-start the removal vote,
+        // then RemovalClickRules after the removal. Unskippable and Free: vanilla picks.
+        var mode = RewardAuthority.ModeOfActiveReward();
+        if (mode == AuthorityMode.RemoveOne) return HandleRemoveOneCardClick(__instance, cardHolder);
+        if (mode != AuthorityMode.NormalVote) {
+            TiLog.Info($"[SlayTheStreamer2][card-vote] {mode} card reward - no pick vote (streamer picks)");
             return true;
         }
 
@@ -743,24 +795,50 @@ internal static class CardRewardVotePatch {
     internal static class NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix {
         static bool Prepare() => true;
         static bool Prefix(NCardRewardSelectionScreen __instance, int index) {
-            // (1) Our chat-skip reflective invoke — pass through, no budget cost.
             if (_chatSkipResumeInProgress == 1) return true;
 
-            // (2) Vote in progress — streamer cannot bail via alt-select, but an
-            // armed Skip click with override budget ends the vote as an override.
             if (_voteInProgress == 1) {
+                if (RemovalVoteFlow.IsActive) {
+                    // Skip during a removal vote: an override that skips (vanilla Skip semantics).
+                    bool isSkip = FindSkipAlternativeIndex(__instance) == index;
+                    if (isSkip && RemovalVoteFlow.TryOverrideDuringVote(CardRewardOptionLabels.SkipLabel)) {
+                        _activeSession = null;
+                        Interlocked.Exchange(ref _voteInProgress, 0);
+                        return true;
+                    }
+                    TiLog.Info("[SlayTheStreamer2][card-remove] alternate blocked: removal vote in progress");
+                    return false;
+                }
                 if (TryOverrideWithSkip(__instance, index)) return false;
                 TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
                 return false;
             }
 
-            // (3) Streamer-Skip budget gate. Only applies if this click is the Skip alt;
-            // other alts (Reroll, Sacrifice from PaelsWing, future hooks) pass unchanged.
+            var mode = RewardAuthority.ModeOfActiveReward();
             var skipIndex = FindSkipAlternativeIndex(__instance);
-            if (skipIndex.HasValue && index == skipIndex.Value) {
-                if (!CardRewardSkipGatePatch.TryConsumeStreamerSkip(__instance)) {
-                    return false;   // budget exhausted (or gate inactive in a way that blocks); silent no-op
+            bool clickedSkip = skipIndex.HasValue && index == skipIndex.Value;
+
+            if (mode == AuthorityMode.RemoveOne) {
+                if (!clickedSkip) return true;                                     // Reroll etc: vanilla
+                var surface = CardRewardRemovalSurface.For(__instance);
+                if (surface is null) return true;
+                var record = RemovalVoteFlow.EffectiveRecord(surface);
+                if (record is null) {
+                    // Skip is a "click any option" starter too.
+                    if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) return false;
+                    if (!RemovalVoteFlow.TryStart(surface, () => Interlocked.Exchange(ref _voteInProgress, 0))) {
+                        Interlocked.Exchange(ref _voteInProgress, 0);
+                        return true;
+                    }
+                    return false;
                 }
+                return JudgeRemovalClick(RemovalClickRules.SkipIndex, record, CardRewardOptionLabels.SkipLabel, "card-remove");
+            }
+
+            // (3) Streamer-Skip budget gate for NormalVote rewards only; other modes are
+            // vanilla here (Unskippable is denied earlier by UnskippableRewards, Task 9).
+            if (clickedSkip && mode == AuthorityMode.NormalVote) {
+                if (!CardRewardSkipGatePatch.TryConsumeStreamerSkip(__instance)) return false;
             }
             return true;
         }
@@ -831,6 +909,9 @@ internal static class CardRewardVotePatch {
                 // (EndSelectionAndDoNotCompleteReward + Escape hotkey) — the flip
                 // below exists to serve chat-skip votes and the streamer skip
                 // budget, neither of which applies to an out-of-scope reward.
+                // RemoveOne and Unskippable rewards also keep vanilla Skip semantics
+                // here: ShouldVoteOn is NormalVote-only (Task 2), so this postfix never
+                // touches Skip's AfterSelected for those two modes.
                 if (!CombatOriginTags.ShouldVoteOn(cardReward)) return;
 
                 // Vanilla Generate() builds a List<>. Downcast to mutate in place; if a

@@ -49,6 +49,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\RemovalRecords.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\IRemovalSurface.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RemovalVoteFlow.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\CardRewardRemovalSurface.cs" />
   </ItemGroup>
 
   <ItemGroup>

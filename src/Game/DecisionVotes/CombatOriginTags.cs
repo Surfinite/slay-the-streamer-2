@@ -1,11 +1,9 @@
 using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Threading;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Rewards;
-using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Ti.Internal;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
@@ -50,8 +48,6 @@ internal static class CombatOriginTags {
     /// </summary>
     private static WeakReference<CardReward>? _activeReward;
 
-    private static int _degradedWarnFired;
-
     internal static bool TagPatchRegistered { get; private set; }
     internal static bool CapturePatchRegistered { get; private set; }
 
@@ -69,17 +65,7 @@ internal static class CombatOriginTags {
     /// True = the reward is in scope for chat voting; false = streamer-free,
     /// full vanilla behavior.
     /// </summary>
-    internal static bool ShouldVoteOn(CardReward? reward) {
-        if (ModSettings.Current?.CombatCardVotesOnly != true) return true;   // toggle off = today's behavior
-        if (!TagPatchRegistered || !CapturePatchRegistered) {
-            if (Interlocked.CompareExchange(ref _degradedWarnFired, 1, 0) == 0) {
-                TiLog.Warn("[SlayTheStreamer2][card-scope] combatCardVotesOnly is ON but the tagging/capture patches did not register; treating the toggle as inoperative — all card rewards vote");
-            }
-            return true;
-        }
-        if (reward is null) return false;   // unknown reward → fail-safe: no vote, streamer free
-        return IsTagged(reward);
-    }
+    internal static bool ShouldVoteOn(CardReward? reward) => RewardAuthority.Classify(reward) == AuthorityMode.NormalVote;
 
     /// <summary>Scope predicate for the reward whose sub-screen is on screen
     /// (call sites that only have the NCardRewardSelectionScreen).</summary>

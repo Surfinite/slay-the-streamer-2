@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Beta-only: when `CombatOriginTags.TagPatchRegistered` or `CapturePatchRegistered` is false, every card reward classifies `NormalVote` (today's behaviour) with a one-time Warn.
-- On screen the verb is always "remove", never "strike". No em dashes anywhere in shipped text, code comments, or these files (use a comma, colon or full stop).
+- On screen the verb is always "remove", never "strike". No em dashes in shipped in-game text, chat receipts, code comments, or these files (use a comma, colon or full stop). The README keeps its existing em-dash bullet style, so the two README snippets in Task 12 are the one exception.
 - Chat vote indices are 0-based. On removal votes Skip is `#0` when the reward allows skipping, cards are `#1..#N`; without Skip cards are `#0..#N-1`. Reuse `CardRewardOptionLabels`.
 - Appended text lead, exactly: `"\n[color=#668CFF]Slay the Streamer:[/color] "`.
 - Removed-option paint: solid red `Color(1f, 0.28f, 0.28f, 1f)`, one 0.35 s tween, no pulse, no caption.

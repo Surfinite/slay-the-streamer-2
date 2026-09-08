@@ -814,6 +814,11 @@ internal static class CardRewardVotePatch {
                 return false;
             }
 
+            if (UnskippableRewards.ShouldDenyAlternative(__instance, index)) {
+                TiLog.Info("[SlayTheStreamer2][unskip] Skip denied on an unskippable card reward");
+                return false;
+            }
+
             var mode = RewardAuthority.ModeOfActiveReward();
             var skipIndex = FindSkipAlternativeIndex(__instance);
             bool clickedSkip = skipIndex.HasValue && index == skipIndex.Value;

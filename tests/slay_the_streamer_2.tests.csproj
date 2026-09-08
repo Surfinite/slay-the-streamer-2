@@ -51,6 +51,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\RemovalVoteFlow.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardRemovalSurface.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\ChooseACardRemovePatch.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\UnskippableRewards.cs" />
   </ItemGroup>
 
   <ItemGroup>

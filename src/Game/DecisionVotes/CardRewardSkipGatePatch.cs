@@ -606,6 +606,14 @@ internal static class CardRewardSkipGatePatch {
 
         static bool Prefix(NRewardsScreen __instance) {
             try {
+                // Unskippable is a game rule, not a chat feature: it must hold even when
+                // ShouldEnforceSkipGate() is false (chat in a terminal failure state), so
+                // this check runs before that early return.
+                if (UnskippableRewards.HasPendingUnskippable(__instance)) {
+                    TiLog.Info("[SlayTheStreamer2][unskip] Proceed blocked: an unskippable card reward is still pending");
+                    return false;
+                }
+
                 if (!ShouldEnforceSkipGate()) return true;
 
                 if (CardRewardVotePatch.VoteInProgress) {

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using SlayTheStreamer2.Ti.Internal;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
@@ -12,7 +13,7 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// from AuthorityLoc; other mods' relics are learned the first time they produce a
 /// governed card reward and persisted as a JSON array of {id, mode}. BCL only.</summary>
 public sealed class RelicTextRegistry {
-    private sealed record Entry(string Id, string Mode);
+    private sealed record Entry([property: JsonPropertyName("id")] string Id, [property: JsonPropertyName("mode")] string Mode);
 
     private readonly string _path;
     private readonly Dictionary<string, AuthorityMode> _learned = new(StringComparer.Ordinal);

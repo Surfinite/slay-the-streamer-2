@@ -5,6 +5,7 @@ using Xunit;
 
 namespace SlayTheStreamer2.Tests.Game.DecisionVotes;
 
+[Collection("TiLog.Sink")]
 public class AuthorityLocTests {
     private static RelicTextRegistry Registry() => new(Path.Combine(Path.GetTempPath(), Path.GetRandomFileName()));
 

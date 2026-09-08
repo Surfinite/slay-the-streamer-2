@@ -38,6 +38,16 @@ public class RelicTextRegistryTests {
     }
 
     [Fact]
+    public void Learn_WritesLowercaseKeys() {
+        var path = TempPath();
+        new RelicTextRegistry(path).Learn("MOD_RELIC", AuthorityMode.Unskippable);
+        var text = File.ReadAllText(path);
+        Assert.Contains("\"id\": \"MOD_RELIC\"", text);
+        Assert.Contains("\"mode\": \"Unskippable\"", text);
+        Assert.DoesNotContain("\"Id\"", text);
+    }
+
+    [Fact]
     public void CorruptFile_IsIgnored() {
         var path = TempPath();
         File.WriteAllText(path, "{ not json");

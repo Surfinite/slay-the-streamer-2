@@ -802,7 +802,7 @@ public class ModSettingsTests {
     }
 
     // --- combatCardVotesOnly (card-scope: chat votes only on combat-origin card rewards; default
-    // flipped back false again from v0.4.0 — Surfinite 2026-09-07: off now means the per-origin
+    // flipped back false again from v0.4.0, Surfinite 2026-09-07: off now means the per-origin
     // rules (removal votes, unskippable rewards) with explanation text on the relics and events) ---
 
     [Theory]

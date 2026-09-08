@@ -874,8 +874,7 @@ Open follow-ups:
 - A settings knob for the learned-relic generic explanation text (currently one fixed string for any unrecognized relic that lands in the learner).
 - Extend the RemoveOne treatment to event rewards, if Tristan wants a chat interaction on every screen rather than just unskippable.
 - A universal override confirm click (spec explicitly left overrides as instant-click-to-spend; revisit if a misclick incident shows up).
-- `RemovalVoteFlow.ActiveSession` has no caller anywhere in the codebase; candidate for removal on a future cleanup pass.
-- `RemovalVoteFlow.TryStart` does not guard against an already-active session (theoretical back-to-back race between two removal-eligible screens; not observed live).
+- Fixed in `remove-one/13` (final review pass): `RemovalVoteFlow.TryStart` now guards against an already-active session (was: no guard, theoretical back-to-back race between two removal-eligible screens); `Finish` now takes the `VoteSession` it is closing and only clears `_session`/`_surface` when they still belong to that session (was: unconditional null-out, a race hazard once TryStart could reject a call outright); and `RemovalVoteFlow.ActiveSession`, which had no caller anywhere in the codebase, was deleted.
 - The Skip button is rebuilt visible after a Driftwood reroll on an unskippable reward; accepted per spec (the deny check still holds and blocks the click), just a cosmetic loose end.
 
 ### Game-update compat watchlist additions (spec section 9)

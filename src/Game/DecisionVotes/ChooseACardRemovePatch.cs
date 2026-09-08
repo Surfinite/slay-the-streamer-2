@@ -139,6 +139,7 @@ internal static class ChooseACardRemovePatch {
         }
     }
 
+    // No debounce check here: vanilla's OnSkipButtonReleased has none (only SelectHolder drops clicks inside 350 ms).
     [HarmonyPatch(typeof(NChooseACardSelectionScreen), "OnSkipButtonReleased")]
     [HarmonyPrefix]
     private static bool SkipPrefix(NChooseACardSelectionScreen __instance) {

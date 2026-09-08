@@ -144,7 +144,7 @@ The mod also plays nicely with two vanilla Custom Mode modifiers:
 ## 🤝 Mod compatibility
 
 - **Slay the Relics reborn** (appears as `SlayTheRelicsExporter` in the in-game mod list) — tested side-by-side and they play fine together. The two mods do disjoint things: Slay the Relics pushes your run state to a Twitch extension overlay (viewers hover relics/cards on the stream), and this mod reads chat votes. No known conflicts.
-- **Balls2**, **StS1 Boss Ancients**, **Haxxero's More Relics** — tested with the removal-vote rules; their combat card rewards vote normally, their custom Ancients get the Ancient vote, and More Relics' Strongbox is unskippable like Orrery.
+- **Balls2**, **StS1 Boss Ancients**, **Haxxero's More Relics** — checked against the removal-vote rules (decompiled; in-game validation is in the operator matrix); their combat card rewards vote normally, their custom Ancients get the Ancient vote, and More Relics' Strongbox is unskippable like Orrery.
 
 ---
 

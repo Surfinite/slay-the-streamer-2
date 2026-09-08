@@ -4,7 +4,9 @@ public enum RemovalClickVerdict { Deny, Allow, AllowWithOverride }
 
 /// <summary>Spec section 3.2: after chat's removal lands, everything is legal except the
 /// removed option, which costs a vote override. Index space: card holder index, or
-/// <see cref="SkipIndex"/> for Skip. Pure function.</summary>
+/// <see cref="SkipIndex"/> for Skip. Pure function. The spec's reroll index is not a
+/// parameter here because Reroll clicks never reach Judge; both screen patches pass
+/// non-Skip alternatives straight to vanilla.</summary>
 public static class RemovalClickRules {
     public const int SkipIndex = -1;
 

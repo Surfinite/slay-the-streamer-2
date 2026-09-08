@@ -24,45 +24,62 @@ internal static class RemovalVoteFlow {
 
     internal static bool IsActive => _session is { State: VoteSessionState.Open };
     internal static IRemovalSurface? ActiveSurface => _surface;
-    internal static VoteSession? ActiveSession => _session;
 
-    /// <summary>Starts the vote. Returns false when chat is not readable, the coordinator
-    /// is missing, or fewer than two options are removable; the caller then treats the
-    /// reward as Free for this screen.</summary>
+    /// <summary>Starts the vote. Returns false when a removal vote is already open, chat
+    /// is not readable, the coordinator is missing, or fewer than two options are
+    /// removable; the caller then treats the reward as Free for this screen. The whole
+    /// body is fail-open: any unexpected throw cancels the half-started session (if any)
+    /// and returns false rather than leaving a stuck vote.</summary>
     internal static bool TryStart(IRemovalSurface surface, Action onFinished) {
-        var coordinator = Voter.Default;
-        if (coordinator is null) return false;
-        if (coordinator.Chat.State is not (ChatConnectionState.ConnectedReadWrite or ChatConnectionState.ConnectedReadOnly)) {
-            TiLog.Debug($"[SlayTheStreamer2][{surface.LogTag}] chat not readable ({coordinator.Chat.State}); removal vote skipped");
+        if (IsActive) {
+            TiLog.Warn($"[SlayTheStreamer2][{surface.LogTag}] a removal vote is already open; not starting another");
             return false;
         }
-        var titles = surface.CardTitles();
-        int removable = titles.Count + (surface.HasSkip ? 1 : 0);
-        if (removable < 2) {
-            TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] fewer than 2 removable options; removal vote skipped");
-            return false;
-        }
-        var settings = ModSettings.Current;
-        var duration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
-        bool showTag = settings?.ShowVoteTag ?? false;
-        var labels = CardRewardOptionLabels.Build(titles, surface.HasSkip);
-        string streamer = ModSettings.GetStreamerDisplayName();
-
-        VoteSession session;
+        VoteSession? session = null;
         try {
-            session = coordinator.Start("Remove an option", labels, duration, showTag,
-                formatReceipt: (snap, kind) => RemoveVoteReceipts.Format(snap, kind, streamer));
+            var coordinator = Voter.Default;
+            if (coordinator is null) return false;
+            if (coordinator.Chat.State is not (ChatConnectionState.ConnectedReadWrite or ChatConnectionState.ConnectedReadOnly)) {
+                TiLog.Debug($"[SlayTheStreamer2][{surface.LogTag}] chat not readable ({coordinator.Chat.State}); removal vote skipped");
+                return false;
+            }
+            var titles = surface.CardTitles();
+            int removable = titles.Count + (surface.HasSkip ? 1 : 0);
+            if (removable < 2) {
+                TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] fewer than 2 removable options; removal vote skipped");
+                return false;
+            }
+            var settings = ModSettings.Current;
+            var duration = TimeSpan.FromSeconds(settings?.VoteDurationSeconds ?? 30);
+            bool showTag = settings?.ShowVoteTag ?? false;
+            var labels = CardRewardOptionLabels.Build(titles, surface.HasSkip);
+            string streamer = ModSettings.GetStreamerDisplayName();
+
+            try {
+                session = coordinator.Start("Remove an option", labels, duration, showTag,
+                    formatReceipt: (snap, kind) => RemoveVoteReceipts.Format(snap, kind, streamer));
+            } catch (Exception ex) {
+                TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] Voter.Default.Start threw; removal vote skipped", ex);
+                return false;
+            }
+            _session = session;
+            _surface = surface;
+            Interlocked.Exchange(ref _overridePending, 0);
+            var snapshot = surface.SnapshotOptions();
+            TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] removal vote opened: {labels.Count} options (skip={surface.HasSkip})");
+            _ = RunAsync(coordinator, surface, session, snapshot, onFinished);
+            return true;
         } catch (Exception ex) {
-            TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] Voter.Default.Start threw; removal vote skipped", ex);
+            if (session is not null) {
+                try { session.Cancel(); } catch (Exception cancelEx) {
+                    TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] session cancel during a failed TryStart threw", cancelEx);
+                }
+            }
+            _session = null;
+            _surface = null;
+            TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] removal vote start threw; streamer picks freely", ex);
             return false;
         }
-        _session = session;
-        _surface = surface;
-        Interlocked.Exchange(ref _overridePending, 0);
-        var snapshot = surface.SnapshotOptions();
-        TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] removal vote opened: {labels.Count} options (skip={surface.HasSkip})");
-        _ = RunAsync(coordinator, surface, session, snapshot, onFinished);
-        return true;
     }
 
     private static async Task RunAsync(VoteCoordinator coordinator, IRemovalSurface surface, VoteSession session, object? snapshot, Action onFinished) {
@@ -82,23 +99,30 @@ internal static class RemovalVoteFlow {
             catch (OperationCanceledException) {
                 bool overridden = Interlocked.Exchange(ref _overridePending, 0) == 1;
                 TiLog.Info($"[SlayTheStreamer2][{surface.LogTag}] removal vote cancelled ({(overridden ? "streamer override" : "run/chat")}); no removal recorded");
-                coordinator.Dispatcher.Post(() => Finish(onFinished));
+                coordinator.Dispatcher.Post(() => Finish(session, onFinished));
                 return;
             }
             coordinator.Dispatcher.Post(() => {
                 try { Apply(surface, snapshot, winner); }
                 catch (Exception ex) { TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] removal apply threw; nothing recorded", ex); }
-                finally { Finish(onFinished); }
+                finally { Finish(session, onFinished); }
             });
         } catch (Exception ex) {
             TiLog.Error($"[SlayTheStreamer2][{surface.LogTag}] removal vote flow threw; screen released without a removal", ex);
-            coordinator.Dispatcher.Post(() => Finish(onFinished));
+            coordinator.Dispatcher.Post(() => Finish(session, onFinished));
         }
     }
 
-    private static void Finish(Action onFinished) {
-        _session = null;
-        _surface = null;
+    /// <summary>Ends this run's ownership of the shared session/surface slots and always
+    /// notifies the caller. Only clears <c>_session</c>/<c>_surface</c> when they still
+    /// belong to THIS session — a later TryStart may have already claimed the slots (the
+    /// already-active guard makes this rare, but a fail-open exception path could still
+    /// race a fresh start) and must not be clobbered by a straggling Finish call.</summary>
+    private static void Finish(VoteSession session, Action onFinished) {
+        if (ReferenceEquals(_session, session)) {
+            _session = null;
+            _surface = null;
+        }
         try { onFinished(); } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][remove-one] onFinished threw", ex); }
     }
 
@@ -155,6 +179,16 @@ internal static class RemovalVoteFlow {
         return null;
     }
 
+    /// <summary>Side-effect-free read of the record for this surface: returns it only
+    /// while its snapshot still matches, but never clears a stale one. Per-frame polling
+    /// (status-line text) must not mutate shared state; only a click path should clear a
+    /// stale record, and only <see cref="EffectiveRecord"/> does that.</summary>
+    internal static RemovalRecord? PeekRecord(IRemovalSurface surface) {
+        var record = RemovalRecords.Get(surface.RecordKey);
+        if (record is null) return null;
+        return surface.OptionsMatch(record.OptionsSnapshot) ? record : null;
+    }
+
     /// <summary>A streamer click during the countdown: end the vote with NO removal and
     /// spend one override; the caller lets the click reach vanilla. False when there is
     /// no open vote, no budget, or the click landed inside the arming delay.</summary>
@@ -179,7 +213,7 @@ internal static class RemovalVoteFlow {
     internal static string StatusText(IRemovalSurface surface, bool hasReroll) {
         string text;
         if (IsActive && ReferenceEquals(_surface, surface)) text = "";                         // the popup speaks
-        else if (EffectiveRecord(surface) is { } r) {
+        else if (PeekRecord(surface) is { } r) {
             bool budget = VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
             if (r.IsSkip) text = budget ? "Chat removed Skip. Take a card, or spend an override to skip." : "Chat removed Skip. You must take a card.";
             else text = budget ? $"Chat removed {r.RemovedLabel}. Choose from the rest, or spend an override to take it." : $"Chat removed {r.RemovedLabel}. Choose from the rest.";

@@ -795,58 +795,64 @@ internal static class CardRewardVotePatch {
     internal static class NCardRewardSelectionScreen_OnAlternateRewardSelected_Prefix {
         static bool Prepare() => true;
         static bool Prefix(NCardRewardSelectionScreen __instance, int index) {
-            if (_chatSkipResumeInProgress == 1) return true;
+            try {
+                if (_chatSkipResumeInProgress == 1) return true;
 
-            if (_voteInProgress == 1) {
-                if (RemovalVoteFlow.IsActive) {
-                    // Skip during a removal vote: an override that skips (vanilla Skip semantics).
-                    bool isSkip = FindSkipAlternativeIndex(__instance) == index;
-                    if (isSkip && RemovalVoteFlow.TryOverrideDuringVote(CardRewardOptionLabels.SkipLabel)) {
-                        _activeSession = null;
-                        Interlocked.Exchange(ref _voteInProgress, 0);
-                        return true;
+                if (_voteInProgress == 1) {
+                    if (RemovalVoteFlow.IsActive) {
+                        // Skip during a removal vote: an override that skips (vanilla Skip semantics).
+                        bool isSkip = FindSkipAlternativeIndex(__instance) == index;
+                        if (isSkip && RemovalVoteFlow.TryOverrideDuringVote(CardRewardOptionLabels.SkipLabel)) {
+                            _activeSession = null;
+                            Interlocked.Exchange(ref _voteInProgress, 0);
+                            return true;
+                        }
+                        TiLog.Info("[SlayTheStreamer2][card-remove] alternate blocked: removal vote in progress");
+                        return false;
                     }
-                    TiLog.Info("[SlayTheStreamer2][card-remove] alternate blocked: removal vote in progress");
+                    if (TryOverrideWithSkip(__instance, index)) return false;
+                    TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
                     return false;
                 }
-                if (TryOverrideWithSkip(__instance, index)) return false;
-                TiLog.Info("[SlayTheStreamer2][card-vote] OnAlternateRewardSelected blocked: vote in progress");
-                return false;
-            }
 
-            if (UnskippableRewards.ShouldDenyAlternative(__instance, index)) {
-                TiLog.Info("[SlayTheStreamer2][unskip] Skip denied on an unskippable card reward");
-                return false;
-            }
-
-            var mode = RewardAuthority.ModeOfActiveReward();
-            var skipIndex = FindSkipAlternativeIndex(__instance);
-            bool clickedSkip = skipIndex.HasValue && index == skipIndex.Value;
-
-            if (mode == AuthorityMode.RemoveOne) {
-                if (!clickedSkip) return true;                                     // Reroll etc: vanilla
-                if (TryGetPlayerCount() is int n && n > 1) return true;            // multiplayer: vanilla
-                var surface = CardRewardRemovalSurface.For(__instance);
-                if (surface is null) return true;
-                var record = RemovalVoteFlow.EffectiveRecord(surface);
-                if (record is null) {
-                    // Skip is a "click any option" starter too.
-                    if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) return false;
-                    if (!RemovalVoteFlow.TryStart(surface, () => Interlocked.Exchange(ref _voteInProgress, 0))) {
-                        Interlocked.Exchange(ref _voteInProgress, 0);
-                        return true;
-                    }
+                if (UnskippableRewards.ShouldDenyAlternative(__instance, index)) {
+                    TiLog.Info("[SlayTheStreamer2][unskip] Skip denied on an unskippable card reward");
                     return false;
                 }
-                return JudgeRemovalClick(RemovalClickRules.SkipIndex, record, CardRewardOptionLabels.SkipLabel, "card-remove");
-            }
 
-            // (3) Streamer-Skip budget gate for NormalVote rewards only; other modes are
-            // vanilla here (Unskippable is denied earlier by UnskippableRewards, Task 9).
-            if (clickedSkip && mode == AuthorityMode.NormalVote) {
-                if (!CardRewardSkipGatePatch.TryConsumeStreamerSkip(__instance)) return false;
+                var mode = RewardAuthority.ModeOfActiveReward();
+                var skipIndex = FindSkipAlternativeIndex(__instance);
+                bool clickedSkip = skipIndex.HasValue && index == skipIndex.Value;
+
+                if (mode == AuthorityMode.RemoveOne) {
+                    // Reroll and other non-Skip alternatives never reach RemovalClickRules; spec 3.2's rerollIndex is handled here.
+                    if (!clickedSkip) return true;                                     // Reroll etc: vanilla
+                    if (TryGetPlayerCount() is int n && n > 1) return true;            // multiplayer: vanilla
+                    var surface = CardRewardRemovalSurface.For(__instance);
+                    if (surface is null) return true;
+                    var record = RemovalVoteFlow.EffectiveRecord(surface);
+                    if (record is null) {
+                        // Skip is a "click any option" starter too.
+                        if (Interlocked.CompareExchange(ref _voteInProgress, 1, 0) != 0) return false;
+                        if (!RemovalVoteFlow.TryStart(surface, () => Interlocked.Exchange(ref _voteInProgress, 0))) {
+                            Interlocked.Exchange(ref _voteInProgress, 0);
+                            return true;
+                        }
+                        return false;
+                    }
+                    return JudgeRemovalClick(RemovalClickRules.SkipIndex, record, CardRewardOptionLabels.SkipLabel, "card-remove");
+                }
+
+                // (3) Streamer-Skip budget gate for NormalVote rewards only; other modes are
+                // vanilla here (Unskippable is denied earlier by UnskippableRewards, Task 9).
+                if (clickedSkip && mode == AuthorityMode.NormalVote) {
+                    if (!CardRewardSkipGatePatch.TryConsumeStreamerSkip(__instance)) return false;
+                }
+                return true;
+            } catch (Exception ex) {
+                TiLog.Error("[SlayTheStreamer2][card-vote] alternate-select prefix threw; vanilla proceeds", ex);
+                return true;
             }
-            return true;
         }
     }
 

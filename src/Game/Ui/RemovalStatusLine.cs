@@ -14,10 +14,14 @@ internal sealed partial class RemovalStatusLine : Control {
     private const float FallbackTop = 260f;
     private static readonly Color TextColor = new(1f, 0.964706f, 0.886275f, 1f);
 
+    private const double RefreshIntervalSeconds = 0.25;   // 4 Hz; text provider does dictionary/state reads, not free
+
     private Label? _label;
     private Control? _banner;
     private Func<string>? _text;
     private string _last = "";
+    private double _sinceRefresh;
+    private bool _refreshedOnce;
 
     internal static RemovalStatusLine Attach(Node parent, Control? bannerAnchor, Func<string> textProvider) {
         var line = new RemovalStatusLine {
@@ -58,9 +62,14 @@ internal sealed partial class RemovalStatusLine : Control {
     public override void _Process(double delta) {
         try {
             if (_label is null) return;
-            string text = _text?.Invoke() ?? "";
-            if (text != _last) { _last = text; _label.Text = text; }
-            Visible = text.Length > 0;
+            _sinceRefresh += delta;
+            if (!_refreshedOnce || _sinceRefresh >= RefreshIntervalSeconds) {
+                _refreshedOnce = true;
+                _sinceRefresh = 0;
+                string text = _text?.Invoke() ?? "";
+                if (text != _last) { _last = text; _label.Text = text; }
+                Visible = _last.Length > 0;
+            }
             float cx, top;
             if (_banner is not null && GodotObject.IsInstanceValid(_banner)) {
                 var pos = _banner.GlobalPosition; var size = _banner.Size * _banner.Scale;

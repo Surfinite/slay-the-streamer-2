@@ -24,20 +24,26 @@ internal sealed partial class RewardsHeaderSubLabel : Control {
             MouseFilter = MouseFilterEnum.Ignore,
             AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
         };
-        sub._headerProvider = headerProvider;
-        sub._label = new Label {
-            Text = text, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore,
-            AnchorLeft = 0, AnchorTop = 0, AnchorRight = 0, AnchorBottom = 0,
-        };
-        var font = ResourceLoader.Load<Font>(FontPath);
-        if (font is not null) sub._label.AddThemeFontOverride("font", font);
-        sub._label.AddThemeColorOverride("font_color", TextColor);
-        sub._label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
-        sub._label.AddThemeConstantOverride("shadow_offset_x", 3);
-        sub._label.AddThemeConstantOverride("shadow_offset_y", 2);
-        sub._label.AddThemeFontSizeOverride("font_size", FontSize);
-        sub.AddChild(sub._label);
-        screen.AddChild(sub);
+        try {
+            sub._headerProvider = headerProvider;
+            sub._label = new Label {
+                Text = text, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore,
+                AnchorLeft = 0, AnchorTop = 0, AnchorRight = 0, AnchorBottom = 0,
+            };
+            var font = ResourceLoader.Load<Font>(FontPath);
+            if (font is not null) sub._label.AddThemeFontOverride("font", font);
+            sub._label.AddThemeColorOverride("font_color", TextColor);
+            sub._label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
+            sub._label.AddThemeConstantOverride("shadow_offset_x", 3);
+            sub._label.AddThemeConstantOverride("shadow_offset_y", 2);
+            sub._label.AddThemeFontSizeOverride("font_size", FontSize);
+            sub.AddChild(sub._label);
+            if (!GodotObject.IsInstanceValid(screen)) {
+                TiLog.Warn("[SlayTheStreamer2][unskip] header sub-label attach: screen invalid");
+            } else {
+                screen.AddChild(sub);
+            }
+        } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][unskip] header sub-label attach failed", ex); }
     }
 
     public override void _Process(double delta) {

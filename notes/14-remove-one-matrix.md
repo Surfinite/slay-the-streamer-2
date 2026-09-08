@@ -1,0 +1,41 @@
+# Remove-one votes + unskippable rewards: operator matrix
+
+Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-design.md` section 10. Run every row with the `combatCardVotesOnly` checkbox **Off** (the new default) unless a row says otherwise. Console recipes use `relic <ID>`, e.g. `relic KALEIDOSCOPE` / `GLASS_EYE` / `LOST_COFFER` / `DREAM_CATCHER` / `HEFTY_TABLET` / `LEAD_PAPERWEIGHT` / `DRIFTWOOD` / `NEOWS_BONES` / `NEOWS_TALISMAN` / `STRONGBOX`.
+
+**Orrery caveat:** `relic ORRERY` via the dev console does NOT reproduce the shop path (it constructs the relic without going through the purchase flow that tags its card rewards). To exercise Orrery, either buy it from a shop, or take Lord's Parasol (which auto-grants Orrery through the same purchase-tagging path).
+
+**Warn-text note:** the Skip-button probe warn text is `no Skip control; #0 indicator omitted` (this replaced the older `could not locate Skip button` wording from an earlier slice; don't search logs for the old string).
+
+Evidence anchors below are exact substrings as shipped (see file:line):
+- `tagged relic-origin card reward` : `src/Game/DecisionVotes/RelicOriginTags.cs:42`
+- `tagged N rest-site card reward(s)` : `src/Game/DecisionVotes/RestSiteOriginTags.cs:43` (N is a number)
+- `removal vote opened` : `src/Game/DecisionVotes/RemovalVoteFlow.cs:63`
+- `chat removed` : `src/Game/DecisionVotes/RemovalVoteFlow.cs:126`
+- `override during removal vote` : `src/Game/DecisionVotes/RemovalVoteFlow.cs:173`
+- `override: streamer took the removed option` : `src/Game/DecisionVotes/CardRewardVotePatch.cs:255`
+- `context open cards=` : `src/Game/DecisionVotes/ChooseACardRemovePatch.cs:93`
+- `screen bound` : `src/Game/DecisionVotes/ChooseACardRemovePatch.cs:106`
+- `card reward screen restrained` : `src/Game/DecisionVotes/UnskippableRewards.cs:73`
+- `rewards set restrained` : `src/Game/DecisionVotes/UnskippableRewards.cs:89`
+- `Skip denied on an unskippable card reward` : `src/Game/DecisionVotes/CardRewardVotePatch.cs:818`
+- `Proceed blocked: an unskippable card reward` : `src/Game/DecisionVotes/CardRewardSkipGatePatch.cs:613`
+- `learned relic` : `src/Game/DecisionVotes/RelicTextRegistry.cs:46`
+- `event option grown by` : `src/Game/DecisionVotes/EventOptionGrowPatch.cs:65`
+- `combat-origin tagging did not register` : `src/Game/DecisionVotes/RewardAuthority.cs:23`
+
+| # | Row | Console recipe | Evidence anchor | Result |
+|---|---|---|---|---|
+| 1 | Kaleidoscope: two removal votes; click-to-start; red paint; pick from the rest; ESC and reopen shows the same red option with no re-vote | `relic KALEIDOSCOPE` | `tagged relic-origin card reward` on obtain; `removal vote opened` per screen; `chat removed` on close; no second `removal vote opened` on reopen | [ ] |
+| 2 | Glass Eye: five votes sharing the act's override budget; Lost Coffer: one vote plus potion | `relic GLASS_EYE`, `relic LOST_COFFER` | `tagged relic-origin card reward` x5 (Glass Eye) / x1 (Lost Coffer); `removal vote opened` per screen; `override: streamer took the removed option` decrements the shared act budget | [ ] |
+| 3 | Dream Catcher at a rest site and via Dense Vegetation; rest option text | `relic DREAM_CATCHER` at a campfire; trigger Dense Vegetation | `tagged N rest-site card reward(s)`; `removal vote opened`; rest-option explanation text visible | [ ] |
+| 4 | Hefty Tablet and Lead Paperweight via console and via Neow's curse slot; Skip removed and itself removable; Injury still added on Skip | `relic HEFTY_TABLET`, `relic LEAD_PAPERWEIGHT`; also via Neow curse-slot pick | `context open cards=`; `screen bound`; `chat removed Skip` case; Injury still granted after a Skip removal | [ ] |
+| 5 | Neow's Bones nesting an eligible relic | `relic NEOWS_BONES` | `tagged relic-origin card reward` for the nested relic's own reward; `removal vote opened` for the nested pick | [ ] |
+| 6 | Per surface: comply; override a removed card; override a removed Skip; budget 0 unclickable; override during the countdown; chat offline mid-vote (cancel => vanilla screen) | any RemoveOne surface above | `chat removed`; `override: streamer took the removed option`; `override during removal vote`; budget-0 click produces no override log; chat disconnect cancels cleanly to a normal vanilla screen | [ ] |
+| 7 | Driftwood: reroll after a removal is free and re-votes; reroll denied during a vote | `relic DRIFTWOOD` alongside any RemoveOne surface | second `removal vote opened` after a free reroll; reroll attempt during an open vote is denied (no reroll log, vote unaffected) | [ ] |
+| 8 | Unskippable: the five events incl. ESC; Orrery purchase; Lord's Parasol; Strongbox; map blocked while pending; Proceed blocked while pending | Future of Potions, Colorful Philosophers, Brain Leech Rip, Trial Guilty, Crystal Sphere; buy Orrery or take Lord's Parasol; `relic STRONGBOX` | `card reward screen restrained`; `rewards set restrained`; `Skip denied on an unskippable card reward`; `Proceed blocked: an unskippable card reward`; map button also blocked while pending | [ ] |
+| 9 | Text: every appended key on hover, on the Ancient button, in the compendium, and on the rest option; the grown event buttons (Trash Heap, Lost Coffer on an Ancient page); text absent with the checkbox On | any relic/event above; flip checkbox On for the negative check | `event option grown by`; explanation text visible on hover/Ancient button/compendium/rest option with checkbox Off; absent with checkbox On | [ ] |
+| 10 | Third-party: Balls2 Pokeball reward pick-votes; Balls2 Donu and an StS1 Boss Ancient get the Ancient vote; Strongbox unskippable with its line; a learned relic appears in the file (use a Sabotage-free test relic or Strongbox with the built-in entry removed) | Balls2 Pokeball combat reward; Balls2 Donu / StS1 Boss Ancients' Donu-Deca; `relic STRONGBOX`; an unrecognized third-party relic | normal combat vote for Pokeball; Ancient vote fires for the custom ancients; `card reward screen restrained` / `rewards set restrained` for Strongbox; `learned relic` for the unrecognized one | [ ] |
+| 11 | Sealed deck with Always Whale: Talisman upgrades 2 cards, tombstone badge, Doom tooltip, Doom applied on play; Leafy Poultice and Precarious Shears never offered across seeds; unsealed run shows vanilla Talisman text and behaviour | Sealed Deck modifier + Pikcube's Always Whale, take Neow's Talisman | tombstone badge on the 2 upgraded cards; Doom power tooltip on hover; Doom applied when the card is played; neither disabled relic appears across several seeds; a non-sealed run's Talisman is unchanged vanilla | [ ] |
+| 12 | Regression: normal combat reward vote; checkbox On restores v0.3.1 behaviour bit for bit; default branch (v0.107.1) install logs the stand-down and pick-votes everything | plain combat win; toggle checkbox On; install on the default branch | normal combat card reward vote fires as before; checkbox On behaves exactly like the pre-remove-one release; default branch logs `combat-origin tagging did not register` and every card reward is a normal vote | [ ] |
+
+Hand this matrix to the operator. The `remove-one-complete` tag is applied once every row above is green.

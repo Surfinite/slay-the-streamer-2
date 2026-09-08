@@ -22,7 +22,7 @@ public sealed record ChatSettings(
     int RelicChoices = 1,
     int VoteOverridesPerAct = 1,
     bool CursedOverrides = false,
-    bool CombatCardVotesOnly = true,
+    bool CombatCardVotesOnly = false,
     bool NameEnemiesAfterVoters = true,
     int NamedEnemiesSpeakSeconds = 5);
 
@@ -266,14 +266,14 @@ public static class ModSettings {
                 else warnings.Add("cursedOverrides is not a boolean; using default (false)");
             }
 
-            // Default flipped false->true post-v0.2.2 (Surfinite, 2026-08-24): post-combat-only
-            // votes are the more intuitive baseline. Files that booted v0.2.2 already carry an
-            // explicit false via the additive migration, so only never-stamped files see this.
-            bool combatCardVotesOnly = true;
+            // Default false again from v0.4.0 (Surfinite 2026-09-07): Off now means the
+            // per-origin rules (removal votes, unskippable rewards) with explanation text
+            // on the relics and events; On keeps the combat-only behaviour.
+            bool combatCardVotesOnly = false;
             if (root.TryGetProperty("combatCardVotesOnly", out var combatOnlyProp)) {
                 if (combatOnlyProp.ValueKind == JsonValueKind.True) combatCardVotesOnly = true;
                 else if (combatOnlyProp.ValueKind == JsonValueKind.False) combatCardVotesOnly = false;
-                else warnings.Add("combatCardVotesOnly is not a boolean; using default (true)");
+                else warnings.Add("combatCardVotesOnly is not a boolean; using default (false)");
             }
 
             bool nameEnemiesAfterVoters = true;

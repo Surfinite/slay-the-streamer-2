@@ -843,3 +843,41 @@ Optional but useful:
 - **Crowd Control mod for StS2** (`C:\Users\Surfinite\Downloads\SlayTheSpire2-CC-110.zip`) — Warp World's `CrowdControl.dll` via ILSpy as a *capability reference* (proves which game systems are mod-reachable).
 - **spire-scryer** (`github.com/Sezmol/spire-scryer`) — open-source C# StS2 mod that pushes `RunManager` state to Cloudflare Worker → Twitch PubSub overlay. Useful as a reading-game-state reference. No declared license.
 - **spire-codex** (`github.com/ptrlrd/spire-codex`) — not a mod, a web data service. Useful as a card/relic/event data reference.
+
+---
+
+## Remove-one votes + unskippable rewards (remove-one/, 2026-09-07)
+
+Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-design.md`. Ported from SabotageTheStreamer's `strike/` slice (rig-green 2026-09-07) plus the unmerged `neow2` branch. `combatCardVotesOnly` flips back to default off in this slice (`remove-one/12`); see the card-scope section above for the prior flip history.
+
+Rulings summary (one line each, full detail in spec section 0):
+1. Beta-only: the combat tag hook doesn't exist on the default branch, so the whole classifier stands down to today's behaviour (every card reward is a normal-pick vote) with a one-time Warn.
+2. Click-to-start: the removal vote starts on the streamer's first click on the screen; that click takes nothing.
+3. Override on the removed option: after removal, clicking the removed option spends one override and takes it; budget 0 makes it unclickable; a click during the countdown is a normal override.
+4. Settings: On keeps the old combat-only behaviour; Off (new default) applies the per-origin rules with explanation text.
+5. Accent lead for every appended explanation: "Slay the Streamer:" in cornflower blue `#668CFF` on its own line.
+6. Relic text coverage: a built-in relic-ID list (vanilla plus Strongbox) plus a runtime learner for other mods' relics.
+7. Sealed-deck Neow tweaks (Talisman rework with the Doomed enchantment; Leafy Poultice and Precarious Shears disabled) apply only when the Sealed Deck modifier is in the run; Neow's Bargain and Tithe are not ported.
+8. Doomed reuses the Doom power's tombstone badge icon and tooltip text.
+9. Massive Scroll is multiplayer-only and every vote patch already bails in multiplayer, so it never enters the surface list.
+
+Third-party findings (spec section 2.1, all BaseLib mods installed on Surfinite's machine):
+- **Balls2** (dandylion1740): Pokeball's combat-end card reward is combat-tagged (normal vote); Dragon Balls opens a mid-combat choose-a-card screen (excluded, out of scope); its Donu ancient already gets the Ancient vote.
+- **StS1 Boss Ancients** (2D20): Colosseum Ticket and Glorious Crown add combat card rewards (normal vote); Fusion Device opens a pick-3 grid on obtain (excluded); its Donu/Deca ancient gets the Ancient vote.
+- **Haxxero's More Relics**: Strongbox (Shop rarity) offers a Rare and an Uncommon card reward on pickup, classified Unskippable like Orrery, with the built-in explanation text.
+
+Sea Star clone edge: Hades Ancients' Sea Star adds a CLONED existing `CardReward` to the live screen; the clone carries no origin tag and lands in the unskippable event bucket. Rare, documented, deliberately not special-cased.
+
+Compat item: the Downfall port also patches `CardSelectCmd.FromChooseACardScreen`; a compat check is owed if Tristan ever runs it alongside this mod.
+
+Open follow-ups:
+- A settings knob for the learned-relic generic explanation text (currently one fixed string for any unrecognized relic that lands in the learner).
+- Extend the RemoveOne treatment to event rewards, if Tristan wants a chat interaction on every screen rather than just unskippable.
+- A universal override confirm click (spec explicitly left overrides as instant-click-to-spend; revisit if a misclick incident shows up).
+- `RemovalVoteFlow.ActiveSession` has no caller anywhere in the codebase; candidate for removal on a future cleanup pass.
+- `RemovalVoteFlow.TryStart` does not guard against an already-active session (theoretical back-to-back race between two removal-eligible screens; not observed live).
+- The Skip button is rebuilt visible after a Driftwood reroll on an unskippable reward; accepted per spec (the deny check still holds and blocks the click), just a cosmetic loose end.
+
+### Game-update compat watchlist additions (spec section 9)
+
+`FromChooseACardScreen` shape and its synchronous head; the 350 ms `SelectHolder` debounce; `ShowScreen` as the sole opener returning the instance and assigning `_cards` by reference; the four vanilla relics (Orrery, Kaleidoscope, Glass Eye, Lost Coffer) constructing their rewards before their first await inside `AfterObtained`; `Hook.ModifyRestSiteHealRewards` list-in signature; Skip-before-Reroll ordering in `CardRewardAlternative.Generate`; `LocTable.GetRawText` staying the single read path under `SmartFormat`; `EnchantmentModel.IconPath` staying non-virtual with the `_iconPath` cache; `NeowsTalisman.AfterObtained` staying a non-async public method; base `IsAllowedAtNeow` deferring to `IsAllowed`; `NEventOptionButton` keeping `%Text` and its four nine-patch siblings; `EventOption.FromRelic` falling back to `relic.DynamicEventDescription`.

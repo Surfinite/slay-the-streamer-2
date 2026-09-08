@@ -120,7 +120,7 @@ Votes time out after 30 seconds by default (configurable, 10–120s).
 
 | Decision | Description |
 |---|---|
-| **Card rewards** | After each fight, chat picks which of the 3 cards is added to your deck. Chat can also skip if you enable it. An optional setting limits these votes to rewards earned from combat — card-rewards given by events and relics become free streamer picks. |
+| **Card rewards** | After each fight, chat picks which of the 3 cards is added to your deck (chat can also skip if you enable it). Card rewards that are **not** from combat follow different rules: on Ancient relics (Kaleidoscope, Glass Eye, Lost Coffer, Hefty Tablet, Lead Paperweight) and Dream Catcher, **chat votes which option to remove** and you pick from the rest; card rewards from events and shop relics (Orrery) **cannot be skipped**. Every affected relic and event says so in its own text. A setting restores the old "only combat rewards vote" behaviour. |
 | **Ancient relics** | When you encounter an Ancient event (Pael, Tezcatara, Orobas, Nonupeipe, Tanx, Vakuu, Darv), chat picks the relic. |
 | **Act boss** | When you click "Proceed" out of a treasure chest, chat picks which of 3 candidate bosses you'll face at the end of the act. Bosses get animated combat-idle portraits. |
 | **Act 1 variant** | When you click "Embark", chat picks Underdocks vs Overgrowth before the run starts. (Toggleable.) |
@@ -134,7 +134,7 @@ The mod also plays nicely with two vanilla Custom Mode modifiers:
 
 ### 🎛 Streamer-side extras (not chat votes)
 
-- **Vote overrides** *(new in v0.2)* — a per-act budget (default 1) to overrule chat: while a card-reward or Ancient vote is counting down, just click the option you want — or Skip — and the vote ends instantly with your pick. Chat is told, e.g. `Surfinite overrode the vote and took Ricochet. 0 overrides remaining this act`. Skipping mid-vote costs an override, not a card skip.
+- **Vote overrides** *(new in v0.2)* — a per-act budget (default 1) to overrule chat: while a card-reward or Ancient vote is counting down, just click the option you want — or Skip — and the vote ends instantly with your pick. Chat is told, e.g. `Surfinite overrode the vote and took Ricochet. 0 overrides remaining this act`. Skipping mid-vote costs an override, not a card skip. After chat removes an option, clicking the removed option spends an override to take it anyway.
 - **Relic choices** *(new in v0.2)* — treasure chests and elite kills can offer 2–4 relics instead of 1; you pick one and the rest go back into the relic pool.
 - **Cursed Overrides** *(new in v0.2.1, off by default)* — overriding chat has a price: every vote override you spend also adds a **random curse card** to your deck, with the vanilla card-added animation and a chat receipt naming the curse (`… Cursed Overrides: gained Injury!`). The curse is drawn uniformly from the game's generic curse pool (special-purpose curses like Ascender's Bane are excluded).
 - **Enemies named after voters** *(new in v0.3.0, on by default)* — enemy creatures are named after chatters who vote, shown under their intent icons. Since v0.3.1 the draw is a **raffle weighted by participation**: every vote you take part in earns a ticket (one per vote — spamming numbers doesn't help), each enemy draws a name by ticket, and being drawn spends your tickets until you vote again. Repeat draws of the same chatter become "Jr.", then "III". With the companion setting on, a named enemy also **speaks its chatter's messages** as in-game speech bubbles. Bubble text is the raw chat message — your channel moderation is the content filter (turn just the bubbles off if that concerns you).
@@ -144,6 +144,7 @@ The mod also plays nicely with two vanilla Custom Mode modifiers:
 ## 🤝 Mod compatibility
 
 - **Slay the Relics reborn** (appears as `SlayTheRelicsExporter` in the in-game mod list) — tested side-by-side and they play fine together. The two mods do disjoint things: Slay the Relics pushes your run state to a Twitch extension overlay (viewers hover relics/cards on the stream), and this mod reads chat votes. No known conflicts.
+- **Balls2**, **StS1 Boss Ancients**, **Haxxero's More Relics** — tested with the removal-vote rules; their combat card rewards vote normally, their custom Ancients get the Ancient vote, and More Relics' Strongbox is unskippable like Orrery.
 
 ---
 
@@ -155,7 +156,7 @@ Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list.
 - **Vote on Act 1 variant** — turn the pre-run Underdocks/Overgrowth vote on or off.
 - **Allow same boss twice (A10)** — Ascension 10's final act has two bosses and chat votes on both; when on, the second vote is allowed to pick the same boss back-to-back.
 - **Allow chat to skip** — when on, chat can vote `#0` to skip a card reward.
-- **Card-reward votes only occur after combat** *(new in v0.2.2)* — when on, chat only votes on card rewards earned from combat. Card-rewards given by events and relics (Orrery, Dream Catcher, the Draft modifier, etc.) are always free streamer picks — no vote, no skip budget. On by default; turn it off to restore voting on every card reward. *(Beta branch only: the game's default branch lacks the hook this needs, so there every card reward votes regardless.)*
+- **Card-reward votes only occur after combat** *(default off since v0.4.0)* — Off: non-combat card rewards use the rules above (removal votes on Ancient relics and Dream Catcher, unskippable event and shop-relic rewards), with a blue "Slay the Streamer:" line on the relics and events explaining what happens. On: chat only votes on combat card rewards and everything else is a free streamer pick. *(Beta branch only: the default branch lacks the hook this needs; there every card reward votes as a normal pick.)*
 - **Streamer card skips / act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
 - **Streamer vote overrides / act** — how many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). While a card-reward or Ancient vote is counting down, click the option you want (or Skip) and the vote ends instantly with your pick. Skipping mid-vote costs an override, not a card skip. Clicks within the first ~1.5 seconds of a vote countdown are ignored, so that an accidental double-click to open the vote would never spend an override you didn't intend to.
 - **Cursed Overrides** — when on, each vote override you spend also adds a random curse card to your deck. Off by default.

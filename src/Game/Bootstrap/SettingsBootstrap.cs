@@ -59,7 +59,7 @@ public static class SettingsBootstrap {
         ["relicChoices"]         = 1,
         ["voteOverridesPerAct"]  = 1,
         ["cursedOverrides"]      = false,
-        ["combatCardVotesOnly"]  = true,
+        ["combatCardVotesOnly"]  = false,
         ["nameEnemiesAfterVoters"] = true,
         ["namedEnemiesSpeakSeconds"] = 5,
     };

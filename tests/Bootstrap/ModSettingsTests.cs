@@ -802,14 +802,14 @@ public class ModSettingsTests {
     }
 
     // --- combatCardVotesOnly (card-scope: chat votes only on combat-origin card rewards; default
-    // flipped false->true post-v0.2.2 — Surfinite 2026-08-24: more intuitive that votes are
-    // post-combat-only; existing files keep their stamped explicit value via additive migration) ---
+    // flipped back false again from v0.4.0 — Surfinite 2026-09-07: off now means the per-origin
+    // rules (removal votes, unskippable rewards) with explanation text on the relics and events) ---
 
     [Theory]
     [InlineData("\"combatCardVotesOnly\": true,", true, false)]
     [InlineData("\"combatCardVotesOnly\": false,", false, false)]
-    [InlineData("\"combatCardVotesOnly\": \"yes\",", true, true)]  // non-bool -> default + warning
-    [InlineData("", true, false)]                                  // missing -> default, no warning
+    [InlineData("\"combatCardVotesOnly\": \"yes\",", false, true)]  // non-bool -> default + warning
+    [InlineData("", false, false)]                                  // missing -> default, no warning
     public void CombatCardVotesOnly_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
         var path = WriteTempJson($$"""
         {

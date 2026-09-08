@@ -182,7 +182,7 @@ internal static class SettingsPanelBuilder {
         AddDivider(root);
         AddCheckboxRow(root, "Card-reward votes only occur after combat", current.CombatCardVotesOnly,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CombatCardVotesOnly = value }));
-        AddHelpText(root, "When on, card-reward votes only occur after combat.\nCard-rewards given by events and relics are always free picks.");
+        AddHelpText(root, "On: chat only votes on card rewards earned from combat; other card rewards are free picks.\nOff (default): chat votes to remove one option on Ancient-relic and Dream Catcher card rewards,\nand event or shop-relic card rewards cannot be skipped. Explanations appear on the relics and events themselves.");
         AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);
         AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");

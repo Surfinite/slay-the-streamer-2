@@ -880,3 +880,14 @@ Open follow-ups:
 ### Game-update compat watchlist additions (spec section 9)
 
 `FromChooseACardScreen` shape and its synchronous head; the 350 ms `SelectHolder` debounce; `ShowScreen` as the sole opener returning the instance and assigning `_cards` by reference; the four vanilla relics (Orrery, Kaleidoscope, Glass Eye, Lost Coffer) constructing their rewards before their first await inside `AfterObtained`; `Hook.ModifyRestSiteHealRewards` list-in signature; Skip-before-Reroll ordering in `CardRewardAlternative.Generate`; `LocTable.GetRawText` staying the single read path under `SmartFormat`; `EnchantmentModel.IconPath` staying non-virtual with the `_iconPath` cache; `NeowsTalisman.AfterObtained` staying a non-async public method; base `IsAllowedAtNeow` deferring to `IsAllowed`; `NEventOptionButton` keeping `%Text` and its four nine-patch siblings; `EventOption.FromRelic` falling back to `relic.DynamicEventDescription`.
+
+## Sealed-deck Neow tweaks (sealed-neow/, 2026-09-07)
+
+Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-design.md` section 7. Gated end-to-end on `SealedDeckRun.IsActive` (`RunManager.Instance?.DebugOnlyGetState()?.Modifiers` containing a `SealedDeck` modifier, re-evaluated per use, never cached). Two tweaks apply only under that gate: `TalismanReworkPatch` prefixes `NeowsTalisman.AfterObtained` to upgrade `SealedNeowLoc.TalismanCards` (2) random upgradable cards and enchant each with the new `StreamerDoomed` enchantment at `SealedNeowLoc.TalismanDoom` (3), instead of vanilla's Strike/Defend upgrade (a no-op with no Basics in the deck); `RelicDisablePatch` postfixes the base `RelicModel.IsAllowed` so Leafy Poultice and Precarious Shears are never offered in a sealed run (Neow page, Neow's Bones, chests, elites, shops all funnel through the one predicate).
+
+Follow-ups deferred:
+- A settings knob for the Talisman constants (`TalismanCards`/`TalismanDoom`), currently fixed in `SealedNeowLoc`.
+- A settings list for more relics disabled in sealed runs (more "sealed-dead" relics beyond Leafy Poultice and Precarious Shears), currently a fixed `HashSet` in `RelicDisablePatch`.
+- A mid-loop exception inside the Talisman rework is logged and still returns a completed Task (vanilla is not re-run); unreachable with the current `CanEnchant` filter.
+
+Doomed-icon decision (ruling 8): rather than ship new art, `DoomedIconPatch` postfixes `EnchantmentModel.IconPath` to return the existing Doom power's tombstone badge (`res://images/powers/doom_power.png`) for `StreamerDoomed`, reusing its tooltip/badge conventions instead of introducing a bespoke icon.

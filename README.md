@@ -127,7 +127,7 @@ Votes time out after 30 seconds by default (configurable, 10–120s).
 
 The mod also plays nicely with two vanilla Custom Mode modifiers:
 
-- **Sealed Deck** — **you** draft your starting 10 cards from a 30-card grid (chat does *not* vote on this draft). Once the run begins, chat votes on every card reward that follows, exactly like a normal run.
+- **Sealed Deck** — **you** draft your starting 10 cards from a 30-card grid (chat does *not* vote on this draft). Once the run begins, chat votes on every card reward that follows, exactly like a normal run. If Neow's blessings are available in your sealed run (Pikcube's Run Modifiers' **Always Whale** does that), two tweaks apply: **Neow's Talisman** upgrades 2 random cards and makes them **Doomed** (3 Doom to you each time you play one) instead of upgrading Strikes and Defends you do not have, and **Leafy Poultice** and **Precarious Shears** are never offered. Outside sealed runs everything is vanilla.
 - **Draft** — the run starts with 10 sequential pick-1-of-3 screens. Because these reuse the standard card-reward UI, **chat votes on every pick** — i.e. chat fully drafts your starting deck.
 
 `SealedDeck` and `Draft` are mutually exclusive in Custom Mode. Note: vanilla Custom Mode is locked behind 3 standard-mode wins (or unlock everything on the modded save via `unlock all` in the dev console, as in the caveats below).

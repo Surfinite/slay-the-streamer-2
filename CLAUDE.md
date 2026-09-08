@@ -22,6 +22,8 @@ Decompile the OLD (`src/sts2.dll` — still the prior build's binary until you r
 
 **remove-one/ watchlist items** (check in every compat diff): `CardSelectCmd.FromChooseACardScreen` shape and its synchronous head; the 350 ms `SelectHolder` debounce; `NChooseACardSelectionScreen.ShowScreen` as sole opener returning the instance and assigning `_cards` by reference; the four vanilla relics (Kaleidoscope, Glass Eye, Lost Coffer, Orrery) constructing rewards before their first await; `Hook.ModifyRestSiteHealRewards` list-in signature; Skip before Reroll in `CardRewardAlternative.Generate`; `LocTable.GetRawText` staying the single read path under `SmartFormat`; `NRewardsScreen._headerLabel` being assigned inside vanilla `_Ready` (hence the lazy provider); `NEventOptionButton` keeping `%Text` and its centre-anchored `Shadow`/`Outline`/`RedFlash`/`BlueFlash` nine-patches with `Image` full-rect; `EventOption.FromRelic` falling back to `relic.DynamicEventDescription`.
 
+**sealed-neow/ watchlist items** (check in every compat diff): `NeowsTalisman.AfterObtained` staying a public non-async `Task` method; `EnchantmentModel.IconPath` staying a non-virtual getter with the `_iconPath` cache; `powers/doom_power.png` existing; base `IsAllowedAtNeow` deferring to `IsAllowed`.
+
 ### Test isolation for TiLog
 
 Any xUnit test class that triggers `TiLog.Info/Warn/Error` MUST be marked:
@@ -50,6 +52,7 @@ Per-task commits to `main` with a slice-specific prefix:
 - Voter-name raffle rework (ticket-weighted name draws): `name-raffle/N:`
 - Release prep (manifest bump, README, changeNote): `release/vX.Y.Z:`
 - Remove-one votes + unskippable rewards + explanation text: `remove-one/N:`
+- Sealed-deck Neow tweaks (Talisman rework, relic disables): `sealed-neow/N:`
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 
@@ -191,3 +194,4 @@ Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the
 - **`Hook.BeforeCombatRewardOffered` does NOT exist on the game's default branch (v0.107.1)** — it was added to the game between v0.107.1 and the Beta the sister repo verified (~v0.110). On the default branch, `CombatOriginTags`' Prepare logs an Error, the patch skips registration, and `combatCardVotesOnly` goes inoperative by design (all card rewards vote, one-time Warn). Verified live on the default branch 2026-08-28 — the Error+Warn pair in godot.log is EXPECTED there, not a bug to chase. Voter names + speech bubbles verified fully working on both branches the same day.
 - **Vote-patch prefixes: the `_voteInProgress` branch must precede EVERY `return true` (bail-to-vanilla) gate.** Both card and ancient patches originally checked MP/chat-readability gates first — harmless while mid-vote clicks were physically impossible, but vote overrides made options clickable mid-vote, and a click during a chat disconnect (`Reconnecting`) passed the chat gate straight into vanilla, advancing the game under a suspended vote (double-apply risk on resume). Fixed in `vote-override/8` by hoisting vote-in-progress handling ahead of all bail gates. Any new vote patch must order: `_resumeInProgress` pass-through → `_voteInProgress` suppress/override → only then bail-to-vanilla gates.
 - **Mod loc text: append at READ time (`LocTable.GetRawText` postfix), not at load.** BaseLib writes custom-model strings straight into the table dictionary after load (`ModelLocPatch` on `ModelDb.Init`), so a `LoadTable` postfix never sees third-party relics; read-time also survives language switches. The fallback-table recursion calls `GetRawText` twice for English-fallback keys, so the append must be idempotent (`AuthorityLoc.Append`).
+- **A postfix on a virtual base predicate (`RelicModel.IsAllowed`) never reaches subclasses that override it without calling base.** Leafy Poultice and Precarious Shears do not override it; check any relic added to the disable list (`grep -n IsAllowed decompiled/.../Relics/<Relic>.cs`).

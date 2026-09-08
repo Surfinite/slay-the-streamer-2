@@ -889,5 +889,7 @@ Follow-ups deferred:
 - A settings knob for the Talisman constants (`TalismanCards`/`TalismanDoom`), currently fixed in `SealedNeowLoc`.
 - A settings list for more relics disabled in sealed runs (more "sealed-dead" relics beyond Leafy Poultice and Precarious Shears), currently a fixed `HashSet` in `RelicDisablePatch`.
 - A mid-loop exception inside the Talisman rework is logged and still returns a completed Task (vanilla is not re-run); unreachable with the current `CanEnchant` filter.
+- Mod removal: a save carrying STREAMER_DOOMED loads without the mod as DeprecatedEnchantment (SaveUtil.EnchantmentOrDeprecated); graceful.
+- RelicDisablePatch's one-shot log is process-scoped: only the first sealed run in a session emits the S5 evidence line.
 
 Doomed-icon decision (ruling 8): rather than ship new art, `DoomedIconPatch` postfixes `EnchantmentModel.IconPath` to return the existing Doom power's tombstone badge (`res://images/powers/doom_power.png`) for `StreamerDoomed`, reusing its tooltip/badge conventions instead of introducing a bespoke icon.

@@ -17,11 +17,11 @@ internal static class RelicDisablePatch {
     private static readonly HashSet<string> Disabled = new(StringComparer.Ordinal) { "LEAFY_POULTICE", "PRECARIOUS_SHEARS" };
     private static int _logged;
 
-    static void Postfix(RelicModel __instance, ref bool __result) {
+    static void Postfix(RelicModel __instance, IRunState runState, ref bool __result) {
         try {
             if (!__result) return;
             if (!Disabled.Contains(__instance.Id.Entry)) return;
-            if (!SealedDeckRun.IsActive) return;
+            if (!SealedDeckRun.IsActive(runState)) return;
             __result = false;
             if (System.Threading.Interlocked.Exchange(ref _logged, 1) == 0)
                 TiLog.Info("[SlayTheStreamer2][sealed-neow] sealed run: Leafy Poultice and Precarious Shears disabled");

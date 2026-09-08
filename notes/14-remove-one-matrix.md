@@ -51,7 +51,7 @@ Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-desi
 | S2 | Playing a Doomed card applies 3 Doom; twice = 6 | combat | Doom power stack on the player | [ ] |
 | S3 | Save, quit, Continue right after the Talisman: the same two cards stay upgraded and Doomed | | badge persists | [ ] |
 | S4 | Talisman text: sealed run shows the rework text on the Neow button and relic hover; main menu compendium and an unsealed run show vanilla text | | visual | [ ] |
-| S5 | Leafy Poultice and Precarious Shears never offered at Neow or by Neow's Bones across 5+ sealed starts | `relic NEOWS_BONES` | `sealed run: Leafy Poultice and Precarious Shears disabled` | [ ] |
+| S5 | Leafy Poultice and Precarious Shears never offered at Neow or by Neow's Bones across 5+ sealed starts | `relic NEOWS_BONES` | `sealed run: Leafy Poultice and Precarious Shears disabled` (logged once per game session) | [ ] |
 | S6 | Unsealed run: vanilla Talisman, both relics can appear | | no `[sealed-neow]` lines | [ ] |
 
 Hand this matrix to the operator. `remove-one-complete` is applied once rows 1-10 and 12 are green; `sealed-neow-complete` is applied once rows S1-S6 are green.

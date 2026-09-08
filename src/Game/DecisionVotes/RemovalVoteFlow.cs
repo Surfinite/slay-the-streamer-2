@@ -115,7 +115,7 @@ internal static class RemovalVoteFlow {
 
     /// <summary>Ends this run's ownership of the shared session/surface slots and always
     /// notifies the caller. Only clears <c>_session</c>/<c>_surface</c> when they still
-    /// belong to THIS session, a later TryStart may have already claimed the slots (the
+    /// belong to THIS session; a later TryStart may have already claimed the slots (the
     /// already-active guard makes this rare, but a fail-open exception path could still
     /// race a fresh start) and must not be clobbered by a straggling Finish call.</summary>
     private static void Finish(VoteSession session, Action onFinished) {

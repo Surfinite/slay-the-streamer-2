@@ -1,5 +1,7 @@
 // tests/Game/Content/SealedNeowLocTests.cs
+using System.IO;
 using SlayTheStreamer2.Game.Content;
+using SlayTheStreamer2.Game.DecisionVotes;
 using Xunit;
 
 namespace SlayTheStreamer2.Tests.Game.Content;
@@ -34,8 +36,20 @@ public class SealedNeowLocTests {
     [Fact]
     public void NoEmDashes() {
         foreach (var (t, k) in new[] { ("enchantments", "STREAMER_DOOMED.title"), ("enchantments", "STREAMER_DOOMED.description"), ("enchantments", "STREAMER_DOOMED.extraCardText") }) {
-            SealedNeowLoc.TryProvide(t, k, out var s); Assert.DoesNotContain("—", s);
+            SealedNeowLoc.TryProvide(t, k, out var s); Assert.DoesNotContain("\u2014", s);
         }
-        SealedNeowLoc.TryReplace("relics", "NEOWS_TALISMAN.description", out var d); Assert.DoesNotContain("—", d);
+        SealedNeowLoc.TryReplace("relics", "NEOWS_TALISMAN.description", out var d); Assert.DoesNotContain("\u2014", d);
+    }
+
+    /// <summary>The two Talisman replace keys are relic-description keys, so they must
+    /// not also appear in AuthorityLoc's catalogue: RawTextPatch's replace postfix and
+    /// LocTextPatch's append postfix both run on LocTable.GetRawText, and a collision
+    /// would mean the Sabotage explanation text lands on the Talisman rework wording
+    /// with no relic behind it to explain.</summary>
+    [Fact]
+    public void ReplaceKeys_DoNotCollideWithAuthorityLocCatalogue() {
+        var registry = new RelicTextRegistry(Path.Combine(Path.GetTempPath(), Path.GetRandomFileName()));
+        foreach (var key in new[] { "NEOWS_TALISMAN.description", "NEOWS_TALISMAN.eventDescription" })
+            Assert.Null(AuthorityLoc.SuffixFor("relics", key, registry));
     }
 }

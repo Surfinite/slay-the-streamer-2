@@ -25,12 +25,16 @@ public static class SealedNeowLoc {
     };
 
     public static bool TryProvide(string table, string key, out string text) {
-        text = "";
-        return table == "enchantments" && Provided.TryGetValue(key, out text!);
+        string? found = null;
+        bool hit = table == "enchantments" && Provided.TryGetValue(key, out found);
+        text = found ?? "";
+        return hit;
     }
 
     public static bool TryReplace(string table, string key, out string text) {
-        text = "";
-        return table == "relics" && Replaced.TryGetValue(key, out text!);
+        string? found = null;
+        bool hit = table == "relics" && Replaced.TryGetValue(key, out found);
+        text = found ?? "";
+        return hit;
     }
 }

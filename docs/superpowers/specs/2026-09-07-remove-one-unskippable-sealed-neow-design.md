@@ -391,8 +391,8 @@ dispatched virtually from `RelicCmd.Obtain`) upgrades the last Basic Strike and 
 no-op in a sealed deck. Prefix: if the run is sealed, set `__result` to the rework and return
 false; otherwise vanilla. Rework (synchronous): candidates = deck cards in pile order where
 `IsUpgradable` and `Doomed.CanEnchant(card)`; pick `min(2, count)` distinct indices with a
-run-seeded `Rng` (seed from the run seed string plus a salt, so a save-quit-Continue that
-re-runs the pickup picks the same cards) through the pure `TalismanPickRules.PickIndices`
+run-seeded `Rng` (seed from the run seed string plus a salt, off the run's own RNG
+streams; AfterObtained is not re-run on Continue) through the pure `TalismanPickRules.PickIndices`
 (ported, unit-tested); per pick `CardCmd.Upgrade(card, CardPreviewStyle.None)` then the
 non-generic `CardCmd.Enchant(doomed.ToMutable(), card, 3)` and `NCardEnchantVfx.Create(card)`
 into `NRun.Instance.GlobalUi.CardPreviewContainer` so the streamer sees which cards were hit.

@@ -13,11 +13,13 @@ namespace SlayTheStreamer2.Game.Content;
 [HarmonyPatch(typeof(EnchantmentModel), nameof(EnchantmentModel.IconPath), MethodType.Getter)]
 internal static class DoomedIconPatch {
     private const string DoomIcon = "res://images/powers/doom_power.png";
+    private static bool? _exists;
 
     static void Postfix(EnchantmentModel __instance, ref string __result) {
         try {
             if (__instance is not StreamerDoomed) return;
-            if (ResourceLoader.Exists(DoomIcon)) __result = DoomIcon;
+            _exists ??= ResourceLoader.Exists(DoomIcon);
+            if (_exists == true) __result = DoomIcon;
         } catch (Exception ex) { TiLog.Warn($"[SlayTheStreamer2][sealed-neow] doomed icon override failed: {ex.Message}"); }
     }
 }

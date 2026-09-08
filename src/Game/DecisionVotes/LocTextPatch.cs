@@ -1,6 +1,7 @@
 // src/Game/DecisionVotes/LocTextPatch.cs
 using System;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using Godot;
 using HarmonyLib;
@@ -21,11 +22,21 @@ internal static class LocTextPatch {
     internal static RelicTextRegistry Registry =>
         RelicTextRegistry.Instance ??= new RelicTextRegistry(Path.Combine(OS.GetUserDataDir(), "slay_the_streamer_2.learned-relics.json"));
 
-    static void Postfix(string key, string ___name, ref string __result) {
+    // Harmony's injected-field parameter takes the field's LITERAL name after three
+    // underscores; LocTable's field is `_name`, so the parameter is `____name` (four
+    // underscores total). See the CLAUDE.md landmine.
+    static bool Prepare(MethodBase? original) {
+        if (original is not null) return true;
+        if (AccessTools.Field(typeof(LocTable), "_name") is not null) return true;
+        TiLog.Error("[SlayTheStreamer2][card-scope] LocTable._name not found; LocTextPatch will not register");
+        return false;
+    }
+
+    static void Postfix(string key, string ____name, ref string __result) {
         try {
             if (!RewardAuthority.RulesActive) return;
-            if (___name is not ("relics" or "events")) return;
-            var suffix = AuthorityLoc.SuffixFor(___name, key, Registry);
+            if (____name is not ("relics" or "events")) return;
+            var suffix = AuthorityLoc.SuffixFor(____name, key, Registry);
             if (suffix is null) return;
             __result = AuthorityLoc.Append(__result, suffix);
         } catch (Exception ex) {

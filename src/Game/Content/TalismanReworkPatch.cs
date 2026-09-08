@@ -19,18 +19,21 @@ namespace SlayTheStreamer2.Game.Content;
 /// <summary>Spec section 7.1. Vanilla NeowsTalisman.AfterObtained upgrades the last
 /// Basic Strike and Defend (a no-op in a sealed deck). In a sealed run this prefix
 /// substitutes: upgrade TalismanCards random upgradable cards and enchant each with
-/// StreamerDoomed at TalismanDoom. The picks use a run-seeded Rng so a
-/// save-quit-Continue that re-runs the pickup picks the same cards. The upgrade preview
-/// is suppressed (CardPreviewStyle.None) and the enchant VFX kept, which shows the card
-/// in its final upgraded and enchanted state. Everything else (Pomander flip, Bones
-/// eligibility, icon, save shape) stays vanilla. Fails open to vanilla.</summary>
+/// StreamerDoomed at TalismanDoom. The picks use a run-seeded Rng. AfterObtained is never
+/// re-run on Continue; the seeded Rng keeps the pick deterministic per run seed and act
+/// without touching the run's own RNG streams. Whether the mutation survives a
+/// save-quit-Continue depends on the save checkpoint (see the CLAUDE.md mid-room
+/// mutation landmine); matrix row S3 covers it. The upgrade preview is suppressed
+/// (CardPreviewStyle.None) and the enchant VFX kept, which shows the card in its final
+/// upgraded and enchanted state. Everything else (Pomander flip, Bones eligibility,
+/// icon, save shape) stays vanilla. Fails open to vanilla.</summary>
 [HarmonyPatch(typeof(NeowsTalisman), nameof(NeowsTalisman.AfterObtained))]
 internal static class TalismanReworkPatch {
     private const string Salt = "slay-the-streamer|talisman";
 
     static bool Prefix(NeowsTalisman __instance, ref Task __result) {
         try {
-            if (!SealedDeckRun.IsActive) return true;
+            if (!SealedDeckRun.IsActive()) return true;
             __result = Rework(__instance);
             return false;
         } catch (Exception ex) {

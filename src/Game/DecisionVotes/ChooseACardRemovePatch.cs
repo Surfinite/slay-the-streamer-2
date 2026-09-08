@@ -82,6 +82,11 @@ internal static class ChooseACardRemovePatch {
             if (CombatManager.Instance?.IsInProgress ?? false) return;             // mid-combat pickers stay the streamer's
             if (RunManager.Instance?.DebugOnlyGetState()?.Players?.Count is int n && n > 1) return;
             if (cards.Count + (canSkip ? 1 : 0) < 3) return;                        // N >= 3 counting Skip
+            if (_current is not null) {
+                RemovalRecords.Clear(_current);
+                Interlocked.Exchange(ref _voteInProgress, 0);
+                TiLog.Warn("[SlayTheStreamer2][choose-remove] a previous choose-a-card context was still open; replaced");
+            }
             _current = new Context { Cards = cards, CanSkip = canSkip };
             LastOpenedRelicId = RelicOriginTags.CurrentObtaining?.Id.Entry;
             TiLog.Info($"[SlayTheStreamer2][choose-remove] context open cards={cards.Count} canSkip={canSkip} relic={LastOpenedRelicId ?? "none"}");
@@ -119,20 +124,32 @@ internal static class ChooseACardRemovePatch {
     [HarmonyPatch(typeof(NChooseACardSelectionScreen), "SelectHolder")]
     [HarmonyPrefix]
     private static bool SelectHolderPrefix(NChooseACardSelectionScreen __instance, NCardHolder cardHolder) {
-        var surface = BoundSurface(__instance);
-        if (surface is null) return true;
-        if (InDebounce(__instance)) return true;                                    // vanilla drops it; never latch here
-        int? clicked = surface.IndexOf(cardHolder);
-        string label = clicked is int i ? _current!.Cards[i].Title : "a card";
-        return Handle(surface, clicked ?? 0, label);
+        try {
+            if (!GodotObject.IsInstanceValid(__instance) || !GodotObject.IsInstanceValid(cardHolder)) return true;
+            var surface = BoundSurface(__instance);
+            if (surface is null) return true;
+            if (InDebounce(__instance)) return true;                                // vanilla drops it; never latch here
+            int? clicked = surface.IndexOf(cardHolder);
+            if (clicked is null) return true;                                       // unresolvable holder: vanilla
+            return Handle(surface, clicked.Value, _current!.Cards[clicked.Value].Title);
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][choose-remove] SelectHolder prefix threw; vanilla proceeds", ex);
+            return true;
+        }
     }
 
     [HarmonyPatch(typeof(NChooseACardSelectionScreen), "OnSkipButtonReleased")]
     [HarmonyPrefix]
     private static bool SkipPrefix(NChooseACardSelectionScreen __instance) {
-        var surface = BoundSurface(__instance);
-        if (surface is null) return true;
-        return Handle(surface, RemovalClickRules.SkipIndex, CardRewardOptionLabels.SkipLabel);
+        try {
+            if (!GodotObject.IsInstanceValid(__instance)) return true;
+            var surface = BoundSurface(__instance);
+            if (surface is null) return true;
+            return Handle(surface, RemovalClickRules.SkipIndex, CardRewardOptionLabels.SkipLabel);
+        } catch (Exception ex) {
+            TiLog.Error("[SlayTheStreamer2][choose-remove] OnSkipButtonReleased prefix threw; vanilla proceeds", ex);
+            return true;
+        }
     }
 
     /// <summary>Same state machine as the card-reward screen: click-to-start, override

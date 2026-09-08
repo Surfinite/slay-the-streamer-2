@@ -85,7 +85,7 @@ internal static class UnskippableRewards {
                 if (RewardsSetField.Value?.GetValue(__instance) is not RewardsSet set) return;
                 if (!set.Rewards.Any(r => r is CardReward cr && RewardAuthority.Classify(cr) == AuthorityMode.Unskippable)) return;
                 set.WithSkippingDisallowed();
-                RewardsHeaderSubLabel.Attach(__instance, HeaderField.Value?.GetValue(__instance) as Control, "Every card reward must be taken here.");
+                RewardsHeaderSubLabel.Attach(__instance, () => HeaderField.Value?.GetValue(__instance) as Control, "Every card reward must be taken here.");
                 TiLog.Info("[SlayTheStreamer2][unskip] rewards set restrained (Skip Rewards disabled)");
             } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][unskip] rewards-set restraint failed; vanilla skippable", ex); }
         }

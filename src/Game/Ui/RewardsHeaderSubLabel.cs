@@ -1,5 +1,4 @@
 using System;
-using System.Reflection;
 using Godot;
 using SlayTheStreamer2.Ti.Internal;
 
@@ -7,23 +6,25 @@ namespace SlayTheStreamer2.Game.Ui;
 
 /// <summary>"Every card reward must be taken here." ABOVE the "Loot!" banner (the loot
 /// column leaves no room below it), in the vote-title theme, positioned per frame from
-/// the header label, never from GetGlobalRect in _Ready.</summary>
+/// the header label, never from GetGlobalRect in _Ready. The header is resolved lazily
+/// via a provider delegate, not captured once at Attach time, because the caller may
+/// run before vanilla assigns its own header field.</summary>
 internal sealed partial class RewardsHeaderSubLabel : Control {
     private const string FontPath = "res://themes/kreon_bold_shared.tres";
     private const int FontSize = 29;
     private const float LineHeight = 44f;
     private static readonly Color TextColor = new(1f, 0.964706f, 0.886275f, 1f);
 
-    private Control? _header;
+    private Func<Control?>? _headerProvider;
     private Label? _label;
 
-    internal static void Attach(Node screen, Control? header, string text) {
+    internal static void Attach(Node screen, Func<Control?> headerProvider, string text) {
         var sub = new RewardsHeaderSubLabel {
             Name = "SlayTheStreamerUnskippableHeader",
             MouseFilter = MouseFilterEnum.Ignore,
             AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
         };
-        sub._header = header;
+        sub._headerProvider = headerProvider;
         sub._label = new Label {
             Text = text, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore,
             AnchorLeft = 0, AnchorTop = 0, AnchorRight = 0, AnchorBottom = 0,
@@ -43,8 +44,9 @@ internal sealed partial class RewardsHeaderSubLabel : Control {
         try {
             if (_label is null) return;
             float cx, top;
-            if (_header is not null && GodotObject.IsInstanceValid(_header)) {
-                var pos = _header.GlobalPosition; var size = _header.Size * _header.Scale;
+            var header = _headerProvider?.Invoke();
+            if (header is not null && GodotObject.IsInstanceValid(header)) {
+                var pos = header.GlobalPosition; var size = header.Size * header.Scale;
                 cx = pos.X + size.X * 0.5f; top = pos.Y - LineHeight - 4f;
             } else { cx = GetViewportRect().Size.X * 0.5f; top = 110f; }
             _label.OffsetLeft = cx - 400f; _label.OffsetRight = cx + 400f;

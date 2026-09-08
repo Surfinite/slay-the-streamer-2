@@ -89,6 +89,7 @@ internal static class ChooseACardRemovePatch {
             }
             _current = new Context { Cards = cards, CanSkip = canSkip };
             LastOpenedRelicId = RelicOriginTags.CurrentObtaining?.Id.Entry;
+            if (LastOpenedRelicId is { } rid) LocTextPatch.Registry.Learn(rid, AuthorityMode.RemoveOne);
             TiLog.Info($"[SlayTheStreamer2][choose-remove] context open cards={cards.Count} canSkip={canSkip} relic={LastOpenedRelicId ?? "none"}");
         } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][choose-remove] open prefix failed", ex); }
     }

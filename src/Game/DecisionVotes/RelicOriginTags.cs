@@ -37,6 +37,8 @@ internal static class RelicOriginTags {
             if (Obtaining.Count > 0) {
                 var relic = Obtaining.Peek();
                 Tags.AddOrUpdate(instance, relic);
+                if (RewardAuthority.RulesActive)
+                    LocTextPatch.Registry.Learn(relic.Id.Entry, relic.Rarity == MegaCrit.Sts2.Core.Entities.Relics.RelicRarity.Ancient ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable);
                 TiLog.Info($"[SlayTheStreamer2][card-scope] tagged relic-origin card reward (relic={relic.Id.Entry}, rarity={relic.Rarity})");
             }
         } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][card-scope] relic-origin tag failed", ex); }

@@ -12,10 +12,10 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// squeezed by the button's fixed 100 px height (the %Text label auto-shrinks its font).
 /// Grow the button instead: measure the full text at the vanilla 24 px font wrapped to
 /// the label width, add the overflow to the button's minimum height, the label box and
-/// the vertically centred nine-patches (Image, Outline, RedFlash, BlueFlash) and move
-/// PlayerVoteContainer down. Regular buttons have %Text as a direct child; Ancient
-/// buttons wrap it in an HBoxContainer. Null-tolerant: a scene rename degrades to the
-/// vanilla squeeze.</summary>
+/// the vertically centred nine-patches (Shadow, Outline, RedFlash, BlueFlash; Image is
+/// full-rect anchored and follows the button on its own) and move PlayerVoteContainer
+/// down. Regular buttons have %Text as a direct child; Ancient buttons wrap it in an
+/// HBoxContainer. Null-tolerant: a scene rename degrades to the vanilla squeeze.</summary>
 [HarmonyPatch(typeof(NEventOptionButton), "_Ready")]
 internal static class EventOptionGrowPatch {
     private const float VanillaHeight = 100f;
@@ -51,7 +51,7 @@ internal static class EventOptionGrowPatch {
                 label.OffsetBottom += extra;
             }
 
-            foreach (var name in new[] { "Image", "Outline", "RedFlash", "BlueFlash" }) {
+            foreach (var name in new[] { "Shadow", "Outline", "RedFlash", "BlueFlash" }) {
                 if (__instance.GetNodeOrNull<Control>(name) is { } piece) {
                     piece.OffsetTop -= extra * 0.5f;
                     piece.OffsetBottom += extra * 0.5f;

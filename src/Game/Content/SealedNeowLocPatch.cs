@@ -31,7 +31,9 @@ internal static class SealedNeowLocPatch {
     [HarmonyPatch(typeof(LocTable), nameof(LocTable.HasEntry))]
     internal static class HasEntryPatch {
         static bool Prefix(string key, string ___name, ref bool __result) {
-            if (SealedNeowLoc.TryProvide(___name, key, out _)) { __result = true; return false; }
+            try {
+                if (SealedNeowLoc.TryProvide(___name, key, out _)) { __result = true; return false; }
+            } catch (Exception ex) { TiLog.Warn($"[SlayTheStreamer2][sealed-neow] loc HasEntry provide failed: {ex.Message}"); }
             return true;
         }
     }
@@ -39,7 +41,9 @@ internal static class SealedNeowLocPatch {
     [HarmonyPatch(typeof(LocTable), nameof(LocTable.GetLocString))]
     internal static class GetLocStringPatch {
         static bool Prefix(string key, string ___name, ref LocString __result) {
-            if (SealedNeowLoc.TryProvide(___name, key, out _)) { __result = new LocString(___name, key); return false; }
+            try {
+                if (SealedNeowLoc.TryProvide(___name, key, out _)) { __result = new LocString(___name, key); return false; }
+            } catch (Exception ex) { TiLog.Warn($"[SlayTheStreamer2][sealed-neow] loc GetLocString provide failed: {ex.Message}"); }
             return true;
         }
     }

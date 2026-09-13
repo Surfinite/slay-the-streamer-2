@@ -11,7 +11,11 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 internal static class RewardAuthority {
     private static int _degradedWarnFired;
 
-    private static bool CombatTagRegistered => CombatOriginTags.TagPatchRegistered && CombatOriginTags.CapturePatchRegistered;
+    /// <summary>False on game builds without Hook.BeforeCombatRewardOffered (the default
+    /// branch as of v0.107.1): the classifier cannot tell combat rewards apart, so the
+    /// non-combat setting has no effect and every card reward is a normal vote. The
+    /// settings panel reads this to grey the dropdown out.</summary>
+    internal static bool CombatTagRegistered => CombatOriginTags.TagPatchRegistered && CombatOriginTags.CapturePatchRegistered;
     internal static NonCombatRewardMode Mode => ModSettings.Current?.NonCombatCardRewards ?? NonCombatRewardModes.Default;
 
     /// <summary>True when the per-origin rules and their explanation text apply.</summary>

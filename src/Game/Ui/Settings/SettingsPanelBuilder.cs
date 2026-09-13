@@ -180,8 +180,14 @@ internal static class SettingsPanelBuilder {
         AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));
         AddDivider(root);
-        AddNonCombatRewardsDropdown(root, current, debouncer);
-        AddHelpText(root, "Free: chat votes only after combat; the streamer picks the rest, Skip allowed.\nRemove-one: chat gets a remove-one style vote on all non-combat card rewards.\nMixed: cards from Ancients use a remove-one vote. Events are unskippable with no voting.");
+        // On game builds without the combat-reward hook (the default branch) the setting
+        // does nothing; say so instead of offering three modes that all behave the same
+        // (Surfinite, 2026-09-13, after testing on the regular branch).
+        bool nonCombatRulesAvailable = SlayTheStreamer2.Game.DecisionVotes.RewardAuthority.CombatTagRegistered;
+        AddNonCombatRewardsDropdown(root, current, debouncer, enabled: nonCombatRulesAvailable);
+        AddHelpText(root, nonCombatRulesAvailable
+            ? "Free: chat votes only after combat; the streamer picks the rest, Skip allowed.\nRemove-one: chat gets a remove-one style vote on all non-combat card rewards.\nMixed: cards from Ancients use a remove-one vote. Events are unskippable with no voting."
+            : "Not available on this game version: every card reward is a normal chat vote.\nThe Beta branch has the game hook this needs; the setting is kept for when you switch.");
         AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);
         AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
@@ -343,7 +349,7 @@ internal static class SettingsPanelBuilder {
         parent.AddChild(row);
     }
 
-    private static void AddNonCombatRewardsDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
+    private static void AddNonCombatRewardsDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer, bool enabled) {
         var row   = MakeRow();
         var inner = row.GetChild<HBoxContainer>(0);
 
@@ -354,6 +360,7 @@ internal static class SettingsPanelBuilder {
         var dropdown = new OptionButton {
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
             CustomMinimumSize = new Vector2(150, 0),
+            Disabled = !enabled,
         };
         if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
         dropdown.AddThemeFontSizeOverride("font_size", 22);

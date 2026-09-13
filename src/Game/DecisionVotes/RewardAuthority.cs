@@ -30,7 +30,8 @@ internal static class RewardAuthority {
             CombatTagged: CombatOriginTags.IsTagged(reward),
             RelicTagged: relic is not null,
             RelicAncient: relic is not null && relic.Rarity == RelicRarity.Ancient,
-            RestSiteTagged: RestSiteOriginTags.IsTagged(reward));
+            RestSiteTagged: RestSiteOriginTags.IsTagged(reward),
+            DraftTagged: DraftOriginTags.IsTagged(reward));
         return AuthorityRules.Resolve(origin, CombatTagRegistered, Mode);
     }
 

@@ -62,4 +62,17 @@ public class AuthorityRulesTests {
         Assert.False(AuthorityRules.RulesActive(true, NonCombatRewardMode.Free));
         Assert.False(AuthorityRules.RulesActive(false, NonCombatRewardMode.Mixed));
     }
+
+    private static RewardOrigin DraftPick => new(false, false, false, false, DraftTagged: true);
+
+    [Theory]
+    [InlineData(NonCombatRewardMode.Free)]
+    [InlineData(NonCombatRewardMode.RemoveOne)]
+    [InlineData(NonCombatRewardMode.Mixed)]
+    public void DraftPick_IsFreeInEveryMode(NonCombatRewardMode mode) =>
+        Assert.Equal(AuthorityMode.Free, AuthorityRules.Resolve(DraftPick, true, mode));
+
+    [Fact]
+    public void DraftPick_StillNormalVoteWhenCombatTagUnregistered() =>
+        Assert.Equal(AuthorityMode.NormalVote, AuthorityRules.Resolve(DraftPick, false, NonCombatRewardMode.Mixed));
 }

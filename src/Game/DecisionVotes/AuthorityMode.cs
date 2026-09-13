@@ -9,8 +9,9 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 public enum AuthorityMode { Free, NormalVote, RemoveOne, Unskippable }
 
 /// <summary>The tag facts one CardReward carries. Game code fills this from the
-/// origin-tag tables; the rules never see a game type.</summary>
-public readonly record struct RewardOrigin(bool CombatTagged, bool RelicTagged, bool RelicAncient, bool RestSiteTagged);
+/// origin-tag tables; the rules never see a game type. DraftTagged marks the ten
+/// picks of the Draft modifier (streamer-only in every mode, like Sealed Deck).</summary>
+public readonly record struct RewardOrigin(bool CombatTagged, bool RelicTagged, bool RelicAncient, bool RestSiteTagged, bool DraftTagged = false);
 
 public static class AuthorityRules {
     /// <summary>Spec section 2 evaluation order, parameterised by the three-way mode
@@ -21,6 +22,7 @@ public static class AuthorityRules {
     public static AuthorityMode Resolve(RewardOrigin o, bool combatTagRegistered, NonCombatRewardMode mode) {
         if (!combatTagRegistered) return AuthorityMode.NormalVote;
         if (o.CombatTagged) return AuthorityMode.NormalVote;
+        if (o.DraftTagged) return AuthorityMode.Free;   // Draft: the streamer drafts, chat never votes (handoff 2026-09-13)
         if (mode == NonCombatRewardMode.Free) return AuthorityMode.Free;
         if (o.RelicTagged) return o.RelicAncient || mode == NonCombatRewardMode.RemoveOne ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable;
         if (o.RestSiteTagged) return AuthorityMode.RemoveOne;

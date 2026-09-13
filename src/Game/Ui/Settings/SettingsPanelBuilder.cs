@@ -180,9 +180,8 @@ internal static class SettingsPanelBuilder {
         AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));
         AddDivider(root);
-        AddCheckboxRow(root, "Card-reward votes only occur after combat", current.NonCombatCardRewards == NonCombatRewardMode.Free,
-            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NonCombatCardRewards = NonCombatRewardModes.FromLegacyCombatOnly(value) }));
-        AddHelpText(root, "On: chat only votes on card rewards earned from combat; other card rewards are free picks.\nOff (default): chat votes to remove one option on Ancient-relic and Dream Catcher card rewards,\nand event or shop-relic card rewards cannot be skipped. Explanations appear on the relics and events themselves.");
+        AddNonCombatRewardsDropdown(root, current, debouncer);
+        AddHelpText(root, "Free: chat votes only after combat; the streamer picks the rest, Skip allowed.\nRemove-one: chat gets a remove-one style vote on all non-combat card rewards.\nMixed: cards from Ancients use a remove-one vote. Events are unskippable with no voting.");
         AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);
         AddHelpText(root, "Card-rewards streamer can skip before initiating a vote.\nSkips reset each act.");
@@ -338,6 +337,48 @@ internal static class SettingsPanelBuilder {
         dropdown.ItemSelected += idx => {
             var value = dropdown.GetItemMetadata((int)idx).AsInt32();
             debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipsPerAct = value });
+        };
+
+        inner.AddChild(dropdown);
+        parent.AddChild(row);
+    }
+
+    private static void AddNonCombatRewardsDropdown(Container parent, ChatSettings current, SettingsSaveDebouncer debouncer) {
+        var row   = MakeRow();
+        var inner = row.GetChild<HBoxContainer>(0);
+
+        // Short label on purpose: the longer "Card rewards not from combat" wrapped
+        // beside the dropdown (Surfinite, 2026-09-13).
+        inner.AddChild(MakeRowLabel("Non-combat card rewards"));
+
+        var dropdown = new OptionButton {
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(150, 0),
+        };
+        if (_kreonRegular != null) dropdown.AddThemeFontOverride("font", _kreonRegular);
+        dropdown.AddThemeFontSizeOverride("font_size", 22);
+        dropdown.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
+
+        (string Label, NonCombatRewardMode Value)[] entries = [
+            ("Free", NonCombatRewardMode.Free),
+            ("Remove-one", NonCombatRewardMode.RemoveOne),
+            ("Mixed", NonCombatRewardMode.Mixed),
+        ];
+        int selectedIdx = 0;
+        for (int i = 0; i < entries.Length; i++) {
+            dropdown.AddItem(entries[i].Label);
+            dropdown.SetItemMetadata(i, (int)entries[i].Value);
+            if (entries[i].Value == current.NonCombatCardRewards) selectedIdx = i;
+        }
+        dropdown.Selected = selectedIdx;
+
+        var popup = dropdown.GetPopup();
+        if (_kreonRegular != null) popup.AddThemeFontOverride("font", _kreonRegular);
+        popup.AddThemeFontSizeOverride("font_size", 22);
+
+        dropdown.ItemSelected += idx => {
+            var value = (NonCombatRewardMode)dropdown.GetItemMetadata((int)idx).AsInt32();
+            debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NonCombatCardRewards = value });
         };
 
         inner.AddChild(dropdown);

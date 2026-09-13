@@ -396,7 +396,7 @@ streams; AfterObtained is not re-run on Continue) through the pure `TalismanPick
 (ported, unit-tested); per pick `CardCmd.Upgrade(card, CardPreviewStyle.None)` then the
 non-generic `CardCmd.Enchant(doomed.ToMutable(), card, 3)` and `NCardEnchantVfx.Create(card)`
 into `NRun.Instance.GlobalUi.CardPreviewContainer` so the streamer sees which cards were hit.
-Constants `Cards = 2`, `Doom = 3` in one place; a settings knob is a follow-up if wanted. The
+Constants `Cards = 2`, `Doom = 5` (raised from 3 after the 2026-09-12 Sabotage playtest: upgrading good sealed cards is strong) in one place; a settings knob is a follow-up if wanted. The
 Pomander coin flip, Neow's Bones eligibility, icon, run-history name and save compatibility
 stay vanilla.
 
@@ -427,9 +427,9 @@ lookup would otherwise throw, via a prefix on `GetRawText` and `HasEntry` for th
 
 Talisman text, replaced only while sealed (relics table, both keys):
 `.description` "Upon pickup, [gold]Upgrade[/gold] [blue]2[/blue] random cards. They become
-[red]Doomed[/red]: apply [red]3[/red] [gold]Doom[/gold] to you when played.";
+[red]Doomed[/red]: apply [red]5[/red] [gold]Doom[/gold] to you when played.";
 `.eventDescription` "[gold]Upgrade[/gold] [blue]2[/blue] random cards. They become
-[red]Doomed[/red]: apply [red]3[/red] [gold]Doom[/gold] to you when played."
+[red]Doomed[/red]: apply [red]5[/red] [gold]Doom[/gold] to you when played."
 Outside a sealed run (main menu compendium, normal runs) vanilla text shows.
 
 ### 7.3 Relic disables

@@ -26,9 +26,9 @@ public class SealedNeowLocTests {
     [Fact]
     public void Replaces_TalismanKeys_WithConstants() {
         Assert.True(SealedNeowLoc.TryReplace("relics", "NEOWS_TALISMAN.description", out var d));
-        Assert.Equal("Upon pickup, [gold]Upgrade[/gold] [blue]2[/blue] random cards. They become [red]Doomed[/red]: apply [red]3[/red] [gold]Doom[/gold] to you when played.", d);
+        Assert.Equal("Upon pickup, [gold]Upgrade[/gold] [blue]2[/blue] random cards. They become [red]Doomed[/red]: apply [red]5[/red] [gold]Doom[/gold] to you when played.", d);
         Assert.True(SealedNeowLoc.TryReplace("relics", "NEOWS_TALISMAN.eventDescription", out var e));
-        Assert.Equal("[gold]Upgrade[/gold] [blue]2[/blue] random cards. They become [red]Doomed[/red]: apply [red]3[/red] [gold]Doom[/gold] to you when played.", e);
+        Assert.Equal("[gold]Upgrade[/gold] [blue]2[/blue] random cards. They become [red]Doomed[/red]: apply [red]5[/red] [gold]Doom[/gold] to you when played.", e);
         Assert.False(SealedNeowLoc.TryReplace("relics", "NEOWS_TALISMAN.flavor", out _));
         Assert.False(SealedNeowLoc.TryReplace("relics", "POMANDER.description", out _));
     }

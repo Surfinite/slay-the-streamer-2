@@ -9,7 +9,7 @@ namespace SlayTheStreamer2.Game.Content;
 /// the enchantment instance; the Talisman numbers are baked from the constants.</summary>
 public static class SealedNeowLoc {
     public const int TalismanCards = 2;
-    public const int TalismanDoom = 3;
+    public const int TalismanDoom = 5;
     public const string DoomedId = "STREAMER_DOOMED";
     public const string TalismanId = "NEOWS_TALISMAN";
 

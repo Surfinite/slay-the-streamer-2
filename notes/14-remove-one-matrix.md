@@ -41,14 +41,14 @@ Evidence anchors below are exact substrings as shipped (see file:line):
 ## sealed-neow rows
 
 Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-design.md` section 7. Every row below requires the Sealed Deck Custom Mode modifier plus Pikcube's Run Modifiers' Always Whale (so Neow's blessings, including Talisman, are offered in the sealed run). Evidence anchors:
-- `talisman: upgraded+doomed {n} of {N} candidates (doom=3)` : `src/Game/Content/TalismanReworkPatch.cs:60`
+- `talisman: upgraded+doomed {n} of {N} candidates (doom=5)` : `src/Game/Content/TalismanReworkPatch.cs:60`
 - `sealed run: Leafy Poultice and Precarious Shears disabled` : `src/Game/Content/RelicDisablePatch.cs:27`
 - all sealed-neow lines carry the `[SlayTheStreamer2][sealed-neow]` tag
 
 | # | Row | Recipe | Evidence | Result |
 |---|---|---|---|---|
 | S1 | Sealed + Always Whale: Talisman upgrades 2 cards, tombstone badge, Doom tooltip on hover | take Talisman at Neow, or `relic NEOWS_TALISMAN` after the sealed pick | `talisman: upgraded+doomed 2 of N` | [ ] |
-| S2 | Playing a Doomed card applies 3 Doom; twice = 6 | combat | Doom power stack on the player | [ ] |
+| S2 | Playing a Doomed card applies 5 Doom; twice = 10 | combat | Doom power stack on the player | [ ] |
 | S3 | Save, quit, Continue right after the Talisman: the same two cards stay upgraded and Doomed | | badge persists | [ ] |
 | S4 | Talisman text: sealed run shows the rework text on the Neow button and relic hover; main menu compendium and an unsealed run show vanilla text | | visual | [ ] |
 | S5 | Leafy Poultice and Precarious Shears never offered at Neow or by Neow's Bones across 5+ sealed starts | `relic NEOWS_BONES` | `sealed run: Leafy Poultice and Precarious Shears disabled` (logged once per game session) | [ ] |

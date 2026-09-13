@@ -4,23 +4,16 @@ Slay the Streamer 2. Twitch (and optionally YouTube) chat votes on the streamer'
 
 ## 🆕 New in v0.4.0
 
-Card rewards that don't come from combat now play differently. Until now chat voted on every card reward the same way, which made Kaleidoscope and friends a long queue of identical votes and gave chat no say at all when the combat-only setting was on. Now:
+Card rewards that don't come from combat now have their own rules. This only matters once or twice a run.
 
-- Ancient relics (Kaleidoscope, Glass Eye, Lost Coffer, Hefty Tablet, Lead Paperweight, and anything Neow's Bones pulls) and Dream Catcher use a remove-one vote. Chat votes which option to remove, Skip included, the removed one turns red, and the streamer picks from the rest. Clicking the removed option anyway costs a vote override. Driftwood's reroll is free after a removal and chat votes again on the new cards.
-- Card rewards from events (Future of Potions, Colorful Philosophers, Brain Leech, Trial, Crystal Sphere) and shop relics (Orrery) can't be skipped. No vote; the streamer must take a card.
-- Every affected relic and event says what will happen, in a blue "Slay the Streamer:" line on its own text.
-- A new three-way setting, Non-combat card rewards, chooses between Mixed (the rules above, the default), Remove-one (a removal vote on every non-combat reward; Orrery becomes five votes), and Free (chat only votes after combat, the streamer picks everything else). The old "Card-reward votes only occur after combat" checkbox migrates automatically: On becomes Free, Off becomes Mixed.
-- Draft picks are always the streamer's, in every mode. Same rule as Sealed Deck.
-- The vote-override budget now shows on the Ancient vote screen too, so you can see whether an override click is available.
+- Ancient relics (Kaleidoscope, Glass Eye, Lost Coffer, Hefty Tablet, Lead Paperweight) and Dream Catcher: chat votes which option to remove, the streamer picks from the rest. Taking the removed option costs a vote override.
+- Card rewards from events and shop relics (Orrery): no vote, and they can't be skipped.
+- The affected relics and events say so in their own text.
+- A new setting, Non-combat card rewards, replaces the combat-only checkbox: Mixed (the above, default), Remove-one (a removal vote on every non-combat reward), or Free (the old combat-only behaviour). Existing settings migrate automatically.
 
-Sealed Deck runs with Neow's blessings available (Pikcube's Run Modifiers' Always Whale):
+Sealed Deck runs: Neow's Talisman upgrades 2 random cards and makes them Doomed (5 Doom when played) instead of upgrading Strikes and Defends you don't have; Leafy Poultice and Precarious Shears are never offered.
 
-- Neow's Talisman upgrades 2 random cards and makes them Doomed (5 Doom to yourself each time you play one), instead of upgrading the Strikes and Defends a sealed deck doesn't have. The relic says so in game.
-- Leafy Poultice and Precarious Shears are never offered in sealed runs.
-
-Smaller things: the status text on remove-one screens no longer overlaps the cards; Escape opens the pause menu on those screens instead of pressing Skip; a rewards screen with potions left after an unskippable card reward is no longer a dead end; the override counter is centred even when Driftwood adds a Reroll button.
-
-Existing `slay_the_streamer_2.json` files keep working. The migrated key is written back on the next settings save.
+The vote-override budget now shows on the Ancient vote screen.
 
 ## ▶️ Demo
 

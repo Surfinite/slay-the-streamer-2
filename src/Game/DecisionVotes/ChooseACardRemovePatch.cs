@@ -103,6 +103,10 @@ internal static class ChooseACardRemovePatch {
             _current.Screen = __result;
             var surface = new Surface(_current, __result);
             RemovalStatusLine.Attach(__result, surface.BannerAnchor(), () => RemovalVoteFlow.StatusText(surface, hasReroll: false));
+            // No card-skip budget on this screen (limit 0 keeps the skip text hidden); the
+            // label exists for the override budget while the vote runs and after the removal.
+            StreamerBudgetCounterLabel.AttachTo(__result, surface.SkipControl(), () => RemovalVoteFlow.OverrideOffered(surface))
+                .UpdateText(new ActBudgetSnapshot(0, 0, 0));
             TiLog.Info("[SlayTheStreamer2][choose-remove] screen bound");
         } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][choose-remove] screen bind failed", ex); }
     }

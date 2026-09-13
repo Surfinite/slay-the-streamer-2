@@ -11,11 +11,16 @@ namespace SlayTheStreamer2.Game.Ui;
 internal static class RemovalVisuals {
     internal static readonly Color RemovedRed = new(1f, 0.28f, 0.28f, 1f);
 
-    internal static Tween? PaintRemoved(Control target, Node tweenOwner) {
+    /// <summary>NCardRewardSelectionScreen._Ready tweens every holder's modulate back to
+    /// white over 1.0 s when the screen (re)opens; a paint started earlier is overwritten
+    /// (red for a frame, then gone). Reopen paints wait this long first.</summary>
+    internal const double ReopenPaintDelaySeconds = 1.1;
+
+    internal static Tween? PaintRemoved(Control target, Node tweenOwner, double delaySeconds = 0) {
         try {
             if (!GodotObject.IsInstanceValid(target) || !GodotObject.IsInstanceValid(tweenOwner)) return null;
             var tween = tweenOwner.CreateTween();
-            tween.TweenProperty(target, "modulate", RemovedRed, 0.35).SetTrans(Tween.TransitionType.Sine);
+            tween.TweenProperty(target, "modulate", RemovedRed, 0.35).SetTrans(Tween.TransitionType.Sine).SetDelay(delaySeconds);
             return tween;
         } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][remove-one] removed paint failed", ex); return null; }
     }

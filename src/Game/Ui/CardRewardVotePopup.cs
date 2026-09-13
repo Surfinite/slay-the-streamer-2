@@ -6,6 +6,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
+using SlayTheStreamer2.Game.DecisionVotes;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
 
@@ -70,7 +71,7 @@ internal sealed partial class CardRewardVotePopup : Control {
     private readonly Func<bool>? _isOccludingOverlayVisible;
 
     private CanvasLayer? _canvasLayer;
-    private Label? _titleLabel;
+    private RichTextLabel? _titleLabel;
     private Label? _timerLabel;
     private readonly Control? _bannerAnchor;
 
@@ -175,12 +176,13 @@ internal sealed partial class CardRewardVotePopup : Control {
         string voteHint = _session.ShowTag
             ? $"[{_session.VoteId:D2}] — "
             : "";
-        string titleBody = _removeMode ? "Chat is choosing which option to remove" : "Pick the worst option.";
-        _titleLabel = new Label {
+        string titleBody = _removeMode ? RemovalStatusText.PopupTitle(voteHint) : $"{voteHint}Pick the worst option.";
+        _titleLabel = new RichTextLabel {
             Name = "Title",
-            Text = $"{voteHint}{titleBody}",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
+            Text = $"[center]{titleBody}[/center]",
+            BbcodeEnabled = true,
+            FitContent = true,
+            ScrollActive = false,
             MouseFilter = MouseFilterEnum.Ignore,
         };
         ApplyTitleTheme(_titleLabel);
@@ -306,8 +308,10 @@ internal sealed partial class CardRewardVotePopup : Control {
             var bSize = _bannerAnchor.Size * _bannerAnchor.Scale;
             float centerX = bPos.X + bSize.X * 0.5f;
             if (_titleLabel is not null) {
+                // RichTextLabel has no vertical centring: the box top sits half a line
+                // above the old label centre so the text lands where it always has.
                 float titleY = bPos.Y - TitleGapAboveBanner;
-                PlaceLabel(_titleLabel, new Vector2(centerX, titleY), halfWidth: 400f, halfHeight: 40f);
+                PlaceLabel(_titleLabel, new Vector2(centerX, titleY + 10f), halfWidth: 400f, halfHeight: 34f);
             }
             if (_timerLabel is not null) {
                 float timerY = bPos.Y + bSize.Y + TimerGapBelowBanner;
@@ -354,7 +358,7 @@ internal sealed partial class CardRewardVotePopup : Control {
     /// using a fixed-size box around it; label's HorizontalAlignment.Center then
     /// centers the text within that box.
     /// </summary>
-    private static void PlaceLabel(Label label, Vector2 center, float halfWidth = 120f, float halfHeight = 30f) {
+    private static void PlaceLabel(Control label, Vector2 center, float halfWidth = 120f, float halfHeight = 30f) {
         label.AnchorLeft = 0; label.AnchorTop = 0; label.AnchorRight = 0; label.AnchorBottom = 0;
         label.OffsetLeft = center.X - halfWidth;
         label.OffsetRight = center.X + halfWidth;
@@ -362,16 +366,21 @@ internal sealed partial class CardRewardVotePopup : Control {
         label.OffsetBottom = center.Y + halfHeight;
     }
 
-    private static void ApplyTitleTheme(Label label) {
+    private static void ApplyTitleTheme(RichTextLabel label) {
         // Mirrors BossVotePopup.ApplyTitleTheme — Kreon Bold, cream body color,
-        // soft drop shadow for legibility above the banner.
+        // soft drop shadow for legibility above the banner. RichTextLabel so the
+        // removal word can carry its own colour.
         var font = ResourceLoader.Load<Font>(TitleFontPath);
-        if (font is not null) label.AddThemeFontOverride("font", font);
-        label.AddThemeColorOverride("font_color", BodyTextColor);
+        if (font is not null) {
+            label.AddThemeFontOverride("normal_font", font);
+            label.AddThemeFontOverride("bold_font", font);
+        }
+        label.AddThemeColorOverride("default_color", BodyTextColor);
         label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
         label.AddThemeConstantOverride("shadow_offset_x", 3);
         label.AddThemeConstantOverride("shadow_offset_y", 2);
-        label.AddThemeFontSizeOverride("font_size", TitleFontSize);
+        label.AddThemeFontSizeOverride("normal_font_size", TitleFontSize);
+        label.AddThemeFontSizeOverride("bold_font_size", TitleFontSize);
     }
 
     private static void ApplyTimerTheme(Label label) {

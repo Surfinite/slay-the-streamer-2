@@ -1,3 +1,4 @@
+using System;
 using Godot;
 using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Game.DecisionVotes;
@@ -18,9 +19,11 @@ namespace SlayTheStreamer2.Game.Ui;
 /// shifts when the window is resized — a fixed viewport-fraction anchor would
 /// drift visually).</para>
 ///
-/// <para>While a chat vote is in progress, <see cref="_Process"/> swaps the
+/// <para>While a chat vote is in progress, or while the optional override probe
+/// says an override is spendable (a removal vote on this screen, or a recorded
+/// removal the streamer may still override), <see cref="_Process"/> swaps the
 /// display to the vote-override budget (gold accent) instead of hiding the
-/// label; outside votes it shows the card-skip budget (blue accent).</para>
+/// label; otherwise it shows the card-skip budget (blue accent).</para>
 ///
 /// <para>Hidden when <c>cardSkipsPerAct == -1</c> (unlimited) or
 /// <c>cardSkipsPerAct == 0</c> (strict) — and, during votes, when the
@@ -54,7 +57,15 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
     // primary path.
     private const float FallbackVerticalAnchor = 0.83f;
 
+    // The probe reads removal records + budget state; 4 Hz is plenty and keeps
+    // reflection field reads off the per-frame path.
+    private const double ProbeIntervalSeconds = 0.25;
+
     private Control? _skipButton;
+    private Func<bool>? _overrideOffered;
+    private bool _offered;
+    private bool _probedOnce;
+    private double _sinceProbe;
     private ActBudgetSnapshot _skipSnapshot;
     private bool _showingOverride;
     private int _lastOverrideRemaining = int.MinValue;
@@ -80,7 +91,13 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
     }
 
     public override void _Process(double delta) {
-        if (CardRewardVotePatch.VoteInProgress) {
+        _sinceProbe += delta;
+        if (_overrideOffered is not null && (!_probedOnce || _sinceProbe >= ProbeIntervalSeconds)) {
+            _probedOnce = true;
+            _sinceProbe = 0;
+            try { _offered = _overrideOffered(); } catch { _offered = false; }
+        }
+        if (CardRewardVotePatch.VoteInProgress || _offered) {
             // During a vote this label shows the OVERRIDE budget in the same
             // screen position the skip text occupies. Hidden when the feature
             // is off (limit 0) or unlimited (-1, mirroring the skip label's
@@ -123,13 +140,16 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
     /// scene-tree lifecycle frees it automatically when the parent screen
     /// closes. <paramref name="skipButton"/> is polled per-frame in
     /// <see cref="_Process"/> for positioning; pass null to use the
-    /// fixed-viewport-Y fallback.
+    /// fixed-viewport-Y fallback. <paramref name="overrideOffered"/>, when given,
+    /// switches the label to the override budget outside a pick vote too (removal
+    /// vote open, or a removal recorded on this screen).
     /// </summary>
-    public static StreamerBudgetCounterLabel AttachTo(Node parent, Control? skipButton) {
+    public static StreamerBudgetCounterLabel AttachTo(Node parent, Control? skipButton, Func<bool>? overrideOffered = null) {
         var label = new StreamerBudgetCounterLabel { Name = "StreamerBudgetCounterLabel" };
         label.BbcodeEnabled = true;
         label.FitContent = true;
         label._skipButton = skipButton;
+        label._overrideOffered = overrideOffered;
         ApplyTheme(label);
         // Pass clicks through to the underlying scene so the label can't accidentally
         // swallow input on the parent's interactive controls.

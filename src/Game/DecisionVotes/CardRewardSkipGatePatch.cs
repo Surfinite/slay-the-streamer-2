@@ -259,17 +259,13 @@ internal static class CardRewardSkipGatePatch {
     /// Parenting under the screen means Godot's natural scene-tree teardown frees
     /// the label when the screen closes — no explicit cleanup patch needed.
     /// </summary>
-    private static void AttachOrUpdateLabel(Node parent, Control? skipButton, int actLimit) {
-        if (actLimit < 0) {
-            if (_activeLabel is not null && GodotObject.IsInstanceValid(_activeLabel)) {
-                _activeLabel.Visible = false;
-            }
-            return;
-        }
-
+    private static void AttachOrUpdateLabel(NCardRewardSelectionScreen parent, Control? skipButton, int actLimit) {
+        // Attached even when card skips are unlimited (actLimit < 0): UpdateText hides the
+        // skip text, and the label still has to show the override budget during votes and
+        // after a removal (StreamerBudgetCounterLabel's override probe).
         if (_activeLabel is null || !GodotObject.IsInstanceValid(_activeLabel)) {
             try {
-                _activeLabel = StreamerBudgetCounterLabel.AttachTo(parent, skipButton);
+                _activeLabel = StreamerBudgetCounterLabel.AttachTo(parent, skipButton, () => CardRewardRemovalSurface.OverrideOffered(parent));
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] label attach failed", ex);
                 return;

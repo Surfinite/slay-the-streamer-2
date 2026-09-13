@@ -34,6 +34,16 @@ internal sealed class CardRewardRemovalSurface : IRemovalSurface {
         return reward is null ? null : new CardRewardRemovalSurface(screen, reward);
     }
 
+    /// <summary>Probe for the budget counter label: an override is spendable on this
+    /// screen (removal vote open, or a removal recorded). False on non-RemoveOne screens.</summary>
+    internal static bool OverrideOffered(NCardRewardSelectionScreen screen) {
+        try {
+            if (RewardAuthority.ModeOfActiveReward() != AuthorityMode.RemoveOne) return false;
+            var surface = For(screen);
+            return surface is not null && RemovalVoteFlow.OverrideOffered(surface);
+        } catch { return false; }
+    }
+
     public Node ScreenNode => _screen;
     public object RecordKey => _reward;
     public string LogTag => "card-remove";
@@ -100,9 +110,10 @@ internal sealed class CardRewardRemovalSurface : IRemovalSurface {
                 RemovalStatusLine.Attach(__instance, surface.BannerAnchor(), () => RemovalVoteFlow.StatusText(surface, surface.HasReroll()));
                 var record = RemovalVoteFlow.EffectiveRecord(surface);
                 if (record is not null) {
-                    // Holders tween into place over 0.5 s on show; paint them next frame so the
-                    // holder list is populated and sorted.
-                    Callable.From(() => RemovalVoteFlow.ApplyRecordVisuals(surface, record)).CallDeferred();
+                    // Holders tween into place over 0.5 s on show; resolve them next frame so the
+                    // holder list is populated and sorted. The paint itself waits out vanilla's
+                    // 1.0 s modulate-to-white tween (RemovalVisuals.ReopenPaintDelaySeconds).
+                    Callable.From(() => RemovalVoteFlow.ApplyRecordVisuals(surface, record, RemovalVisuals.ReopenPaintDelaySeconds)).CallDeferred();
                 }
             } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][card-remove] ready presenter failed", ex); }
         }

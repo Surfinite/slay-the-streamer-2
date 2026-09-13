@@ -155,11 +155,11 @@ internal static class RemovalVoteFlow {
 
     /// <summary>Paint the removed option (idempotent: the popup already tweened it once)
     /// and make it unclickable when no override budget remains.</summary>
-    internal static void ApplyRecordVisuals(IRemovalSurface surface, RemovalRecord record) {
+    internal static void ApplyRecordVisuals(IRemovalSurface surface, RemovalRecord record, double paintDelaySeconds = 0) {
         try {
             var control = record.IsSkip ? surface.SkipControl() : IndexOrNull(surface.CardHolders(), record.RemovedIndex);
             if (control is null) return;
-            RemovalVisuals.PaintRemoved(control, surface.ScreenNode);
+            RemovalVisuals.PaintRemoved(control, surface.ScreenNode, paintDelaySeconds);
             bool canOverride = VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
             RemovalVisuals.SetClickable(control, canOverride);
         } catch (Exception ex) {
@@ -209,16 +209,23 @@ internal static class RemovalVoteFlow {
         } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][remove-one] override during removal vote failed", ex); return false; }
     }
 
-    /// <summary>Spec section 3.2 status lines (rig-tested wording from Sabotage strike/18.7).</summary>
+    /// <summary>True while the open removal vote belongs to this surface. Surfaces are
+    /// rebuilt per call site (the status line and the click path each construct their
+    /// own), so identity is the record key, never the surface instance.</summary>
+    private static bool IsActiveFor(IRemovalSurface surface) =>
+        IsActive && _surface is { } s && ReferenceEquals(s.RecordKey, surface.RecordKey);
+
+    private static bool HasOverrideBudget => VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
+
+    /// <summary>The streamer can spend an override on this screen right now: during its
+    /// removal vote, or after chat removed an option. Drives the budget counter label.</summary>
+    internal static bool OverrideOffered(IRemovalSurface surface) =>
+        IsActiveFor(surface) || PeekRecord(surface) is not null;
+
+    /// <summary>Spec section 3.2 status lines as BBCode (see RemovalStatusText).</summary>
     internal static string StatusText(IRemovalSurface surface, bool hasReroll) {
-        string text;
-        if (IsActive && ReferenceEquals(_surface, surface)) text = "";                         // the popup speaks
-        else if (PeekRecord(surface) is { } r) {
-            bool budget = VoteOverrideBudget.Enabled && VoteOverrideBudget.Remaining > 0;
-            if (r.IsSkip) text = budget ? "Chat removed Skip. Take a card, or spend an override to skip." : "Chat removed Skip. You must take a card.";
-            else text = budget ? $"Chat removed {r.RemovedLabel}. Choose from the rest, or spend an override to take it." : $"Chat removed {r.RemovedLabel}. Choose from the rest.";
-            if (hasReroll) text += "\nYou can reroll these cards once, for free.";
-        } else text = "Click any option to start the removal vote.";
-        return text;
+        if (IsActiveFor(surface)) return "";                                                  // the popup speaks
+        if (PeekRecord(surface) is { } r) return RemovalStatusText.AfterRemoval(r.IsSkip, r.RemovedLabel, HasOverrideBudget, hasReroll);
+        return RemovalStatusText.Prompt();
     }
 }

@@ -34,12 +34,6 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
     private const string FontPath = "res://themes/kreon_regular_shared.tres";
     private const string BoldFontPath = "res://themes/kreon_bold_shared.tres";
 
-    // Vanilla compendium rarity colours (card_library.tscn Uncommon/Rare label
-    // modulates == StsColors.blue / StsColors.gold). Hex literals rather than
-    // StsColors bindings: identical values, zero new cross-branch game bindings.
-    private const string SkipAccentHex = "#87CEEB";       // Uncommon cyan-blue
-    private const string OverrideAccentHex = "#EFC851";   // Rare yellow-gold
-
     // ---- Easy-to-tweak positioning + sizing knobs ----
     // Gap (px) between the Skip button's bottom edge and the label's vertical
     // center. Positive = label sits below the button; negative = above.
@@ -77,17 +71,13 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
             return;
         }
         Visible = true;
-        string noun = snap.RemainingThisAct == 1 ? "card skip" : "card skips";
-        string streamerName = ModSettings.GetStreamerDisplayName();
         // [center] BBCode horizontally centers the text inside the layout box;
         // _Process positions the box itself relative to the Skip button.
-        Text = $"[center]{streamerName} has [b][color={SkipAccentHex}]{snap.RemainingThisAct} {noun}[/color][/b] remaining this act[/center]";
+        Text = BudgetCounterText.Skips(ModSettings.GetStreamerDisplayName(), snap.RemainingThisAct);
     }
 
     private void SetOverrideText(ActBudgetSnapshot snap) {
-        string noun = snap.RemainingThisAct == 1 ? "vote override" : "vote overrides";
-        string streamerName = ModSettings.GetStreamerDisplayName();
-        Text = $"[center]{streamerName} has [b][color={OverrideAccentHex}]{snap.RemainingThisAct} {noun}[/color][/b] remaining this act[/center]";
+        Text = BudgetCounterText.Overrides(ModSettings.GetStreamerDisplayName(), snap.RemainingThisAct);
     }
 
     public override void _Process(double delta) {

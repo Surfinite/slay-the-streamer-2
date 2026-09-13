@@ -4,6 +4,8 @@ using System.Linq;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using SlayTheStreamer2.Game.Bootstrap;
+using SlayTheStreamer2.Game.DecisionVotes;
 using SlayTheStreamer2.Ti.Internal;
 using SlayTheStreamer2.Ti.Voting;
 
@@ -49,6 +51,11 @@ internal sealed partial class AncientVotePopup : Control {
     private CanvasLayer? _canvasLayer;
     private Label? _titleLabel;
     private Label? _timerLabel;
+    private RichTextLabel? _overrideLabel;
+    private int _cachedOverrideRemaining = int.MinValue;
+    // Above the title (title sits 120 px above the dialogue box). Tune in place.
+    private const float OverrideGapAboveDialogue = 195f;
+    private const int OverrideFontSize = 26;
     private Control? _dialogueAnchor;
 
     private sealed class OptionLabels {
@@ -127,6 +134,27 @@ internal sealed partial class AncientVotePopup : Control {
         };
         ApplyTimerTheme(_timerLabel);
         _canvasLayer.AddChild(_timerLabel);
+
+        // Override budget line (Surfinite, 2026-09-13): the Ancient screen showed nothing
+        // about overrides, so the streamer could not tell one was spendable. Hidden when the
+        // override feature is off (limit 0) or unlimited (-1), like the card-screen label.
+        if (VoteOverrideBudget.Snapshot().LimitThisAct > 0) {
+            _overrideLabel = new RichTextLabel {
+                Name = "OverrideBudget",
+                BbcodeEnabled = true,
+                FitContent = true,
+                ScrollActive = false,
+                MouseFilter = MouseFilterEnum.Ignore,
+            };
+            var bodyFont = ResourceLoader.Load<Font>(FontPath);
+            var boldFont = ResourceLoader.Load<Font>(TitleFontPath) ?? bodyFont;
+            if (bodyFont is not null) _overrideLabel.AddThemeFontOverride("normal_font", bodyFont);
+            if (boldFont is not null) _overrideLabel.AddThemeFontOverride("bold_font", boldFont);
+            _overrideLabel.AddThemeFontSizeOverride("normal_font_size", OverrideFontSize);
+            _overrideLabel.AddThemeFontSizeOverride("bold_font_size", OverrideFontSize);
+            _overrideLabel.AddThemeColorOverride("default_color", BodyTextColor);
+            _canvasLayer.AddChild(_overrideLabel);
+        }
 
         // Dialogue (speech bubble) anchor — title and timer follow its top edge.
         // Ancient layout uses %DialogueContainer; non-ancient layouts use
@@ -218,6 +246,11 @@ internal sealed partial class AncientVotePopup : Control {
                     new Vector2(centerX, dPos.Y - TimerGapAboveDialogue),
                     halfWidth: 250f, halfHeight: 40f);
             }
+            if (_overrideLabel is not null) {
+                PlaceLabel(_overrideLabel,
+                    new Vector2(centerX, dPos.Y - OverrideGapAboveDialogue),
+                    halfWidth: 320f, halfHeight: 28f);
+            }
         }
 
         // Anchor #N / tally to each option button — index to the left, tally to
@@ -233,6 +266,14 @@ internal sealed partial class AncientVotePopup : Control {
             PlaceLabel(lbl.Tally,
                 new Vector2(bPos.X + bSize.X + OptionTallyGapRight, centerY),
                 halfWidth: 80f, halfHeight: 30f);
+        }
+
+        if (_overrideLabel is not null) {
+            int remaining = VoteOverrideBudget.Remaining;
+            if (remaining != _cachedOverrideRemaining) {
+                _cachedOverrideRemaining = remaining;
+                _overrideLabel.Text = BudgetCounterText.Overrides(ModSettings.GetStreamerDisplayName(), remaining);
+            }
         }
 
         // Update text only when tally / timer values actually change.
@@ -253,7 +294,7 @@ internal sealed partial class AncientVotePopup : Control {
         }
     }
 
-    private static void PlaceLabel(Label label, Vector2 center, float halfWidth = 120f, float halfHeight = 30f) {
+    private static void PlaceLabel(Control label, Vector2 center, float halfWidth = 120f, float halfHeight = 30f) {
         label.AnchorLeft = 0; label.AnchorTop = 0; label.AnchorRight = 0; label.AnchorBottom = 0;
         label.OffsetLeft = center.X - halfWidth;
         label.OffsetRight = center.X + halfWidth;

@@ -36,7 +36,7 @@ internal static class LocTextPatch {
         try {
             if (!RewardAuthority.RulesActive) return;
             if (____name is not ("relics" or "events")) return;
-            var suffix = AuthorityLoc.SuffixFor(____name, key, Registry);
+            var suffix = AuthorityLoc.SuffixFor(____name, key, Registry, RewardAuthority.Mode);
             if (suffix is null) return;
             __result = AuthorityLoc.Append(__result, suffix);
         } catch (Exception ex) {

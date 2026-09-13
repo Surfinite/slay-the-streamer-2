@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using SlayTheStreamer2.Game.Bootstrap;
 using SlayTheStreamer2.Game.DecisionVotes;
 using Xunit;
 
@@ -101,5 +102,47 @@ public class AuthorityLocTests {
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "CLAUDE.md"))) dir = dir.Parent;
         return dir?.FullName ?? Directory.GetCurrentDirectory();
+    }
+
+    [Fact]
+    public void RemoveOneMode_EventsBecomeRemovalText() {
+        var reg = Registry();
+        Assert.Equal(AuthorityLoc.Lead + "chat votes to remove one option from the card rewards.",
+            AuthorityLoc.SuffixFor("events", "TRIAL.pages.NONDESCRIPT.options.GUILTY.description", reg, NonCombatRewardMode.RemoveOne));
+        Assert.Equal(AuthorityLoc.Lead + "chat votes to remove one option from the card reward.",
+            AuthorityLoc.SuffixFor("events", "BRAIN_LEECH.pages.INITIAL.options.RIP.description", reg, NonCombatRewardMode.RemoveOne));
+        Assert.Equal(AuthorityLoc.Lead + "chat votes to remove one of the cards uncovered here.",
+            AuthorityLoc.SuffixFor("events", "CRYSTAL_SPHERE.pages.INITIAL.options.UNCOVER_FUTURE.description", reg, NonCombatRewardMode.RemoveOne));
+        Assert.Equal("\n" + AuthorityLoc.Lead + "chat votes to remove one of the cards uncovered here.",
+            AuthorityLoc.SuffixFor("events", "CRYSTAL_SPHERE.minigame.instructions.description", reg, NonCombatRewardMode.RemoveOne));
+    }
+
+    [Fact]
+    public void RemoveOneMode_ShopRelicsBecomeRemovalText() {
+        var reg = Registry();
+        Assert.Equal(AuthorityLoc.Lead + "chat votes to remove one option from each of the five card rewards.",
+            AuthorityLoc.SuffixFor("relics", "ORRERY.description", reg, NonCombatRewardMode.RemoveOne));
+        Assert.Equal(AuthorityLoc.Lead + "chat votes to remove one option from each of the two card rewards.",
+            AuthorityLoc.SuffixFor("relics", "STRONGBOX.eventDescription", reg, NonCombatRewardMode.RemoveOne));
+        // Ancient relics read the same in both modes.
+        Assert.Equal(AuthorityLoc.SuffixFor("relics", "KALEIDOSCOPE.description", reg),
+            AuthorityLoc.SuffixFor("relics", "KALEIDOSCOPE.description", reg, NonCombatRewardMode.RemoveOne));
+    }
+
+    [Fact]
+    public void RemoveOneMode_LearnedRelicAlwaysGetsRemovalText() {
+        var reg = Registry();
+        reg.Learn("SOME_SHOP_RELIC", AuthorityMode.Unskippable);
+        Assert.Equal(AuthorityLoc.Lead + "chat votes to remove one option from this relic's card rewards.",
+            AuthorityLoc.SuffixFor("relics", "SOME_SHOP_RELIC.eventDescription", reg, NonCombatRewardMode.RemoveOne));
+    }
+
+    [Fact]
+    public void MixedMode_IsTheDefaultAndUnchanged() {
+        var reg = Registry();
+        Assert.Equal(AuthorityLoc.SuffixFor("relics", "ORRERY.description", reg),
+            AuthorityLoc.SuffixFor("relics", "ORRERY.description", reg, NonCombatRewardMode.Mixed));
+        Assert.Equal(AuthorityLoc.Lead + "you must take a card from each of the five rewards.",
+            AuthorityLoc.SuffixFor("relics", "ORRERY.description", reg));
     }
 }

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using SlayTheStreamer2.Game.Bootstrap;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
@@ -55,11 +56,38 @@ public static class AuthorityLoc {
     private const string GenericRemoveOne = "chat votes to remove one option from this relic's card rewards.";
     private const string GenericUnskippable = "card rewards from this relic cannot be skipped.";
 
+    // removeOne mode variants (handoff 2026-09-13 section 5.2): the unskippable surfaces
+    // become removal votes, so their lines say so. Keys absent here keep the Mixed text.
+    private const string RemoveOneEvent = "chat votes to remove one option from the card rewards.";
+    private const string RemoveOneEventSingle = "chat votes to remove one option from the card reward.";
+    private const string RemoveOneCrystalSphere = "chat votes to remove one of the cards uncovered here.";
+
+    private static readonly Dictionary<string, string> RemoveOneRelics = new(StringComparer.Ordinal) {
+        ["ORRERY"] = "chat votes to remove one option from each of the five card rewards.",
+        ["STRONGBOX"] = "chat votes to remove one option from each of the two card rewards.",
+    };
+
+    private static readonly Dictionary<string, string> RemoveOneEvents = new(StringComparer.Ordinal) {
+        ["CRYSTAL_SPHERE.pages.INITIAL.options.UNCOVER_FUTURE.description"] = RemoveOneCrystalSphere,
+        ["CRYSTAL_SPHERE.pages.INITIAL.options.PAYMENT_PLAN.description"] = RemoveOneCrystalSphere,
+        ["CRYSTAL_SPHERE.minigame.instructions.description"] = RemoveOneCrystalSphere,
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.NECROBINDER.description"] = RemoveOneEvent,
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.IRONCLAD.description"] = RemoveOneEvent,
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.REGENT.description"] = RemoveOneEvent,
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.SILENT.description"] = RemoveOneEvent,
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.DEFECT.description"] = RemoveOneEvent,
+        ["THE_FUTURE_OF_POTIONS.pages.INITIAL.options.POTION.description"] = RemoveOneEventSingle,
+        ["BRAIN_LEECH.pages.INITIAL.options.RIP.description"] = RemoveOneEventSingle,
+        ["TRIAL.pages.NONDESCRIPT.options.GUILTY.description"] = RemoveOneEvent,
+    };
+
     public static IReadOnlyCollection<string> BuiltInRelicIds => Relics.Keys;
     public static IReadOnlyCollection<string> EventKeys => Events.Keys;
 
-    /// <summary>The suffix for (table, key), or null when the key carries no text.</summary>
-    public static string? SuffixFor(string table, string key, RelicTextRegistry registry) {
+    /// <summary>The suffix for (table, key) under <paramref name="mode"/>, or null when the
+    /// key carries no text. Free mode never reaches here (RulesActive is false).</summary>
+    public static string? SuffixFor(string table, string key, RelicTextRegistry registry, NonCombatRewardMode mode = NonCombatRewardMode.Mixed) {
+        bool removeOne = mode == NonCombatRewardMode.RemoveOne;
         switch (table) {
             case "relics":
                 if (RelicExtraKeys.TryGetValue(key, out var extra)) return Lead + extra;
@@ -67,12 +95,15 @@ public static class AuthorityLoc {
                 if (dot <= 0) return null;
                 string id = key.Substring(0, dot), field = key.Substring(dot + 1);
                 if (field is not ("description" or "eventDescription")) return null;
+                if (removeOne && RemoveOneRelics.TryGetValue(id, out var r1)) return Lead + r1;
                 if (Relics.TryGetValue(id, out var line)) return Lead + line;
-                if (registry.TryGetLearnedMode(id, out var mode))
-                    return Lead + (mode == AuthorityMode.RemoveOne ? GenericRemoveOne : GenericUnskippable);
+                if (registry.TryGetLearnedMode(id, out var learned))
+                    return Lead + (removeOne || learned == AuthorityMode.RemoveOne ? GenericRemoveOne : GenericUnskippable);
                 return null;
             case "events":
-                if (!Events.TryGetValue(key, out var ev)) return null;
+                string? ev = null;
+                if (removeOne) RemoveOneEvents.TryGetValue(key, out ev);
+                if (ev is null && !Events.TryGetValue(key, out ev)) return null;
                 // The minigame instructions separate every sentence with a blank line.
                 return key.EndsWith("minigame.instructions.description", StringComparison.Ordinal) ? "\n" + Lead + ev : Lead + ev;
             default:

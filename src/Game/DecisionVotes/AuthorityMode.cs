@@ -1,3 +1,5 @@
+using SlayTheStreamer2.Game.Bootstrap;
+
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
 /// <summary>Per-origin behaviour of one card reward (spec section 2).
@@ -11,19 +13,21 @@ public enum AuthorityMode { Free, NormalVote, RemoveOne, Unskippable }
 public readonly record struct RewardOrigin(bool CombatTagged, bool RelicTagged, bool RelicAncient, bool RestSiteTagged);
 
 public static class AuthorityRules {
-    /// <summary>Spec section 2 evaluation order. An unregistered combat tag (the
-    /// game's default branch) means the classifier cannot tell events from combat,
-    /// so everything stays a normal vote, exactly today's behaviour.</summary>
-    public static AuthorityMode Resolve(RewardOrigin o, bool combatTagRegistered, bool combatCardVotesOnly) {
+    /// <summary>Spec section 2 evaluation order, parameterised by the three-way mode
+    /// (handoff 2026-09-13 section 5). An unregistered combat tag (the game's default
+    /// branch) means the classifier cannot tell events from combat, so everything stays
+    /// a normal vote. Free = the old "combat only" checkbox On. RemoveOne turns every
+    /// non-combat reward into a removal vote. Mixed is the spec table.</summary>
+    public static AuthorityMode Resolve(RewardOrigin o, bool combatTagRegistered, NonCombatRewardMode mode) {
         if (!combatTagRegistered) return AuthorityMode.NormalVote;
-        if (combatCardVotesOnly) return o.CombatTagged ? AuthorityMode.NormalVote : AuthorityMode.Free;
         if (o.CombatTagged) return AuthorityMode.NormalVote;
-        if (o.RelicTagged) return o.RelicAncient ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable;
+        if (mode == NonCombatRewardMode.Free) return AuthorityMode.Free;
+        if (o.RelicTagged) return o.RelicAncient || mode == NonCombatRewardMode.RemoveOne ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable;
         if (o.RestSiteTagged) return AuthorityMode.RemoveOne;
-        return AuthorityMode.Unskippable;
+        return mode == NonCombatRewardMode.RemoveOne ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable;
     }
 
     /// <summary>True when the per-origin rules (and their explanation text) are live.</summary>
-    public static bool RulesActive(bool combatTagRegistered, bool combatCardVotesOnly) =>
-        combatTagRegistered && !combatCardVotesOnly;
+    public static bool RulesActive(bool combatTagRegistered, NonCombatRewardMode mode) =>
+        combatTagRegistered && mode != NonCombatRewardMode.Free;
 }

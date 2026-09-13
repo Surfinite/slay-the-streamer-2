@@ -12,10 +12,10 @@ internal static class RewardAuthority {
     private static int _degradedWarnFired;
 
     private static bool CombatTagRegistered => CombatOriginTags.TagPatchRegistered && CombatOriginTags.CapturePatchRegistered;
-    private static bool CombatOnly => (ModSettings.Current?.NonCombatCardRewards ?? NonCombatRewardMode.Mixed) == NonCombatRewardMode.Free;
+    internal static NonCombatRewardMode Mode => ModSettings.Current?.NonCombatCardRewards ?? NonCombatRewardModes.Default;
 
     /// <summary>True when the per-origin rules and their explanation text apply.</summary>
-    internal static bool RulesActive => AuthorityRules.RulesActive(CombatTagRegistered, CombatOnly);
+    internal static bool RulesActive => AuthorityRules.RulesActive(CombatTagRegistered, Mode);
 
     internal static AuthorityMode Classify(CardReward? reward) {
         if (!CombatTagRegistered) {
@@ -31,7 +31,7 @@ internal static class RewardAuthority {
             RelicTagged: relic is not null,
             RelicAncient: relic is not null && relic.Rarity == RelicRarity.Ancient,
             RestSiteTagged: RestSiteOriginTags.IsTagged(reward));
-        return AuthorityRules.Resolve(origin, CombatTagRegistered, CombatOnly);
+        return AuthorityRules.Resolve(origin, CombatTagRegistered, Mode);
     }
 
     /// <summary>Mode of the reward whose selection sub-screen is on screen.</summary>

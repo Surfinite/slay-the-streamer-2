@@ -2,7 +2,7 @@
 
 A Slay the Spire 2 mod that lets your Twitch chat (and optionally YouTube chat) vote on the choices you make during a run: Neow's and the Ancients' blessings, card rewards, the act boss, and the Act 1 variant. It also gives you a small budget to overrule chat, and chat gets to name your enemies.
 
-> 🎮 Tested against Slay the Spire 2 Beta `v0.111.0`.
+> 🎮 Tested against Slay the Spire 2 Beta `v0.111.0` and the regular branch `v0.107.1`. One build serves both; the non-combat card-reward rules need the Beta (the setting says so in the panel on the regular branch).
 
 Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer). No code from that mod is used here.
 

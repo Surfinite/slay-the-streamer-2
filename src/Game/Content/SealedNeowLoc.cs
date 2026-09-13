@@ -15,13 +15,13 @@ public static class SealedNeowLoc {
 
     private static readonly Dictionary<string, string> Provided = new(StringComparer.Ordinal) {
         [DoomedId + ".title"] = "Doomed",
-        [DoomedId + ".description"] = "Apply [blue]{Amount}[/blue] [gold]Doom[/gold] to you when played.",
-        [DoomedId + ".extraCardText"] = "Apply {Amount} [gold]Doom[/gold] to you.",
+        [DoomedId + ".description"] = "Apply [blue]{Amount}[/blue] [gold]Doom[/gold] to yourself when played.",
+        [DoomedId + ".extraCardText"] = "Apply {Amount} [gold]Doom[/gold] to yourself.",
     };
 
     private static readonly Dictionary<string, string> Replaced = new(StringComparer.Ordinal) {
-        [TalismanId + ".description"] = $"Upon pickup, [gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to you when played.",
-        [TalismanId + ".eventDescription"] = $"[gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to you when played.",
+        [TalismanId + ".description"] = $"Upon pickup, [gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to yourself when played.",
+        [TalismanId + ".eventDescription"] = $"[gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to yourself when played.",
     };
 
     public static bool TryProvide(string table, string key, out string text) {

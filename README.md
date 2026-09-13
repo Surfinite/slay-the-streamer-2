@@ -1,36 +1,30 @@
 # Slay the Streamer 2
 
-A **Slay the Spire 2** mod that lets your Twitch chat (and optionally YouTube
-chat) vote on the choices you make during a run — Ancient blessings, card
-rewards, the act boss, and the Act 1 variant.
+A Slay the Spire 2 mod that lets your Twitch chat (and optionally YouTube chat) vote on the choices you make during a run: Neow's and the Ancients' blessings, card rewards, the act boss, and the Act 1 variant. It also gives you a small budget to overrule chat, and chat gets to name your enemies.
 
-> 🎮 **Tested against Slay the Spire 2 Beta `v0.111.0`.**
+> 🎮 Tested against Slay the Spire 2 Beta `v0.111.0`.
 
-Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer).
+Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer). No code from that mod is used here.
 
 ---
 
 ## ▶️ Demo
 
-**[Watch the v0.1 demo on Twitch →](https://www.twitch.tv/videos/2782265574)**
+[Watch the v0.1 demo on Twitch](https://www.twitch.tv/videos/2782265574). The mod has grown since (overrides, relic choices, voter-named enemies, remove-one votes), but the core loop in the video is unchanged.
 
 ---
 
 ## ⬇️ Download
 
-**[Now available through the steam Workshop →](https://steamcommunity.com/sharedfiles/filedetails/?id=3761888849)**
-
-[or download it here](https://github.com/Surfinite/slay-the-streamer-2/releases/latest)
-
-Grab the `slay_the_streamer_2-vX.Y.Z.zip` asset from the release page.
+Subscribe on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3761888849), or grab `slay_the_streamer_2-vX.Y.Z.zip` from the [latest GitHub release](https://github.com/Surfinite/slay-the-streamer-2/releases/latest).
 
 ---
 
-## 🛠 Install
+## 🛠 Install (manual zip)
 
-1. Open your Steam Slay the Spire 2 folder. (Steam → right-click the game → Manage → Browse local files.)
-2. Inside it, open the `mods` folder (create it if it isn't there).
-3. Extract the zip from above into `mods/` so you end up with:
+1. Open your Steam Slay the Spire 2 folder (Steam, right-click the game, Manage, Browse local files).
+2. Inside it, open the `mods` folder. Create it if it isn't there.
+3. Extract the zip into `mods/` so you end up with:
    ```
    Slay the Spire 2/
      mods/
@@ -41,22 +35,22 @@ Grab the `slay_the_streamer_2-vX.Y.Z.zip` asset from the release page.
    ```
 4. Launch the game.
 
-If the game can't see the mod, check the log at `%APPDATA%\SlayTheSpire2\logs\godot.log` — you should see a line that starts with `[slay_the_streamer_2]`.  DM me (Surfinite) on Discord if you encounter problems.
+If the game doesn't see the mod, open `%APPDATA%\SlayTheSpire2\logs\godot.log` and look for a line starting with `[slay_the_streamer_2]`. If it isn't there, DM me (Surfinite) on Discord.
 
 ---
 
 ## 🔌 Connect your Twitch chat
 
-Your credentials live in a settings file in the game's **user-data folder** — *not* in the mod install folder:
+Your credentials live in a settings file in the game's user-data folder, not in the mod install folder:
 
 ```
 %APPDATA%\SlayTheSpire2\slay_the_streamer_2.json
 ```
 
-> ⚠️ There is also a `slay_the_streamer_2.json` inside `mods/slay_the_streamer_2/` — that one is the **mod manifest** (loader metadata). Putting credentials in it does nothing.
+There is also a `slay_the_streamer_2.json` inside `mods/slay_the_streamer_2/`. That one is the mod manifest the loader reads. Putting credentials in it does nothing.
 
-1. **Launch the game once** with the mod installed — the mod creates a settings template at the path above. (On mod versions up to 0.1.1 it doesn't yet: copy `mods/slay_the_streamer_2/slay_the_streamer_2.json.example` into `%APPDATA%\SlayTheSpire2\` and rename it to `slay_the_streamer_2.json`.)
-2. **Open the folder** — easiest is in-game: settings menu → mod list → **Slay the Streamer 2** → the **Open settings folder** button. Or paste `%APPDATA%\SlayTheSpire2` into Explorer's address bar.
+1. Launch the game once with the mod installed. The mod creates a settings template at the path above.
+2. Open the folder. The easiest way is in game: settings menu, mod list, Slay the Streamer 2, then the "Open settings folder" button. Or paste `%APPDATA%\SlayTheSpire2` into Explorer's address bar.
 3. Open `slay_the_streamer_2.json` in any text editor. You'll see:
 
 ```json
@@ -72,34 +66,32 @@ Your credentials live in a settings file in the game's **user-data folder** — 
 
 Fill in three fields:
 
-- **`channel`** — your Twitch channel name in lowercase (e.g. `"surfinite"`).
-- **`username`** — the account that will post chat receipts ("Vote opened…", "Chat picked X"). Most solo streamers use their own account here, or the same bot account they already use for other tools.
-- **`oauthToken`** — a chat token for the `username` account. It needs the `chat:read` and `chat:edit` scopes, and must be prefixed with `oauth:` (e.g. `"oauth:abc123…"`).
+- `channel` is your Twitch channel name in lowercase, for example `"surfinite"`.
+- `username` is the account that posts chat receipts ("Vote opened...", "Chat picked X"). Most solo streamers use their own account, or the bot account they already use for other tools.
+- `oauthToken` is a chat token for the `username` account. It needs the `chat:read` and `chat:edit` scopes and must start with `oauth:`.
 
-> ⚠️ **The `username` account's votes don't count.** The mod ignores chat messages from that account — its own receipts contain vote-shaped text like `#0`/`#1`, so they'd otherwise be counted as votes. Using your own account for `username` is fine (chat does the voting, not you) — but you then **can't test voting by typing in your own chat**. Test from a second account or ask a friend.
+The `username` account's votes don't count. The mod ignores messages from that account because its own receipts contain vote-shaped text like `#0` and `#1`. Using your own account is fine, since chat does the voting, but you then can't test voting by typing in your own chat. Test from a second account or ask a friend.
 
-**Already have a chat bot?** If you've already got a Twitch bot set up (Nightbot, StreamElements, your own, etc.), you can reuse its credentials — just paste the existing OAuth token (with the `oauth:` prefix) and the bot's username here.
+Already have a chat bot (Nightbot, StreamElements, your own)? Paste its OAuth token with the `oauth:` prefix and its username here.
 
-**New to this?** The fastest path is a token generator like [twitchtokengenerator.com](https://twitchtokengenerator.com/) — pick "Bot Chat Token", log in as the bot account, copy the Access Token, paste it with the `oauth:` prefix. For the official Twitch documentation on chat scopes and OAuth flows, see [dev.twitch.tv/docs/authentication](https://dev.twitch.tv/docs/authentication/) and [dev.twitch.tv/docs/irc/authenticate-bot](https://dev.twitch.tv/docs/irc/authenticate-bot/).
+New to this? The fastest path is a token generator such as [twitchtokengenerator.com](https://twitchtokengenerator.com/). Pick "Bot Chat Token", log in as the bot account, copy the Access Token, and paste it with the `oauth:` prefix. Twitch's own documentation on chat scopes and OAuth is at [dev.twitch.tv/docs/authentication](https://dev.twitch.tv/docs/authentication/) and [dev.twitch.tv/docs/irc/authenticate-bot](https://dev.twitch.tv/docs/irc/authenticate-bot/).
 
-Save the file and **restart the game** (the mod connects at launch). To verify it worked, watch your Twitch chat: within a few seconds of the game starting you should see a message like `slay-the-streamer-2 connected (Twitch).` posted by the `username` account. During runs you'll then get chat-side messages when votes open and close, and the in-game tally overlay during votes.
+Save the file and restart the game. The mod connects at launch. Within a few seconds you should see `slay-the-streamer-2 connected (Twitch).` in your Twitch chat, posted by the `username` account. During runs you'll get chat messages when votes open and close, and the tally overlay on screen while a vote runs.
 
-### 🎥 (Optional) Also read YouTube chat
+### 🎥 Optional: also read YouTube chat
 
-If you stream to YouTube as well, set `youtubeChannelId` to your YouTube channel ID — a string that starts with `UC` followed by 22 characters (e.g. `"UCabcdefghijklmnopqrstuv"`). The mod will read your YouTube live chat in parallel — votes from YT and Twitch are merged into a single tally.
+If you stream to YouTube as well, set `youtubeChannelId` to your YouTube channel ID, a string that starts with `UC` followed by 22 characters. The mod reads your YouTube live chat in parallel and merges YouTube and Twitch votes into one tally.
 
-**Finding your YouTube channel ID:**
+YouTube shows channels by `@handle` now, so the ID isn't in the URL. To find it:
 
-YouTube now displays your channel via your `@handle` rather than the channel ID, so the ID isn't shown in the URL anymore on most channels. To look it up:
+1. Sign in at [studio.youtube.com](https://studio.youtube.com/) as the account that streams.
+2. Click Settings (the gear, bottom-left of the sidebar).
+3. Pick Channel, then Advanced settings.
+4. Copy the value labelled Channel ID.
 
-1. Sign in at [studio.youtube.com](https://studio.youtube.com/) as the YouTube account that streams.
-2. Click **Settings** (gear icon, bottom-left of the sidebar).
-3. In the popup, pick **Channel** → **Advanced settings**.
-4. Copy the value labelled **Channel ID** (starts with `UC`).
+Google's reference: [Find your channel's user ID & channel ID](https://support.google.com/youtube/answer/3250431).
 
-Official Google reference: [Find your channel's user ID & channel ID](https://support.google.com/youtube/answer/3250431).
-
-**Note:** YouTube is read-only. Chat receipts ("Vote opened…", etc.) still only post in Twitch chat because posting to YT chat requires Google verification.
+YouTube is read-only. Receipts still only post to Twitch, because posting to YouTube chat requires Google verification.
 
 ---
 
@@ -107,99 +99,104 @@ Official Google reference: [Find your channel's user ID & channel ID](https://su
 
 When a vote opens, chat types one of:
 
-- `#0`, `#1`, `#2`, ... — pick the corresponding option.
-- `#0` is the **skip** option for card rewards (when chat-skip is enabled).
-- Bare numbers (`0`, `1`, `2`, ...) also work, but `#1` is the established convention from the original Slay the Streamer mod and the format chat is most likely to recognise.
-- `#1!42` — vote precisely for vote ID `42`. Useful for stream-delayed YT viewers if back-to-back votes might collide.
+- `#0`, `#1`, `#2`, ... to pick that option. Options are numbered from 0, the same convention as the original StS1 mod.
+- `#0` is the skip option on card rewards when chat-skip is enabled.
+- Bare numbers (`0`, `1`, `2`) also work.
+- `#1!42` votes for vote ID `42` specifically. Useful for stream-delayed YouTube viewers when two votes land close together.
 
-The tally renders in chat (Twitch only) at vote open, periodically during the vote, and at close. It also appears on screen as a small overlay during the vote.
+The tally posts to Twitch chat at open, at intervals during the vote, and at close. It also shows as a small overlay on screen while the vote runs.
 
-Votes time out after 30 seconds by default (configurable, 10–120s).
+Votes close after 30 seconds by default. The duration is a setting (10 to 120 seconds).
 
 ---
 
 ## ✨ What chat votes on
 
-| Decision | Description |
+| Decision | What happens |
 |---|---|
-| **Card rewards** | After each fight, chat picks which of the 3 cards is added to your deck (chat can also skip if you enable it). Card rewards that are **not** from combat follow different rules: on Ancient relics (Kaleidoscope, Glass Eye, Lost Coffer, Hefty Tablet, Lead Paperweight) and Dream Catcher, **chat votes which option to remove** and you pick from the rest; card rewards from events and shop relics (Orrery) **cannot be skipped**. Every affected relic and event says so in its own text. The **Non-combat card rewards** setting picks between this (Mixed, the default), a remove-one vote on every non-combat reward (Remove-one), or free streamer picks (Free). |
-| **Ancient relics** | When you encounter an Ancient event (Pael, Tezcatara, Orobas, Nonupeipe, Tanx, Vakuu, Darv), chat picks the relic. |
-| **Act boss** | When you click "Proceed" out of a treasure chest, chat picks which of 3 candidate bosses you'll face at the end of the act. Bosses get animated combat-idle portraits. |
-| **Act 1 variant** | When you click "Embark", chat picks Underdocks vs Overgrowth before the run starts. (Toggleable.) |
+| Card rewards after combat | Chat picks which of the three cards joins your deck. Chat can also vote to skip if you enable it. |
+| Card rewards from anywhere else | Depends on the Non-combat card rewards setting. In the default Mixed mode, card rewards from Ancient relics (Kaleidoscope, Glass Eye, Lost Coffer, Hefty Tablet, Lead Paperweight) and from Dream Catcher use a remove-one vote: chat votes which option to remove, and you pick from the rest. Card rewards from events and shop relics (Orrery) can't be skipped and have no vote. Every affected relic and event says so in its own text. |
+| Neow and the Ancients | At Neow and at every mid-run Ancient event (Pael, Tezcatara, Orobas, Nonupeipe, Tanx, Vakuu, Darv), chat picks the blessing. |
+| Act boss | When you click Proceed out of a treasure chest, chat picks which of three candidate bosses you fight at the end of the act. The vote popup shows animated combat-idle portraits. At Ascension 10 the final act has two bosses and chat votes on both. |
+| Act 1 variant | When you click Embark, chat picks Underdocks or Overgrowth. Toggleable. |
 
-The mod also plays nicely with two vanilla Custom Mode modifiers:
+Two vanilla Custom Mode modifiers get special handling:
 
-- **Sealed Deck** — **you** draft your starting 10 cards from a 30-card grid (chat does *not* vote on this draft). Once the run begins, chat votes on every card reward that follows, exactly like a normal run. If Neow's blessings are available in your sealed run (Pikcube's Run Modifiers' **Always Whale** does that), two tweaks apply: **Neow's Talisman** upgrades 2 random cards and makes them **Doomed** (5 Doom to you each time you play one) instead of upgrading Strikes and Defends you do not have, and **Leafy Poultice** and **Precarious Shears** are never offered. Outside sealed runs everything is vanilla.
-- **Draft** — the run starts with 10 sequential pick-1-of-3 screens. **You** draft; chat does not vote on these picks in any mode (the same rule as Sealed Deck). Chat votes on every card reward after the run begins.
+- Sealed Deck. You draft your starting 10 cards from the 30-card grid; chat doesn't vote on that. Once the run begins, chat votes on card rewards as normal. If Neow's blessings are available in your sealed run (Pikcube's Run Modifiers' Always Whale does that), two tweaks apply: Neow's Talisman upgrades 2 random cards and makes them Doomed (5 Doom to yourself each time you play one) instead of upgrading the Strikes and Defends you don't have, and Leafy Poultice and Precarious Shears are never offered. Outside sealed runs everything is vanilla.
+- Draft. The run starts with 10 pick-1-of-3 screens. You draft; chat never votes on those picks, in any mode. Chat votes on card rewards once the run begins.
 
-`SealedDeck` and `Draft` are mutually exclusive in Custom Mode. Note: vanilla Custom Mode is locked behind 3 standard-mode wins (or unlock everything on the modded save via `unlock all` in the dev console, as in the caveats below).
+Sealed Deck and Draft are mutually exclusive in Custom Mode. Vanilla locks Custom Mode behind three standard-mode wins. On the modded save you can open the dev console (`~`) and run `unlock all` instead.
 
 ### 🎛 Streamer-side extras (not chat votes)
 
-- **Vote overrides** *(new in v0.2)* — a per-act budget (default 1) to overrule chat: while a card-reward or Ancient vote is counting down, just click the option you want — or Skip — and the vote ends instantly with your pick. Chat is told, e.g. `Surfinite overrode the vote and took Ricochet. 0 overrides remaining this act`. Skipping mid-vote costs an override, not a card skip. After chat removes an option, clicking the removed option spends an override to take it anyway.
-- **Relic choices** *(new in v0.2)* — treasure chests and elite kills can offer 2–4 relics instead of 1; you pick one and the rest go back into the relic pool.
-- **Cursed Overrides** *(new in v0.2.1, off by default)* — overriding chat has a price: every vote override you spend also adds a **random curse card** to your deck, with the vanilla card-added animation and a chat receipt naming the curse (`… Cursed Overrides: gained Injury!`). The curse is drawn uniformly from the game's generic curse pool (special-purpose curses like Ascender's Bane are excluded).
-- **Enemies named after voters** *(new in v0.3.0, on by default)* — enemy creatures are named after chatters who vote, shown under their intent icons. Since v0.3.1 the draw is a **raffle weighted by participation**: every vote you take part in earns a ticket (one per vote — spamming numbers doesn't help), each enemy draws a name by ticket, and being drawn spends your tickets until you vote again. Repeat draws of the same chatter become "Jr.", then "III". With the companion setting on, a named enemy also **speaks its chatter's messages** as in-game speech bubbles. Bubble text is the raw chat message — your channel moderation is the content filter (turn just the bubbles off if that concerns you).
+- Vote overrides. A per-act budget (default 1) to overrule chat. While a card-reward or Ancient vote is counting down, click the option you want, or Skip, and the vote ends with your pick. Chat is told, for example `Surfinite overrode the vote and took Ricochet. 0 overrides remaining this act`. Skipping mid-vote costs an override, not a card skip. After chat removes an option, clicking the removed option spends an override to take it anyway. The remaining budget shows on screen whenever an override is available.
+- Relic choices. Treasure chests and elite kills can offer 2 to 4 relics instead of 1. You pick one and the rest go back into the pool.
+- Cursed Overrides (off by default). Every override you spend also adds a random curse to your deck, with the vanilla card-added animation and a chat receipt naming it (`... Cursed Overrides: gained Injury!`). The curse is drawn from the game's generic curse pool; special-purpose curses like Ascender's Bane are excluded.
+- Enemies named after voters (on by default). Enemies are named after chatters who vote, shown under their intent icons. Names are drawn by raffle: every vote you take part in earns one ticket (one per vote, so spamming numbers doesn't help), each enemy draws by ticket, and being drawn spends your tickets until you vote again. Repeat draws of the same chatter become "Jr.", then "III". With the companion setting on, a named enemy also speaks its chatter's messages as speech bubbles. Bubble text is the raw chat message, so your channel moderation is the filter. You can turn just the bubbles off.
 
 ---
 
 ## 🤝 Mod compatibility
 
-- **Slay the Relics reborn** (appears as `SlayTheRelicsExporter` in the in-game mod list) — tested side-by-side and they play fine together. The two mods do disjoint things: Slay the Relics pushes your run state to a Twitch extension overlay (viewers hover relics/cards on the stream), and this mod reads chat votes. No known conflicts.
-- **Balls2**, **StS1 Boss Ancients**, **Haxxero's More Relics** — checked against the removal-vote rules (decompiled; in-game validation is in the operator matrix); their combat card rewards vote normally, their custom Ancients get the Ancient vote, and More Relics' Strongbox is unskippable like Orrery.
+- Slay the Relics reborn (listed in game as `SlayTheRelicsExporter`). Tested side by side, no conflicts. It pushes your run state to a Twitch extension overlay; this mod reads chat votes. The two don't touch the same code.
+- Balls2, StS1 Boss Ancients, Haxxero's More Relics. Their combat card rewards vote normally, their custom Ancients get the Ancient vote, and More Relics' Strongbox is unskippable like Orrery. Checked against the decompiled mods; in-game validation is on the to-do list.
 
 ---
 
 ## ⚙️ In-game settings
 
-Open the in-game settings menu and pick **Slay the Streamer 2** in the mod list. You'll see:
+Open the in-game settings menu and pick Slay the Streamer 2 in the mod list. You'll see:
 
-- **Vote duration** — 10 to 120 seconds (default 30s).
-- **Vote on Act 1 variant** — turn the pre-run Underdocks/Overgrowth vote on or off.
-- **Allow same boss twice (A10)** — Ascension 10's final act has two bosses and chat votes on both; when on, the second vote is allowed to pick the same boss back-to-back.
-- **Allow chat to skip** — when on, chat can vote `#0` to skip a card reward.
-- **Non-combat card rewards** *(since v0.4.0; replaces the old "Card-reward votes only occur after combat" checkbox, which migrates automatically)* — **Mixed** (default): Ancient-relic and Dream Catcher card rewards get a remove-one vote; event and shop-relic card rewards cannot be skipped and have no vote. **Remove-one**: every non-combat card reward gets the remove-one vote (Orrery becomes five removal votes, Colorful Philosophers three). **Free**: chat only votes on combat card rewards; everything else is a free streamer pick. A blue "Slay the Streamer:" line on the relics and events explains the active rule. *(Beta branch only: the default branch lacks the hook this needs; there every card reward votes as a normal pick.)*
-- **Streamer card skips / act** — how many card rewards **you** can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
-- **Streamer vote overrides / act** — how many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). While a card-reward or Ancient vote is counting down, click the option you want (or Skip) and the vote ends instantly with your pick. Skipping mid-vote costs an override, not a card skip. Clicks within the first ~1.5 seconds of a vote countdown are ignored, so that an accidental double-click to open the vote would never spend an override you didn't intend to.
-- **Cursed Overrides** — when on, each vote override you spend also adds a random curse card to your deck. Off by default.
-- **Name enemies after chat voters** — enemies get named after chatters who vote; fair rotation, repeats decorated "Jr."/"III". On by default.
-- **Enemy chat message duration** — how long a named enemy shows its chatter's messages as a speech bubble (raw message text; your channel moderation is the filter). Default 5 seconds; **Off** disables bubbles. Only applies while naming is on.
-- **Show vote tag** — show the `[NN]` vote-ID tag in chat receipts and the on-screen tally. Helpful if your YT chat has stream delay.
-- **Vote tally side** — which side of the screen the on-screen tally overlay sits on.
-- **Relic choices** — how many relics you get to choose from per treasure chest and elite kill (1–4, default 1). You pick one; the rest go back into the relic pool. 1 = vanilla behavior. Not a chat vote — this is streamer-only.
-- **Settings file** — read-only path with an Open-folder button to reveal `%APPDATA%\SlayTheSpire2\` in Explorer.
+- Vote duration. 10 to 120 seconds, default 30.
+- Vote on Act 1 variant. Turns the pre-run Underdocks/Overgrowth vote on or off.
+- Allow same boss twice (A10). Ascension 10's final act has two bosses and chat votes on both. When on, the second vote may pick the same boss again.
+- Allow chat to skip. When on, chat can vote `#0` to skip a card reward.
+- Non-combat card rewards. Since v0.4.0; it replaces the old "Card-reward votes only occur after combat" checkbox, which migrates automatically.
+  - Mixed (default): Ancient-relic and Dream Catcher card rewards get a remove-one vote; event and shop-relic card rewards can't be skipped and have no vote.
+  - Remove-one: every non-combat card reward gets the remove-one vote. Orrery becomes five removal votes and Colorful Philosophers three, so this mode is slower.
+  - Free: chat only votes on combat card rewards. Everything else is a free streamer pick.
+  - In Mixed and Remove-one, a blue "Slay the Streamer:" line on each relic and event explains the active rule. Beta branch only: the default branch lacks the hook this needs, so there every card reward is a normal pick vote.
+- Streamer card skips / act. How many card rewards you can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
+- Streamer vote overrides / act. How many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). Clicks in the first 1.5 seconds of a countdown are ignored, so an accidental double-click that opened the vote can't spend an override.
+- Cursed Overrides. Each override you spend also adds a random curse. Off by default.
+- Name enemies after chat voters. On by default.
+- Enemy chat message duration. How long a named enemy shows its chatter's messages as a speech bubble. Default 5 seconds; Off disables bubbles. Only applies while naming is on.
+- Show vote tag. Shows the `[NN]` vote-ID tag in chat receipts and the on-screen tally. Helpful when your YouTube chat has stream delay.
+- Vote tally side. Which side of the screen the tally overlay sits on.
+- Relic choices. How many relics you choose from per chest and elite kill (1 to 4, default 1). 1 is vanilla.
+- Settings file. A read-only path with an Open-folder button that reveals `%APPDATA%\SlayTheSpire2\` in Explorer.
 
-During a card-reward vote, the skip counter under the cards swaps to show your remaining vote overrides (in gold) so you always know whether an override click is available.
+During a card-reward vote, the skip counter under the cards swaps to your remaining vote overrides (in gold), so you always know whether an override click is available. The same line shows on the Ancient vote screen.
 
-The settings panel is disabled mid-run — change settings between runs. Changes save automatically.
+The settings panel is disabled mid-run. Change settings between runs; changes save automatically.
 
-**Twitch credentials and the YouTube channel ID stay in the JSON file** — they're not in the in-game UI to keep them off-screen during stream.
+Twitch credentials and the YouTube channel ID stay in the JSON file. They're kept out of the in-game UI so they never appear on stream.
 
 ---
 
 ## ⚠️ Known caveats
 
-- **The game itself can intermittently crash silently right after a modded launch** (opens, then closes within seconds, nothing in the log). This is a Slay the Spire 2 bug in its crash-reporter teardown, not specific to this mod — reported to MegaCrit ([details](https://github.com/megacrit/sts2-mod-uploader/issues/14)). If it hits you repeatedly, add `--force-sentry` to the game's Steam Launch Options.
-- **Modded save is its own profile** — your unmodded progress is untouched, and modded runs don't count toward unlocks. The boss vote samples the act-variant's full boss pool, so chat may pick bosses that aren't unlocked on your unmodded save. If you want to also unlock things on the modded save, open the dev console (`~`) and run `unlock all`.
-- **Twitch chat receipts can get rate-limited** under heavy back-to-back voting (Twitch caps regular accounts at 20 messages per 30 seconds). The vote still works, but some "Vote opened…" / "Chat picked X" messages may not appear in chat.
+- The game itself can crash silently right after a modded launch (opens, then closes within seconds, nothing in the log). This is a Slay the Spire 2 bug in its crash-reporter teardown, not specific to this mod, reported to MegaCrit ([details](https://github.com/megacrit/sts2-mod-uploader/issues/14)). It hasn't happened to me in months, but if it hits you repeatedly, add `--force-sentry` to the game's Steam launch options.
+- The modded save is its own profile. Your unmodded progress is untouched, and modded runs don't count toward unlocks. The boss vote samples the act's full boss pool, so chat may pick bosses you haven't unlocked on your unmodded save. To unlock things on the modded save, open the dev console (`~`) and run `unlock all`.
+- Twitch rate-limits chat receipts under heavy back-to-back voting (20 messages per 30 seconds for regular accounts). The vote still works, but some "Vote opened..." or "Chat picked X" messages may not appear.
 
 ---
 
 ## 🙏 Credits
 
-- Concept and design inspired by [**Tempus**'s original StS1 Slay the Streamer mod](https://github.com/Tempus/SlayTheStreamer) ([Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)). No code from that repo is incorporated; this is a from-scratch StS2 implementation that derives from the *concept*.
-- MIT licensed — see [LICENSE](LICENSE).
+- Concept from [Tempus's original StS1 Slay the Streamer mod](https://github.com/Tempus/SlayTheStreamer) ([Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=1610759491)). This is a from-scratch StS2 implementation of the same idea; none of that repo's code is used.
+- MIT licensed. See [LICENSE](LICENSE).
 
 ---
 
-## 🧰 For developers / contributors
+## 🧰 For developers and contributors
 
-Everything below is for poking at the code. Streamers can stop reading here.
+Everything below is about the code. Streamers can stop reading here.
 
 The mod is split into two namespaces:
 
-- `src/Ti/` — extractable, game-agnostic chat-integration layer (Twitch IRC, YouTube chat scraper, voting state machine, UI). No `MegaCrit.Sts2.*` references.
-- `src/Game/` — StS2-specific Harmony patches + settings loader. Depends on `Ti/` and on `sts2.dll`.
+- `src/Ti/` is the game-agnostic chat-integration layer (Twitch IRC, YouTube chat scraper, voting state machine, tally overlay). It has no `MegaCrit.Sts2.*` references, so it can be lifted out into a base mod later.
+- `src/Game/` is the StS2-specific glue: Harmony patches, settings, popups. It depends on `Ti/` and on `sts2.dll`.
 
 ### Repo layout
 
@@ -207,74 +204,76 @@ The mod is split into two namespaces:
 slay-the-streamer-2/
   README.md                 this file
   LICENSE                   MIT
-  CLAUDE.md                 project workflow rules + landmines (for AI-assisted dev)
+  CLAUDE.md                 project workflow rules and landmines (for AI-assisted dev)
   src/                      the mod
-    Ti/                       extractable multi-platform chat-integration core
-      Chat/                     IChatConsumer / IChatService surface
+    Ti/                       game-agnostic chat-integration core
+      Chat/                     IChatConsumer / IChatService
                                 TwitchIrcChatService (IRC client + send queue)
                                 MultiChatService (N-platform aggregator)
                                 YouTubeChat/  read-only youtubei scraper
       Voting/                   VoteSession / VoteCoordinator / Voter / EnglishReceipts
-                                per-platform tally side-dict; vote-nonce (!NN) parsing
-      Internal/                 IClock / ITimerScheduler / IMainThreadDispatcher / TiLog + fakes
-      Ui/                       Ti-side Godot UI (VoteTallyLabel — split per-platform rendering)
+                                per-platform tally, vote-tag (!NN) parsing
+      Internal/                 IClock / ITimerScheduler / IMainThreadDispatcher / TiLog and fakes
+      Ui/                       VoteTallyLabel (the corner tally overlay)
     Godot/                    GodotMainThreadDispatcher + DispatcherAutoload
-    Game/                     StS2-specific glue (Harmony patches, settings, popups)
-      Bootstrap/                ModEntry init + ModSettings (JSON config reader)
-      DecisionVotes/            Harmony patches per voted decision
+    Game/                     StS2-specific glue
+      Bootstrap/                ModEntry init, ModSettings (JSON config), SettingsBootstrap
+      DecisionVotes/            Harmony patches per voted decision, reward classifier, text
+      Content/                  sealed-deck Neow tweaks (Talisman rework, relic disables)
       DevCommands/              dev-console commands (rerollvote, resetskips, votenow)
-      Ui/                       per-vote popups (BossVotePopup, ActVariantVotePopup,
-                                CardRewardVotePopup, AncientVotePopup, StreamerBudgetCounterLabel,
-                                in-game Settings panel)
+      Ui/                       per-vote popups, budget counters, in-game settings panel
     ModEntry.cs               [ModInitializer] entry point
     slay_the_streamer_2.csproj
     slay_the_streamer_2.json  mod manifest
-    slay_the_streamer_2.json.example  template config (mod loader skips .json.example)
+    slay_the_streamer_2.json.example  template config (the loader skips .json.example)
     icon.svg, project.godot   needed for Godot.NET.Sdk compilation
   tests/                    xUnit test project (source-referenced, no DLL refs)
-  docs/superpowers/         specs + implementation plans + meta-reviews (the build-out story)
-  notes/                    research notes, hook-point inventory, follow-ups
-  build.ps1                 refresh DLLs from game install → dotnet publish → dotnet test → assemble dist/
+  workshop/                 Steam Workshop upload workspace (workshop.json, image.png)
+  docs/superpowers/         specs and implementation plans
+  notes/                    research notes, operator test matrices, follow-ups
+  build.ps1                 refresh DLLs from the game install, dotnet publish, dotnet test, assemble dist/
   install.ps1               copy dist/ to <game-install>/mods/
   uninstall.ps1             remove from <game-install>/mods/
 ```
 
-Not in the repo — gitignored, created locally:
+Not in the repo (gitignored, created locally):
 
 ```
   references/               reference repos cloned per workspace (not redistributable)
     SlayTheStreamer-sts1/     Tempus's StS1 original, feature reference only
     STS2FirstMod/             jiegec's StS2 example mod
-  decompiled/sts2/          ILSpy output on sts2.dll (regenerable)
-  src/sts2.dll              copied per-build from the game install
-  src/0Harmony.dll          copied per-build from the game install
+  decompiled/sts2-vX.Y.Z/   ILSpy output on sts2.dll, one folder per game version
+  decompiled/sts2-assets/   extracted game assets (scenes, images)
+  src/sts2.dll              copied per build from the game install
+  src/0Harmony.dll          copied per build from the game install
   dist/                     build artefacts
 ```
 
-### Build + install from source
+### Build and install from source
 
-Requires .NET 9 SDK, Godot 4.5.1 Mono (for the `Godot.NET.Sdk` csproj), and a Slay the Spire 2 install. Then:
+Requires the .NET 9 SDK, Godot 4.5.1 Mono (for the `Godot.NET.Sdk` csproj), and a Slay the Spire 2 install. Then:
 
 ```powershell
-pwsh -File build.ps1     # publish + run tests + assemble dist/
-pwsh -File install.ps1   # copy dist/ → <game>/mods/
+pwsh -File build.ps1     # publish, run tests, assemble dist/
+pwsh -File install.ps1   # copy dist/ to <game>/mods/
 ```
 
-`build.ps1` copies `sts2.dll` and `0Harmony.dll` from your game install each run; they're not redistributed in the repo.
+`build.ps1` copies `sts2.dll` and `0Harmony.dll` from your game install each run. They aren't redistributed in the repo. `install.ps1` only copies; it doesn't rebuild.
 
-### Recreating gitignored workspace dirs
+### Recreating the gitignored workspace dirs
 
 ```sh
 git clone https://github.com/Tempus/SlayTheStreamer.git references/SlayTheStreamer-sts1
 git clone https://github.com/jiegec/STS2FirstMod.git    references/STS2FirstMod
 
-# Requires ILSpy CLI (ilspycmd 9.x)
+# Requires ILSpy CLI (ilspycmd 9.x). Decompile from a copy of the DLL with no sts2.xml
+# beside it, or ILSpy embeds doc comments into every file and diffs become useless.
 ilspycmd "C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64\sts2.dll" \
-  -o decompiled/sts2 --nested-directories -p
+  -o decompiled/sts2-v0.111.0 -p
 ```
 
 ### Design notes
 
-- Architecture, slice plans, and meta-reviews live under `docs/superpowers/`.
-- Research notes, hook-point inventory, and follow-ups live under `notes/`.
-- Per-project workflow rules and landmines live in `CLAUDE.md`.
+- Specs and implementation plans live under `docs/superpowers/`.
+- Research notes, operator matrices, and follow-ups live under `notes/`.
+- Workflow rules and the landmine list live in `CLAUDE.md`.

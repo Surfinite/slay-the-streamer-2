@@ -896,6 +896,8 @@ internal static class CardRewardVotePatch {
     /// (no addition) we stay within the 2-alternatives cap that
     /// <see cref="CardRewardAlternative.Generate"/> enforces at line 53-55.
     ///
+    /// Applies to NormalVote and RemoveOne rewards (the latter since remove-one/16).
+    ///
     /// Streamer interaction: the Skip button remains visible (the vote popup
     /// anchors its #0 indicator to it when CardSkipAsVoteOption is on), and
     /// changing AfterSelected to <c>EndSelectionAndCompleteReward</c> also reassigns
@@ -921,10 +923,15 @@ internal static class CardRewardVotePatch {
                 // (EndSelectionAndDoNotCompleteReward + Escape hotkey) — the flip
                 // below exists to serve chat-skip votes and the streamer skip
                 // budget, neither of which applies to an out-of-scope reward.
-                // RemoveOne and Unskippable rewards also keep vanilla Skip semantics
-                // here: ShouldVoteOn is NormalVote-only (Task 2), so this postfix never
-                // touches Skip's AfterSelected for those two modes.
-                if (!CombatOriginTags.ShouldVoteOn(cardReward)) return;
+                // RemoveOne rewards get the same flip (remove-one/16, 2026-09-13): with
+                // vanilla semantics Skip kept the Escape hotkey, so Escape started the
+                // removal vote and a second Escape spent an override; and an override
+                // Skip left the reward on the Loot list, so reopening it could Skip again
+                // for a second Cursed Overrides curse. Completing the reward on Skip
+                // matches the pick-vote screens: Escape opens the pause menu instead.
+                // Unskippable rewards keep vanilla semantics (Skip is denied anyway).
+                var mode = RewardAuthority.Classify(cardReward);
+                if (mode != AuthorityMode.NormalVote && mode != AuthorityMode.RemoveOne) return;
 
                 // Vanilla Generate() builds a List<>. Downcast to mutate in place; if a
                 // future build returns a different IReadOnlyList implementation, fall back

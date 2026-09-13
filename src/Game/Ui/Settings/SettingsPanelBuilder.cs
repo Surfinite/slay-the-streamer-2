@@ -180,8 +180,8 @@ internal static class SettingsPanelBuilder {
         AddCheckboxRow(root, "Allow chat to skip", current.CardSkipAsVoteOption,
             value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CardSkipAsVoteOption = value }));
         AddDivider(root);
-        AddCheckboxRow(root, "Card-reward votes only occur after combat", current.CombatCardVotesOnly,
-            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { CombatCardVotesOnly = value }));
+        AddCheckboxRow(root, "Card-reward votes only occur after combat", current.NonCombatCardRewards == NonCombatRewardMode.Free,
+            value => debouncer.MarkDirtyAndRestart(ModSettings.Current! with { NonCombatCardRewards = NonCombatRewardModes.FromLegacyCombatOnly(value) }));
         AddHelpText(root, "On: chat only votes on card rewards earned from combat; other card rewards are free picks.\nOff (default): chat votes to remove one option on Ancient-relic and Dream Catcher card rewards,\nand event or shop-relic card rewards cannot be skipped. Explanations appear on the relics and events themselves.");
         AddDivider(root);
         AddCardSkipsDropdown(root, current, debouncer);

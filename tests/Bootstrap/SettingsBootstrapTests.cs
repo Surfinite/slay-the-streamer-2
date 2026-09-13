@@ -114,6 +114,46 @@ public class SettingsBootstrapTests {
         } finally { CleanUp(path); }
     }
 
+    [Theory]
+    [InlineData("true", "free")]
+    [InlineData("false", "mixed")]
+    public void EnsureFile_MigratesCombatCardVotesOnly(string oldValue, string expectedMode) {
+        var path = WriteTemp($$"""
+        {
+            "schemaVersion": 1,
+            "channel": "surfinite",
+            "username": "surfinitebot",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "combatCardVotesOnly": {{oldValue}}
+        }
+        """);
+        try {
+            var outcome = SettingsBootstrap.EnsureFile(path);
+            var added = Assert.IsType<SettingsBootstrap.Outcome.AddedMissingKeys>(outcome);
+            Assert.Contains("nonCombatCardRewards", added.Keys);
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert.Equal(expectedMode, (string)json["nonCombatCardRewards"]!);
+            Assert.False(json.ContainsKey("combatCardVotesOnly"));
+        } finally { CleanUp(path); }
+    }
+
+    [Fact]
+    public void EnsureFile_NewFile_DefaultsToMixed() {
+        var path = WriteTemp("""
+        {
+            "schemaVersion": 1,
+            "channel": "surfinite",
+            "username": "surfinitebot",
+            "oauthToken": "abc123def456ghi789jkl012mno345"
+        }
+        """);
+        try {
+            SettingsBootstrap.EnsureFile(path);
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert.Equal("mixed", (string)json["nonCombatCardRewards"]!);
+        } finally { CleanUp(path); }
+    }
+
     [Fact]
     public void EnsureFile_DoesNotAdd_ShowVoteTag() {
         // showVoteTag's runtime default is conditional on youtubeChannelId; the

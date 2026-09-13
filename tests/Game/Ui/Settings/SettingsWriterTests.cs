@@ -109,19 +109,16 @@ public class SettingsWriterTests {
     }
 
     [Fact]
-    public void Write_persists_combatCardVotesOnly() {
+    public void Write_persists_nonCombatCardRewards_and_drops_the_old_key() {
         var path = TempPath();
         try {
-            var settings = MakeSettings() with { CombatCardVotesOnly = true };
+            File.WriteAllText(path, """{ "schemaVersion": 1, "combatCardVotesOnly": true }""");
+            var settings = MakeSettings() with { NonCombatCardRewards = NonCombatRewardMode.RemoveOne };
             SettingsWriter.Write(path, settings);
-
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
-            Assert.True((bool)json["combatCardVotesOnly"]!);
-        } finally {
-            if (File.Exists(path)) File.Delete(path);
-            if (File.Exists(path + ".bak")) File.Delete(path + ".bak");
-            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
-        }
+            Assert.Equal("removeOne", (string)json["nonCombatCardRewards"]!);
+            Assert.False(json.ContainsKey("combatCardVotesOnly"));
+        } finally { if (File.Exists(path)) File.Delete(path); }
     }
 
     [Fact]

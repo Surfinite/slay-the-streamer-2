@@ -59,7 +59,7 @@ public static class SettingsBootstrap {
         ["relicChoices"]         = 1,
         ["voteOverridesPerAct"]  = 1,
         ["cursedOverrides"]      = false,
-        ["combatCardVotesOnly"]  = false,
+        ["nonCombatCardRewards"] = "mixed",
         ["nameEnemiesAfterVoters"] = true,
         ["namedEnemiesSpeakSeconds"] = 5,
     };
@@ -83,6 +83,15 @@ public static class SettingsBootstrap {
     /// </summary>
     internal static IReadOnlyList<string> AddMissingKeys(JsonObject json) {
         var added = new List<string>();
+        // Legacy migration: derive the three-way mode from the old bool, then drop the bool,
+        // so the template default below never overrides a user's "combat only" choice.
+        if (!json.ContainsKey(NonCombatRewardModes.Key)
+                && json.TryGetPropertyValue("combatCardVotesOnly", out var legacy)
+                && legacy is JsonValue lv && lv.TryGetValue<bool>(out var combatOnly)) {
+            json[NonCombatRewardModes.Key] = NonCombatRewardModes.ToJson(NonCombatRewardModes.FromLegacyCombatOnly(combatOnly));
+            json.Remove("combatCardVotesOnly");
+            added.Add(NonCombatRewardModes.Key);
+        }
         foreach (var (key, defaultValue) in BuildTemplate()) {
             if (MergeSkipKeys.Contains(key)) continue;
             if (json.ContainsKey(key)) continue;

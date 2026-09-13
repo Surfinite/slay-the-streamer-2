@@ -36,7 +36,8 @@ public static class SettingsWriter {
         json["relicChoices"] = settings.RelicChoices;
         json["voteOverridesPerAct"] = settings.VoteOverridesPerAct;
         json["cursedOverrides"] = settings.CursedOverrides;
-        json["combatCardVotesOnly"] = settings.CombatCardVotesOnly;
+        json[NonCombatRewardModes.Key] = NonCombatRewardModes.ToJson(settings.NonCombatCardRewards);
+        json.Remove("combatCardVotesOnly");   // legacy key, migrated on load; dropped here
         json["nameEnemiesAfterVoters"] = settings.NameEnemiesAfterVoters;
         json["namedEnemiesSpeakSeconds"] = settings.NamedEnemiesSpeakSeconds;
 

@@ -801,16 +801,18 @@ public class ModSettingsTests {
         } finally { File.Delete(path); }
     }
 
-    // --- combatCardVotesOnly (card-scope: chat votes only on combat-origin card rewards; default
-    // flipped back false again from v0.4.0, Surfinite 2026-09-07: off now means the per-origin
-    // rules (removal votes, unskippable rewards) with explanation text on the relics and events) ---
+    // --- nonCombatCardRewards (three-way: free | removeOne | mixed; default mixed, Surfinite
+    // 2026-09-13). The old combatCardVotesOnly bool migrates: true -> free, false -> mixed. ---
 
     [Theory]
-    [InlineData("\"combatCardVotesOnly\": true,", true, false)]
-    [InlineData("\"combatCardVotesOnly\": false,", false, false)]
-    [InlineData("\"combatCardVotesOnly\": \"yes\",", false, true)]  // non-bool -> default + warning
-    [InlineData("", false, false)]                                  // missing -> default, no warning
-    public void CombatCardVotesOnly_parses_and_defaults(string fragment, bool expected, bool expectWarning) {
+    [InlineData("\"nonCombatCardRewards\": \"free\",", NonCombatRewardMode.Free, false)]
+    [InlineData("\"nonCombatCardRewards\": \"removeOne\",", NonCombatRewardMode.RemoveOne, false)]
+    [InlineData("\"nonCombatCardRewards\": \"REMOVEONE\",", NonCombatRewardMode.RemoveOne, false)]
+    [InlineData("\"nonCombatCardRewards\": \"mixed\",", NonCombatRewardMode.Mixed, false)]
+    [InlineData("\"nonCombatCardRewards\": \"banana\",", NonCombatRewardMode.Mixed, true)]   // unknown -> default + warning
+    [InlineData("\"nonCombatCardRewards\": 3,", NonCombatRewardMode.Mixed, true)]            // non-string -> default + warning
+    [InlineData("", NonCombatRewardMode.Mixed, false)]                                        // missing -> default, no warning
+    public void NonCombatCardRewards_parses_and_defaults(string fragment, NonCombatRewardMode expected, bool expectWarning) {
         var path = WriteTempJson($$"""
         {
             "schemaVersion": 1, "channel": "x", "username": "y",
@@ -822,8 +824,44 @@ public class ModSettingsTests {
         try {
             var result = ModSettings.Load(path);
             var success = Assert.IsType<SettingsResult.Success>(result);
-            Assert.Equal(expected, success.Settings.CombatCardVotesOnly);
-            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("combatCardVotesOnly")));
+            Assert.Equal(expected, success.Settings.NonCombatCardRewards);
+            Assert.Equal(expectWarning, success.Warnings.Any(w => w.Contains("nonCombatCardRewards")));
+        } finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData("\"combatCardVotesOnly\": true,", NonCombatRewardMode.Free)]
+    [InlineData("\"combatCardVotesOnly\": false,", NonCombatRewardMode.Mixed)]
+    public void CombatCardVotesOnly_migrates_when_new_key_absent(string fragment, NonCombatRewardMode expected) {
+        var path = WriteTempJson($$"""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            {{fragment}}
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var success = Assert.IsType<SettingsResult.Success>(ModSettings.Load(path));
+            Assert.Equal(expected, success.Settings.NonCombatCardRewards);
+            Assert.Contains(success.Warnings, w => w.Contains("combatCardVotesOnly") && w.Contains("migrated"));
+        } finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void NewKey_wins_over_old_key() {
+        var path = WriteTempJson("""
+        {
+            "schemaVersion": 1, "channel": "x", "username": "y",
+            "oauthToken": "abc123def456ghi789jkl012mno345",
+            "combatCardVotesOnly": true,
+            "nonCombatCardRewards": "removeOne",
+            "cardSkipsPerAct": 1
+        }
+        """);
+        try {
+            var success = Assert.IsType<SettingsResult.Success>(ModSettings.Load(path));
+            Assert.Equal(NonCombatRewardMode.RemoveOne, success.Settings.NonCombatCardRewards);
         } finally { File.Delete(path); }
     }
 

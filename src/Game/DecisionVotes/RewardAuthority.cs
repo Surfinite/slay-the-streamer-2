@@ -12,7 +12,7 @@ internal static class RewardAuthority {
     private static int _degradedWarnFired;
 
     private static bool CombatTagRegistered => CombatOriginTags.TagPatchRegistered && CombatOriginTags.CapturePatchRegistered;
-    private static bool CombatOnly => ModSettings.Current?.CombatCardVotesOnly ?? false;
+    private static bool CombatOnly => (ModSettings.Current?.NonCombatCardRewards ?? NonCombatRewardMode.Mixed) == NonCombatRewardMode.Free;
 
     /// <summary>True when the per-origin rules and their explanation text apply.</summary>
     internal static bool RulesActive => AuthorityRules.RulesActive(CombatTagRegistered, CombatOnly);

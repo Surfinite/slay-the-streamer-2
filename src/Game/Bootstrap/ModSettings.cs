@@ -22,7 +22,7 @@ public sealed record ChatSettings(
     int RelicChoices = 1,
     int VoteOverridesPerAct = 1,
     bool CursedOverrides = false,
-    bool CombatCardVotesOnly = false,
+    NonCombatRewardMode NonCombatCardRewards = NonCombatRewardMode.Mixed,
     bool NameEnemiesAfterVoters = true,
     int NamedEnemiesSpeakSeconds = 5);
 
@@ -266,14 +266,19 @@ public static class ModSettings {
                 else warnings.Add("cursedOverrides is not a boolean; using default (false)");
             }
 
-            // Default false again from v0.4.0 (Surfinite 2026-09-07): Off now means the
-            // per-origin rules (removal votes, unskippable rewards) with explanation text
-            // on the relics and events; On keeps the combat-only behaviour.
-            bool combatCardVotesOnly = false;
-            if (root.TryGetProperty("combatCardVotesOnly", out var combatOnlyProp)) {
-                if (combatOnlyProp.ValueKind == JsonValueKind.True) combatCardVotesOnly = true;
-                else if (combatOnlyProp.ValueKind == JsonValueKind.False) combatCardVotesOnly = false;
-                else warnings.Add("combatCardVotesOnly is not a boolean; using default (false)");
+            // Three-way mode from v0.4.0 (Surfinite 2026-09-13). The old combatCardVotesOnly
+            // bool still parses when the new key is absent: true -> free, false -> mixed.
+            NonCombatRewardMode nonCombatCardRewards = NonCombatRewardModes.Default;
+            if (root.TryGetProperty(NonCombatRewardModes.Key, out var modeProp)) {
+                if (modeProp.ValueKind == JsonValueKind.String && NonCombatRewardModes.TryParse(modeProp.GetString(), out var parsedMode)) {
+                    nonCombatCardRewards = parsedMode;
+                } else {
+                    warnings.Add($"{NonCombatRewardModes.Key} is not one of free|removeOne|mixed; using default (mixed)");
+                }
+            } else if (root.TryGetProperty("combatCardVotesOnly", out var legacyProp)
+                       && legacyProp.ValueKind is JsonValueKind.True or JsonValueKind.False) {
+                nonCombatCardRewards = NonCombatRewardModes.FromLegacyCombatOnly(legacyProp.ValueKind == JsonValueKind.True);
+                warnings.Add($"combatCardVotesOnly migrated to {NonCombatRewardModes.Key}={NonCombatRewardModes.ToJson(nonCombatCardRewards)}; the old key is dropped on the next settings write");
             }
 
             bool nameEnemiesAfterVoters = true;
@@ -303,7 +308,7 @@ public static class ModSettings {
 
             var creds = new ChatCredentials(username, oauthToken);
             return new SettingsResult.Success(
-                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, combatCardVotesOnly, nameEnemiesAfterVoters, namedEnemiesSpeakSeconds),
+                new ChatSettings(normalisedChannel, creds, cardSkipsPerAct, youtubeChannelId, voteOnActVariant, forceL3PopupFallback, voteDurationSeconds, cardSkipAsVoteOption, showVoteTag, voteTallyOnLeft, allowSameBossTwice, relicChoices, voteOverridesPerAct, cursedOverrides, nonCombatCardRewards, nameEnemiesAfterVoters, namedEnemiesSpeakSeconds),
                 warnings);
         }
     }

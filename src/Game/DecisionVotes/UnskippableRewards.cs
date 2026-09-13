@@ -31,6 +31,8 @@ internal static class UnskippableRewards {
     private static readonly Lazy<FieldInfo?> RewardsSetField = new(() => AccessTools.Field(typeof(NRewardsScreen), "_rewardsSet"));
     private static readonly Lazy<FieldInfo?> HeaderField = new(() => AccessTools.Field(typeof(NRewardsScreen), "_headerLabel"));
     private static readonly Lazy<FieldInfo?> RewardButtonsField = new(() => AccessTools.Field(typeof(NRewardsScreen), "_rewardButtons"));
+    private static readonly Lazy<FieldInfo?> SkipDisallowedField = new(() => AccessTools.Field(typeof(NRewardsScreen), "_skipDisallowed"));
+    private static readonly Lazy<MethodInfo?> TryEnableProceedMethod = new(() => AccessTools.Method(typeof(NRewardsScreen), "TryEnableProceedButton"));
 
     internal static bool IsUnskippableScreen(NCardRewardSelectionScreen screen) => Screens.TryGetValue(screen, out _);
 
@@ -85,9 +87,36 @@ internal static class UnskippableRewards {
                 if (RewardsSetField.Value?.GetValue(__instance) is not RewardsSet set) return;
                 if (!set.Rewards.Any(r => r is CardReward cr && RewardAuthority.Classify(cr) == AuthorityMode.Unskippable)) return;
                 set.WithSkippingDisallowed();
-                RewardsHeaderSubLabel.Attach(__instance, () => HeaderField.Value?.GetValue(__instance) as Control, "Every card reward must be taken here.");
+                RewardsHeaderSubLabel.Attach(__instance, () => HeaderField.Value?.GetValue(__instance) as Control,
+                    "Every card reward must be taken here.", isVisible: () => HasPendingUnskippable(__instance));
                 TiLog.Info("[SlayTheStreamer2][unskip] rewards set restrained (Skip Rewards disabled)");
             } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][unskip] rewards-set restraint failed; vanilla skippable", ex); }
         }
+    }
+
+    /// <summary>Vanilla's _skipDisallowed lasts the screen's lifetime and keeps Proceed
+    /// disabled while ANY reward is left, so a set with potions or gold beside the card
+    /// rewards became a dead end once the cards were taken (Crystal Sphere, Surfinite
+    /// 2026-09-13). Clear it, and re-run vanilla's enable check, as soon as no unskippable
+    /// card reward is alive. RewardCollectedFrom fires when a reward completes;
+    /// AfterOverlayShown covers the return from the sub-screen.</summary>
+    private static void ReleaseIfNothingPending(NRewardsScreen screen) {
+        try {
+            if (SkipDisallowedField.Value?.GetValue(screen) is not true) return;
+            if (HasPendingUnskippable(screen)) return;
+            SkipDisallowedField.Value!.SetValue(screen, false);
+            TryEnableProceedMethod.Value?.Invoke(screen, null);
+            TiLog.Info("[SlayTheStreamer2][unskip] every unskippable card reward taken; Skip Rewards released");
+        } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][unskip] release failed; Proceed may stay disabled", ex); }
+    }
+
+    [HarmonyPatch(typeof(NRewardsScreen), nameof(NRewardsScreen.RewardCollectedFrom))]
+    internal static class RewardCollectedReleasePostfix {
+        static void Postfix(NRewardsScreen __instance) => ReleaseIfNothingPending(__instance);
+    }
+
+    [HarmonyPatch(typeof(NRewardsScreen), nameof(NRewardsScreen.AfterOverlayShown))]
+    internal static class AfterOverlayShownReleasePostfix {
+        static void Postfix(NRewardsScreen __instance) => ReleaseIfNothingPending(__instance);
     }
 }

@@ -16,9 +16,12 @@ internal sealed partial class RewardsHeaderSubLabel : Control {
     private static readonly Color TextColor = new(1f, 0.964706f, 0.886275f, 1f);
 
     private Func<Control?>? _headerProvider;
+    private Func<bool>? _isVisible;
     private Label? _label;
 
-    internal static void Attach(Node screen, Func<Control?> headerProvider, string text) {
+    /// <param name="isVisible">Optional per-frame probe; false hides the line (the
+    /// unskippable header goes away once every unskippable card reward is taken).</param>
+    internal static void Attach(Node screen, Func<Control?> headerProvider, string text, Func<bool>? isVisible = null) {
         var sub = new RewardsHeaderSubLabel {
             Name = "SlayTheStreamerUnskippableHeader",
             MouseFilter = MouseFilterEnum.Ignore,
@@ -26,6 +29,7 @@ internal sealed partial class RewardsHeaderSubLabel : Control {
         };
         try {
             sub._headerProvider = headerProvider;
+            sub._isVisible = isVisible;
             sub._label = new Label {
                 Text = text, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore,
                 AnchorLeft = 0, AnchorTop = 0, AnchorRight = 0, AnchorBottom = 0,
@@ -49,6 +53,10 @@ internal sealed partial class RewardsHeaderSubLabel : Control {
     public override void _Process(double delta) {
         try {
             if (_label is null) return;
+            bool show = true;
+            try { show = _isVisible?.Invoke() ?? true; } catch { /* probe must never break placement */ }
+            if (Visible != show) Visible = show;
+            if (!show) return;
             float cx, top;
             var header = _headerProvider?.Invoke();
             if (header is not null && GodotObject.IsInstanceValid(header)) {

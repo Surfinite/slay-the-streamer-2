@@ -153,6 +153,13 @@ internal sealed partial class AncientVotePopup : Control {
             _overrideLabel.AddThemeFontSizeOverride("normal_font_size", OverrideFontSize);
             _overrideLabel.AddThemeFontSizeOverride("bold_font_size", OverrideFontSize);
             _overrideLabel.AddThemeColorOverride("default_color", BodyTextColor);
+            // Same outline and shadow as the title: the plain text blended into light
+            // Ancient art (Surfinite, row M6, 2026-09-13).
+            _overrideLabel.AddThemeColorOverride("font_outline_color", TextOutlineColor);
+            _overrideLabel.AddThemeConstantOverride("outline_size", TextOutlineSize);
+            _overrideLabel.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.5f));
+            _overrideLabel.AddThemeConstantOverride("shadow_offset_x", 3);
+            _overrideLabel.AddThemeConstantOverride("shadow_offset_y", 2);
             _canvasLayer.AddChild(_overrideLabel);
         }
 

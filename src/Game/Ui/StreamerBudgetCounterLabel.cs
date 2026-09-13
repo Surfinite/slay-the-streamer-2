@@ -126,10 +126,13 @@ public partial class StreamerBudgetCounterLabel : RichTextLabel {
         // Poll the Skip button each frame so the label tracks any aspect-ratio
         // change or button-position tween. The button is center-anchored, so its
         // absolute Y is not stable across viewport sizes.
+        // X is the viewport centre, not the Skip button's: with Driftwood's Reroll
+        // beside it the Skip button sits left of centre and the label drifted with
+        // it (Surfinite, 2026-09-13). Only Y follows the button.
         if (_skipButton is not null && GodotObject.IsInstanceValid(_skipButton)) {
             var pos = _skipButton.GlobalPosition;
             var size = _skipButton.Size * _skipButton.Scale;
-            float centerX = pos.X + size.X * 0.5f;
+            float centerX = GetViewportRect().Size.X * 0.5f;
             float centerY = pos.Y + size.Y + GapBelowSkipButton;
             PlaceLabelAt(centerX, centerY);
         }

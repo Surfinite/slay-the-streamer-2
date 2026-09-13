@@ -125,7 +125,12 @@ Surfinite's rulings from the 2026-09-13 conversation:
    Deck). Needs a small Draft origin tag (prefix on `Draft.OfferRewards` pushing a flag that the
    existing `CardReward` ctor postfix reads) so `removeOne` cannot turn Draft into ten removal
    votes. Correct the README Draft sentence.
-4. Update README, the in-game help text, notes/06, notes/14 (new rows for `removeOne` mode and
+4. **Override counter on the Ancient screens** (Surfinite, 2026-09-13 testing): the Ancient
+   vote popup shows nothing about overrides, so the streamer cannot tell one is spendable.
+   Show the same gold "{streamer} has N vote overrides remaining this act" line the card
+   screens use (`StreamerBudgetCounterLabel`, viewport-centred X) while an Ancient vote is
+   open. Check `AncientVotePatch`/`AncientVotePopup` for where the override click lands.
+5. Update README, the in-game help text, notes/06, notes/14 (new rows for `removeOne` mode and
    Draft), CLAUDE.md commit prefix. Then `release/v0.4.0` (manifest bump, changeNote, README
    Beta version pin per `release_and_game_update_workflow` memory).
 

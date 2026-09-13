@@ -15,7 +15,7 @@ internal sealed partial class RemovalStatusLine : Control {
     // Mirrors CardRewardVotePopup.TimerGapBelowBanner: the first line is centred where the
     // countdown sits during a vote, so the two never overlap the cards.
     private const float GapBelowBanner = -20f;
-    private const float FirstLineHalfHeight = 18f;
+    private const float FirstLineHalfHeight = 13f;      // 18 read 5 px high in game (2026-09-13)
     private const float BoxHeight = 90f;            // room for the second (reroll) line
     private const float HalfWidth = 520f;
     private const float FallbackTop = 120f;

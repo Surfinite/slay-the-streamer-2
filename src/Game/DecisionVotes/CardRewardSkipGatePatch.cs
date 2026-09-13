@@ -496,7 +496,10 @@ internal static class CardRewardSkipGatePatch {
                 if (!ShouldEnforceSkipGate()) return;
                 // card-scope: no budget counter on a streamer-free sub-screen —
                 // the skip budget doesn't apply there, so the label would lie.
-                if (!CombatOriginTags.ShouldVoteOnActiveReward()) return;
+                // RemoveOne screens (Kaleidoscope etc.) get the label with the skip
+                // text suppressed (limit 0): only the override budget shows there.
+                bool removeOne = RewardAuthority.ModeOfActiveReward() == AuthorityMode.RemoveOne;
+                if (!removeOne && !CombatOriginTags.ShouldVoteOnActiveReward()) return;
                 var runState = TryGetRunState();
                 if (runState is null) return;
                 try {
@@ -514,7 +517,7 @@ internal static class CardRewardSkipGatePatch {
                     TiLog.Warn($"[SlayTheStreamer2][card-skip-gate] skip-button lookup threw: {ex.Message}");
                 }
 
-                AttachOrUpdateLabel(__instance, skipButton, BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
+                AttachOrUpdateLabel(__instance, skipButton, removeOne ? 0 : BootstrapModSettings.Current?.CardSkipsPerAct ?? 1);
             } catch (Exception ex) {
                 TiLog.Error("[SlayTheStreamer2][card-skip-gate] choose-a-card _Ready postfix failed", ex);
             }

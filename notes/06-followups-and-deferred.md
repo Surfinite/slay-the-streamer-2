@@ -893,3 +893,29 @@ Follow-ups deferred:
 - RelicDisablePatch's one-shot log is process-scoped: only the first sealed run in a session emits the S5 evidence line.
 
 Doomed-icon decision (ruling 8): rather than ship new art, `DoomedIconPatch` postfixes `EnchantmentModel.IconPath` to return the existing Doom power's tombstone badge (`res://images/powers/doom_power.png`) for `StreamerDoomed`, reusing its tooltip/badge conventions instead of introducing a bespoke icon.
+
+### Operator validation 2026-09-13 (both slices)
+
+Surfinite ran every matrix row (notes/14) on 2026-09-13; rows 1-12 and S1-S6 all pass after these
+fixes, all committed to `main` the same day:
+- `remove-one/14`: status line moved to the countdown slot (was over the cards), "removal"/"removed"
+  in the removed-option red, hidden on the vote's first frame; the vote-active check compared surface
+  instances (the click path builds a fresh one) so the prompt never hid during the vote; reopen paint
+  waits 1.1 s because `NCardRewardSelectionScreen._Ready` tweens holders to white over 1.0 s; the
+  popup title paints "remove" red; `StreamerBudgetCounterLabel` gains an override-offered probe.
+- `remove-one/15`: the counter never mounted on RemoveOne screens (skip-gate postfix bailed for
+  non-pick rewards); status line 5 px lower.
+- `remove-one/16`: RemoveOne rewards get the Skip flip too. Vanilla Skip semantics carried the Escape
+  hotkey (Escape started the vote, a second Escape spent an override) and left the reward in Loot
+  after an override Skip (reopen could Skip again for a second curse).
+- `remove-one/17`: counter X is the viewport centre (Driftwood's Reroll shifted it with Skip).
+- `remove-one/18`: singular "card reward" on Brain Leech and Future of Potions (one reward each).
+- `remove-one/19`: `RewardsSet.WithSkippingDisallowed` sets a screen-lifetime flag; Crystal Sphere
+  with potions left after the cards was a dead end. Postfixes on `RewardCollectedFrom` and
+  `AfterOverlayShown` clear it once no unskippable card reward is alive; header line hides with it.
+- `sealed-neow/9`: Doom text reads "to yourself" (vanilla Neurosurge phrasing).
+- `sealed-neow/10`: blue "Slay the Streamer: modified for Sealed Deck runs." tag on the Talisman.
+
+Tags `remove-one-complete` and `sealed-neow-complete` at `4af6fe5`. Queued next (handoff section 5):
+three-way `nonCombatCardRewards` setting, `removeOne` mode text, Draft origin tag, override counter on
+the Ancient screens, then `release/v0.4.0`.

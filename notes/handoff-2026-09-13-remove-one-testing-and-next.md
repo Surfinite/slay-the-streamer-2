@@ -101,7 +101,7 @@ the matrix named below. Everything here is committed on `main`; nothing is in fl
   custom ancients get the Ancient vote, Strongbox is unskippable. The Downfall port also patches
   `FromChooseACardScreen` (compat check only if Tristan runs it).
 
-## 5. Agreed next work (after testing), in one spec
+## 5. Agreed next work (SHIPPED as reward-modes/1..8, 2026-09-13)
 
 Surfinite's rulings from the 2026-09-13 conversation:
 

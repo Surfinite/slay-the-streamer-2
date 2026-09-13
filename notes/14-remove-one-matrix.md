@@ -38,6 +38,19 @@ Evidence anchors below are exact substrings as shipped (see file:line):
 | 11 | Sealed deck with Always Whale: Talisman upgrades 2 cards, tombstone badge, Doom tooltip, Doom applied on play; Leafy Poultice and Precarious Shears never offered across seeds; unsealed run shows vanilla Talisman text and behaviour | Sealed Deck modifier + Pikcube's Always Whale, take Neow's Talisman | tombstone badge on the 2 upgraded cards; Doom power tooltip on hover; Doom applied when the card is played; neither disabled relic appears across several seeds; a non-sealed run's Talisman is unchanged vanilla | see rows S1-S6 (all pass 2026-09-13) |
 | 12 | Regression: normal combat reward vote; checkbox On restores v0.3.1 behaviour bit for bit; default branch (v0.107.1) install logs the stand-down and pick-votes everything | plain combat win; toggle checkbox On; install on the default branch | normal combat card reward vote fires as before; checkbox On behaves exactly like the pre-remove-one release; default branch logs `combat-origin tagging did not register` and every card reward is a normal vote | pass 2026-09-13 |
 
+## reward-modes rows (v0.4.0)
+
+Evidence anchors: `Draft option wrapped` and `tagged Draft card reward` : `src/Game/DecisionVotes/DraftOriginTags.cs`; `combatCardVotesOnly migrated` : `src/Game/Bootstrap/ModSettings.cs`.
+
+| # | Row | Recipe | Evidence | Result |
+|---|---|---|---|---|
+| M1 | Settings panel shows "Non-combat card rewards" dropdown (Free / Remove-one / Mixed) with three help lines; changing it writes `nonCombatCardRewards` and the file no longer has `combatCardVotesOnly` | open Mods > Slay the Streamer 2 | file content | [ ] |
+| M2 | Migration: a file with `combatCardVotesOnly: true` and no new key loads as Free (log `combatCardVotesOnly migrated`), and the panel shows Free | edit the file, restart | log line | [ ] |
+| M3 | Remove-one mode: Brain Leech Rip gives a removal vote (Skip is #0); Orrery purchase gives five removal votes; text on the event option and relic hover reads the removal wording | mode = removeOne; Brain Leech; buy Orrery | `removal vote opened` per screen | [ ] |
+| M4 | Free mode: Kaleidoscope reward is a free pick, no text on the relic | mode = free; `relic KALEIDOSCOPE` | `Free card reward - no pick vote` | [ ] |
+| M5 | Draft modifier: ten picks, no vote in any mode, Skip absent (vanilla), no status line | Custom run with Draft, each mode | `Draft option wrapped`, `tagged Draft card reward` x10 | [ ] |
+| M6 | Ancient vote shows "{streamer} has N vote overrides remaining this act" above the title; decrements after an override; hidden when overrides are 0/unlimited in settings | any Ancient | visual | [ ] |
+
 ## sealed-neow rows
 
 Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-design.md` section 7. Every row below requires the Sealed Deck Custom Mode modifier plus Pikcube's Run Modifiers' Always Whale (so Neow's blessings, including Talisman, are offered in the sealed run). Evidence anchors:

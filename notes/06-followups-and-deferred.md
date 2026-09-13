@@ -919,3 +919,11 @@ fixes, all committed to `main` the same day:
 Tags `remove-one-complete` and `sealed-neow-complete` at `f6e5261`. Queued next (handoff section 5):
 three-way `nonCombatCardRewards` setting, `removeOne` mode text, Draft origin tag, override counter on
 the Ancient screens, then `release/v0.4.0`.
+
+## Reward modes (reward-modes/, 2026-09-13)
+
+Handoff section 5 shipped: `nonCombatCardRewards` (`free` | `removeOne` | `mixed`, default `mixed`) replaces `combatCardVotesOnly` (migrated on load and on ensure-file; dropped on write). `AuthorityRules.Resolve` takes the mode; `removeOne` turns shop-relic and untagged (event) rewards into removal votes with mode-aware text in `AuthorityLoc`. Draft picks carry `DraftOriginTags` (wrapping the `Func<Task>` from `Draft.GenerateNeowOption`, because the ten rewards are constructed after awaits) and classify Free in every mode. The Ancient vote popup shows the override budget line.
+
+Follow-ups deferred:
+- The learned-relic file stores the mode at learn time; in removeOne mode the text ignores it (always removal wording), so a later switch back to Mixed shows the learned mode again. Acceptable.
+- Pacing note for Tristan: removeOne makes Orrery five votes and Colorful Philosophers three.

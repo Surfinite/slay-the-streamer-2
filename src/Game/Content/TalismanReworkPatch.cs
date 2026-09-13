@@ -14,6 +14,8 @@ using MegaCrit.Sts2.Core.Nodes.Vfx;
 using MegaCrit.Sts2.Core.Random;
 using SlayTheStreamer2.Ti.Internal;
 
+using SlayTheStreamer2.Game.DecisionVotes;
+
 namespace SlayTheStreamer2.Game.Content;
 
 /// <summary>Spec section 7.1. Vanilla NeowsTalisman.AfterObtained upgrades the last
@@ -51,7 +53,10 @@ internal static class TalismanReworkPatch {
                 .ToList();
             var runState = owner.RunState;
             ulong seed = TalismanPickRules.Fnv1a64($"{runState.Rng?.StringSeed}|{Salt}|{runState.CurrentActIndex}");
-            var rng = new Rng(seed);
+            // SeedCompat: Rng(ulong) only exists on game >= v0.109.0; the default branch
+            // (v0.107.1) has Rng(uint, int). One DLL serves both, so bind reflectively and
+            // fold the 64-bit hash to 32 bits (still deterministic per run seed and act).
+            var rng = SeedCompat.CreateRng(unchecked((uint)(seed ^ (seed >> 32))));
             var picks = TalismanPickRules.PickIndices(candidates.Count, SealedNeowLoc.TalismanCards, max => rng.NextInt(max));
             foreach (int i in picks) {
                 var card = candidates[i];

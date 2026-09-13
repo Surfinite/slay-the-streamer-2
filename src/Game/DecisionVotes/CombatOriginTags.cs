@@ -71,11 +71,16 @@ internal static class CombatOriginTags {
     /// (call sites that only have the NCardRewardSelectionScreen).</summary>
     internal static bool ShouldVoteOnActiveReward() => ShouldVoteOn(TryGetActiveReward());
 
-    [HarmonyPatch(typeof(Hook), nameof(Hook.BeforeCombatRewardOffered))]
+    // String name, not nameof: the member does not exist on the default branch (v0.107.1),
+    // and build.ps1 compiles against whichever branch the local game install is on. The
+    // Prepare check below handles its absence at runtime.
+    private const string BeforeCombatRewardOfferedName = "BeforeCombatRewardOffered";
+
+    [HarmonyPatch(typeof(Hook), BeforeCombatRewardOfferedName)]
     internal static class TagPatch {
         static bool Prepare(MethodBase? original) {
             if (original is not null) return true;   // per-method pass after registration check
-            var target = AccessTools.Method(typeof(Hook), nameof(Hook.BeforeCombatRewardOffered));
+            var target = AccessTools.Method(typeof(Hook), BeforeCombatRewardOfferedName);
             if (target is null) {
                 TiLog.Error("[SlayTheStreamer2][card-scope] Hook.BeforeCombatRewardOffered not found; combat-origin tagging will not register (combatCardVotesOnly degrades to voting on all card rewards)");
                 TagPatchRegistered = false;

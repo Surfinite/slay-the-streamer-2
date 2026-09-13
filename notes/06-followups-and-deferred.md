@@ -916,6 +916,6 @@ fixes, all committed to `main` the same day:
 - `sealed-neow/9`: Doom text reads "to yourself" (vanilla Neurosurge phrasing).
 - `sealed-neow/10`: blue "Slay the Streamer: modified for Sealed Deck runs." tag on the Talisman.
 
-Tags `remove-one-complete` and `sealed-neow-complete` at `4af6fe5`. Queued next (handoff section 5):
+Tags `remove-one-complete` and `sealed-neow-complete` at `f6e5261`. Queued next (handoff section 5):
 three-way `nonCombatCardRewards` setting, `removeOne` mode text, Draft origin tag, override counter on
 the Ancient screens, then `release/v0.4.0`.

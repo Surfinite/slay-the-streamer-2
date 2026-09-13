@@ -54,4 +54,4 @@ Spec: `docs/superpowers/specs/2026-09-07-remove-one-unskippable-sealed-neow-desi
 | S5 | Leafy Poultice and Precarious Shears never offered at Neow or by Neow's Bones across 5+ sealed starts | `relic NEOWS_BONES` | `sealed run: Leafy Poultice and Precarious Shears disabled` (logged once per game session) | pass 2026-09-13 |
 | S6 | Unsealed run: vanilla Talisman, both relics can appear | | no `[sealed-neow]` lines | pass 2026-09-13 |
 
-Operator validation completed by Surfinite on 2026-09-13 (rows 1-12 and S1-S6 all pass, after the remove-one/14..19 and sealed-neow/9..10 fixes). Tags `remove-one-complete` and `sealed-neow-complete` applied at `4af6fe5`.
+Operator validation completed by Surfinite on 2026-09-13 (rows 1-12 and S1-S6 all pass, after the remove-one/14..19 and sealed-neow/9..10 fixes). Tags `remove-one-complete` and `sealed-neow-complete` applied at `f6e5261` (the notes commit).

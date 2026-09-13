@@ -118,7 +118,11 @@ public class SettingsWriterTests {
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             Assert.Equal("removeOne", (string)json["nonCombatCardRewards"]!);
             Assert.False(json.ContainsKey("combatCardVotesOnly"));
-        } finally { if (File.Exists(path)) File.Delete(path); }
+        } finally {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bak")) File.Delete(path + ".bak");
+            if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
+        }
     }
 
     [Fact]

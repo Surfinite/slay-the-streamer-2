@@ -925,5 +925,5 @@ the Ancient screens, then `release/v0.4.0`.
 Handoff section 5 shipped: `nonCombatCardRewards` (`free` | `removeOne` | `mixed`, default `mixed`) replaces `combatCardVotesOnly` (migrated on load and on ensure-file; dropped on write). `AuthorityRules.Resolve` takes the mode; `removeOne` turns shop-relic and untagged (event) rewards into removal votes with mode-aware text in `AuthorityLoc`. Draft picks carry `DraftOriginTags` (wrapping the `Func<Task>` from `Draft.GenerateNeowOption`, because the ten rewards are constructed after awaits) and classify Free in every mode. The Ancient vote popup shows the override budget line.
 
 Follow-ups deferred:
-- The learned-relic file stores the mode at learn time; in removeOne mode the text ignores it (always removal wording), so a later switch back to Mixed shows the learned mode again. Acceptable.
+- The learned-relic file records the mode-independent fact (Ancient relic => RemoveOne, otherwise Unskippable); removeOne mode upgrades the wording at read time in AuthorityLoc, so a mode switch in either direction shows the right text.
 - Pacing note for Tristan: removeOne makes Orrery five votes and Colorful Philosophers three.

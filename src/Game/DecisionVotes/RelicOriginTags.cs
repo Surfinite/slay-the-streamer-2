@@ -37,10 +37,12 @@ internal static class RelicOriginTags {
             if (Obtaining.Count > 0) {
                 var relic = Obtaining.Peek();
                 Tags.AddOrUpdate(instance, relic);
-                // Learn with the classifier's own verdict so removeOne mode records RemoveOne
-                // for shop relics; the tag is already in place, so Classify sees it.
+                // Learn the mode-independent fact (Ancient => RemoveOne, else Unskippable). The
+                // learned-relics file is write-once, so a verdict that depended on the live
+                // setting would outlive a later mode switch; AuthorityLoc upgrades the wording
+                // at read time in removeOne mode instead.
                 if (RewardAuthority.RulesActive)
-                    LocTextPatch.Registry.Learn(relic.Id.Entry, RewardAuthority.Classify(instance));
+                    LocTextPatch.Registry.Learn(relic.Id.Entry, relic.Rarity == MegaCrit.Sts2.Core.Entities.Relics.RelicRarity.Ancient ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable);
                 TiLog.Info($"[SlayTheStreamer2][card-scope] tagged relic-origin card reward (relic={relic.Id.Entry}, rarity={relic.Rarity})");
             }
         } catch (Exception ex) { TiLog.Error("[SlayTheStreamer2][card-scope] relic-origin tag failed", ex); }

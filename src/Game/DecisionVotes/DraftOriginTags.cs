@@ -26,7 +26,8 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// Draft in progress" counter would stay stuck at 1 for the rest of the process and tag
 /// every later reward in every later run as Free. Scoping to the Player reference means
 /// an abandoned run's stale marker can never match a fresh run's new Player instance.
-/// Every branch fails open (untagged = whatever the mode says).</summary>
+/// Every branch fails open (untagged = whatever the mode says). A null EventModel.Owner
+/// (never observed; Neow always sets it) skips the wrap and the picks follow the mode.</summary>
 internal static class DraftOriginTags {
     private static readonly ConditionalWeakTable<CardReward, object> Tags = new();
     private static readonly object Marker = new();
@@ -50,7 +51,7 @@ internal static class DraftOriginTags {
                 if (inner is null) return;
                 var player = eventModel?.Owner;
                 if (player is null) {
-                    TiLog.Warn("[SlayTheStreamer2][card-scope] Draft option has no owning player; picks follow the mode");
+                    TiLog.Warn("[SlayTheStreamer2][card-scope] Draft option has no owning player; picks follow the mode; in removeOne mode the Draft picks would become removal votes");
                     return;
                 }
                 __result = async () => {

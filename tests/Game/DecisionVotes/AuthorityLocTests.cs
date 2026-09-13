@@ -138,6 +138,16 @@ public class AuthorityLocTests {
     }
 
     [Fact]
+    public void RemoveOneMode_EveryEventKeyExceptTrashHeap_HasItsOwnText() {
+        var reg = Registry();
+        foreach (var key in AuthorityLoc.EventKeys) {
+            if (key.StartsWith("TRASH_HEAP.", System.StringComparison.Ordinal)) continue;   // Dream Catcher line is already removal wording in both modes
+            Assert.NotEqual(AuthorityLoc.SuffixFor("events", key, reg, NonCombatRewardMode.Mixed),
+                            AuthorityLoc.SuffixFor("events", key, reg, NonCombatRewardMode.RemoveOne));
+        }
+    }
+
+    [Fact]
     public void MixedMode_IsTheDefaultAndUnchanged() {
         var reg = Registry();
         Assert.Equal(AuthorityLoc.SuffixFor("relics", "ORRERY.description", reg),

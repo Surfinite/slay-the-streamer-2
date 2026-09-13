@@ -31,6 +31,10 @@ public static class AuthorityLoc {
     };
 
     private const string Unskippable = "the card rewards cannot be skipped.";
+    // Options that grant exactly one CardReward read singular (Surfinite, 2026-09-13):
+    // Brain Leech (RewardCount 1) and The Future of Potions (one reward). Trial Guilty
+    // grants two, Colorful Philosophers three per option.
+    private const string UnskippableSingle = "the card reward cannot be skipped.";
     private const string CrystalSphere = "you will not have the option to skip cards uncovered here.";
 
     private static readonly Dictionary<string, string> Events = new(StringComparer.Ordinal) {
@@ -43,8 +47,8 @@ public static class AuthorityLoc {
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.REGENT.description"] = Unskippable,
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.SILENT.description"] = Unskippable,
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.DEFECT.description"] = Unskippable,
-        ["THE_FUTURE_OF_POTIONS.pages.INITIAL.options.POTION.description"] = Unskippable,
-        ["BRAIN_LEECH.pages.INITIAL.options.RIP.description"] = Unskippable,
+        ["THE_FUTURE_OF_POTIONS.pages.INITIAL.options.POTION.description"] = UnskippableSingle,
+        ["BRAIN_LEECH.pages.INITIAL.options.RIP.description"] = UnskippableSingle,
         ["TRIAL.pages.NONDESCRIPT.options.GUILTY.description"] = Unskippable,
     };
 

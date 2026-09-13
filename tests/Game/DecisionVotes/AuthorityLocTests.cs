@@ -34,8 +34,12 @@ public class AuthorityLocTests {
 
     [Fact]
     public void EventKeys_GetSuffix() {
-        Assert.Equal(AuthorityLoc.Lead + "the card rewards cannot be skipped.",
+        Assert.Equal(AuthorityLoc.Lead + "the card reward cannot be skipped.",
             AuthorityLoc.SuffixFor("events", "BRAIN_LEECH.pages.INITIAL.options.RIP.description", Registry()));
+        Assert.Equal(AuthorityLoc.Lead + "the card reward cannot be skipped.",
+            AuthorityLoc.SuffixFor("events", "THE_FUTURE_OF_POTIONS.pages.INITIAL.options.POTION.description", Registry()));
+        Assert.Equal(AuthorityLoc.Lead + "the card rewards cannot be skipped.",
+            AuthorityLoc.SuffixFor("events", "TRIAL.pages.NONDESCRIPT.options.GUILTY.description", Registry()));
         Assert.StartsWith("\n" + AuthorityLoc.Lead, AuthorityLoc.SuffixFor("events", "CRYSTAL_SPHERE.minigame.instructions.description", Registry()));
     }
 

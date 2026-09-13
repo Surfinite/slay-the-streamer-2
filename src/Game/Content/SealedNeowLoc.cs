@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using SlayTheStreamer2.Game.DecisionVotes;
 
 namespace SlayTheStreamer2.Game.Content;
 
@@ -13,6 +14,11 @@ public static class SealedNeowLoc {
     public const string DoomedId = "STREAMER_DOOMED";
     public const string TalismanId = "NEOWS_TALISMAN";
 
+    /// <summary>Blue mod tag on the reworked Talisman (Surfinite, S1 validation 2026-09-13):
+    /// players recognise the icon and assume vanilla, so the text must visibly say the mod
+    /// changed it. Same lead as every other Slay the Streamer line.</summary>
+    public const string TalismanTag = AuthorityLoc.Lead + "modified for Sealed Deck runs.";
+
     private static readonly Dictionary<string, string> Provided = new(StringComparer.Ordinal) {
         [DoomedId + ".title"] = "Doomed",
         [DoomedId + ".description"] = "Apply [blue]{Amount}[/blue] [gold]Doom[/gold] to yourself when played.",
@@ -20,8 +26,8 @@ public static class SealedNeowLoc {
     };
 
     private static readonly Dictionary<string, string> Replaced = new(StringComparer.Ordinal) {
-        [TalismanId + ".description"] = $"Upon pickup, [gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to yourself when played.",
-        [TalismanId + ".eventDescription"] = $"[gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to yourself when played.",
+        [TalismanId + ".description"] = $"Upon pickup, [gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to yourself when played." + TalismanTag,
+        [TalismanId + ".eventDescription"] = $"[gold]Upgrade[/gold] [blue]{TalismanCards}[/blue] random cards. They become [red]Doomed[/red]: apply [red]{TalismanDoom}[/red] [gold]Doom[/gold] to yourself when played." + TalismanTag,
     };
 
     public static bool TryProvide(string table, string key, out string text) {

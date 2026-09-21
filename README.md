@@ -125,6 +125,8 @@ Two vanilla Custom Mode modifiers get special handling:
 - Sealed Deck. You draft your starting 10 cards from the 30-card grid; chat doesn't vote on that. Once the run begins, chat votes on card rewards as normal. If Neow's blessings are available in your sealed run (Pikcube's Run Modifiers' Always Whale does that), two tweaks apply: Neow's Talisman upgrades 2 random cards and makes them Doomed (5 Doom to yourself each time you play one) instead of upgrading the Strikes and Defends you don't have, and Leafy Poultice and Precarious Shears are never offered. Outside sealed runs everything is vanilla.
 - Draft. The run starts with 10 pick-1-of-3 screens. You draft; chat never votes on those picks, in any mode. Chat votes on card rewards once the run begins.
 
+Custom Mode also gets the standard-mode "?" Random character button (vanilla leaves it out). Pick it and the game draws your character from the run seed when you embark, with the same reveal as standard mode. Locked until every character is unlocked on your profile, same as vanilla.
+
 Sealed Deck and Draft are mutually exclusive in Custom Mode. Vanilla locks Custom Mode behind three standard-mode wins. On the modded save you can open the dev console (`~`) and run `unlock all` instead.
 
 ### 🎛 Streamer-side extras (not chat votes)

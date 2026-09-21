@@ -43,12 +43,13 @@ src/0Harmony.dll
 # copied per-build for IDE IntelliSense — reference-only, not ours to redistribute.
 src/sts2.xml
 
-# External-review workflow inputs and raw reviewer outputs.
-# Kept local-only: CONTEXT docs are throwaway inputs and raw _REVIEWS folders
-# can contain reviewer commentary we don't want on a public repo.
-# The synthesized META-REVIEW-*.md files ARE committed — that's the load-bearing artifact.
+# External-review workflow: inputs, raw reviewer outputs, synthesized meta-reviews
+# and the two helper commands are all local-only.
 **/*-CONTEXT.md
 **/*_REVIEWS/
+**/META-REVIEW-*.md
+.claude/commands/document-context.md
+.claude/commands/meta-review.md
 
 # Steam Workshop workspace: content/ is synced from dist/ by workshop/upload.ps1
 workshop/content/

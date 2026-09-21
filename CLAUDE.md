@@ -54,6 +54,7 @@ Per-task commits to `main` with a slice-specific prefix:
 - Remove-one votes + unskippable rewards + explanation text: `remove-one/N:`
 - Sealed-deck Neow tweaks (Talisman rework, relic disables): `sealed-neow/N:`
 - Reward modes (three-way non-combat setting, Draft tag, Ancient override counter): `reward-modes/N:`
+- Custom Mode Random character button (ported from Sabotage rand/1): `custom-random/N:`
 
 Commits to main are pre-authorized within slice work. Tag with `<slice>-complete` once the operator-validation gate is green.
 

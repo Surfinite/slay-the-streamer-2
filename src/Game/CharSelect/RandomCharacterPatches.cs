@@ -56,8 +56,12 @@ namespace SlayTheStreamer2.Game.CharSelect;
 ///
 /// Cross-branch note: the lobby-player struct is <c>LobbyPlayer</c> on the default branch
 /// (v0.107.1) and <c>StartRunLobbyPlayer</c> on the Beta (v0.110+), same public fields
-/// (<c>id</c>, <c>character</c>). The PlayerChanged prefix reads it through Harmony's
-/// <c>__args</c> injection plus two field lookups so the tree compiles against either.
+/// (<c>id</c>, <c>character</c>). The PlayerChanged prefix declares the parameter as
+/// <c>object</c> (Harmony boxes a value-type argument into it) plus two field lookups so
+/// the tree compiles against either. NOT <c>__args</c>: Harmony builds that array once at
+/// method entry and copies it back into every argument after a prefix that declares it,
+/// which would re-set the resolution flag to true right after the prefix cleared it and
+/// vanilla would throw (custom-random/2 fixed exactly that).
 ///
 /// Lock semantics are vanilla's: NCharacterSelectButton.Init locks the Random button until
 /// the local profile has all five characters unlocked, which is correct because the draw
@@ -132,13 +136,12 @@ internal static class RandomCharacterResolvePatch {
 
     /// <summary>Runs BEFORE vanilla's body; clearing the flag by ref is what turns the
     /// throw into vanilla's ordinary player-changed handling. The player struct arrives
-    /// boxed in <paramref name="__args"/> (index 0) because its type name differs per
-    /// game branch; see the class remarks.</summary>
-    private static void Prefix(NCustomRunScreen __instance, object[] __args, ref bool isRandomCharacterResolution) {
+    /// boxed as <paramref name="player"/> because its type name differs per game branch;
+    /// see the class remarks.</summary>
+    private static void Prefix(NCustomRunScreen __instance, object player, ref bool isRandomCharacterResolution) {
         if (!isRandomCharacterResolution) return;
         isRandomCharacterResolution = false;
         try {
-            var player = __args[0];
             var playerType = player.GetType();
             var playerId = AccessTools.Field(playerType, "id")?.GetValue(player) as ulong?;
             var character = AccessTools.Field(playerType, "character")?.GetValue(player) as CharacterModel;

@@ -61,12 +61,17 @@ internal static class ChestRelicChoicePatch {
             // Count > 1: not the shape we expect (future game change) - leave alone.
             if (current is null || current.Count != 1) return;
 
-            // First-ever-chest tutorial forces Gorget solo - keep any solo-Gorget
-            // chest vanilla (over-broad by design: also skips rare later natural
-            // Gorget draws, a missed expansion at worst). Compare by canonical Id
-            // (not the Id.Entry string literal) to sidestep the UPPER_SNAKE_CASE
-            // derivation landmine entirely.
-            if (current[0].Id == ModelDb.Relic<Gorget>().Id) return;
+            // First-ever-chest tutorial forces Gorget solo - keep that chest
+            // vanilla. Vanilla only forces it on the profile's first run, so gate
+            // on the run count too: Gorget is Common, and skipping every solo
+            // Gorget left natural draws unexpanded live (FrostPrime, 2026-09-28).
+            // Vanilla's "Gorget still in the bag" check can't be mirrored here -
+            // the tutorial path has already removed it - so a first-run natural
+            // Gorget after the first chest also stays vanilla, which is harmless.
+            // Compare by canonical Id (not the Id.Entry string literal) to
+            // sidestep the UPPER_SNAKE_CASE derivation landmine entirely.
+            if (RelicChoicePlanner.IsTutorialChestRelic(
+                    current[0].Id == ModelDb.Relic<Gorget>().Id, player.UnlockState.NumberOfRuns)) return;
 
             int extraCount = RelicChoicePlanner.ExtraCount(choices, current.Count, RelicChoicePlanner.MaxChoices);
             if (extraCount <= 0) return;

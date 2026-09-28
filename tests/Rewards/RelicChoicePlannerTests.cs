@@ -42,4 +42,12 @@ public class RelicChoicePlannerTests {
             RelicChoicePlanner.OfferSeed(null, "bossy-chest", 0, 0),
             RelicChoicePlanner.OfferSeed(null, "bossy-chest", 0, 0));
     }
+
+    [Theory]
+    [InlineData(true, 0, true)]     // profile's first run: vanilla's forced tutorial Gorget
+    [InlineData(true, 1, false)]    // natural Gorget draw on a later run: expand it (FrostPrime, 2026-09-28)
+    [InlineData(true, 250, false)]
+    [InlineData(false, 0, false)]   // first run, but not Gorget: not the tutorial relic
+    public void IsTutorialChestRelic_only_on_first_run_gorget(bool isGorget, int numberOfRuns, bool expected) =>
+        Assert.Equal(expected, RelicChoicePlanner.IsTutorialChestRelic(isGorget, numberOfRuns));
 }

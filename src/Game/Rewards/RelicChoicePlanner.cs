@@ -24,6 +24,15 @@ public static class RelicChoicePlanner {
     }
 
     /// <summary>
+    /// Whether a solo chest relic may be vanilla's forced first-chest tutorial
+    /// Gorget, which stays unexpanded. Vanilla only forces it while the profile
+    /// has zero finished runs (TreasureRoomRelicSynchronizer.TryGetRelicForTutorial);
+    /// Gorget is Common, so on any later run it is a natural draw and expands.
+    /// </summary>
+    public static bool IsTutorialChestRelic(bool relicIsGorget, int numberOfRuns) =>
+        relicIsGorget && numberOfRuns == 0;
+
+    /// <summary>
     /// Deterministic per-offer seed (FNV-1a 32-bit) from run seed + surface +
     /// act/floor, so a save-quit-regenerated offer re-rolls identical rarities
     /// without any stream-position tracking.

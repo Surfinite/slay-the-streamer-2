@@ -1,10 +1,8 @@
 using System;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Threading;
 using Godot;
-using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using SlayTheStreamer2.Game.Bootstrap;
@@ -199,22 +197,37 @@ public static class ModEntry {
                     OnChildConnectionStateChanged(twitchForReceipts, youtubeForReceipts, e);
             }
 
-            // 8. Apply Harmony patches with diagnostic logging.
-            //    AncientVotePatch + CardRewardVotePatch (+ skip-gate sibling) + BossVotePatch
-            //    attach here via PatchAll.
-            var harmony = new Harmony("slay_the_streamer_2");
-            harmony.PatchAll(Assembly.GetExecutingAssembly());
-            var patchedMethods = harmony.GetPatchedMethods().ToList();
-            Log.Info($"[SlayTheStreamer2] Harmony patched {patchedMethods.Count} method(s):");
-            foreach (var m in patchedMethods) {
-                Log.Info($"[SlayTheStreamer2]   {m.DeclaringType?.FullName}.{m.Name}");
-            }
+            // 8. Apply Harmony patches per feature group. A group whose class throws
+            //    while patching is rolled back as a unit and the rest stay active
+            //    (PatchRegistrar / PatchGroups); the summary line is the one a tester
+            //    reads to confirm what registered on this game version.
+            var registration = PatchRegistrar.RegisterAll(
+                Assembly.GetExecutingAssembly(),
+                info: msg => Log.Info(msg),
+                warn: msg => Log.Warn(msg),
+                error: (msg, ex) => Log.Error($"{msg}: {ex}"));
+            var summary = PatchGroups.FormatSummary(
+                GameVersionForLog(), ModVersion ?? "unknown",
+                registration.TotalGroups, registration.PatchedMethods.Count, PatchGroups.Failures);
+            if (PatchGroups.Failures.Count == 0) Log.Info(summary); else Log.Warn(summary);
 
             Log.Info("[SlayTheStreamer2] Init complete.");
         } catch (Exception e) {
             // Bound the blast radius: half-loaded mod is worse than not-loaded mod.
+            // Undo whatever registered so the message below is true.
+            PatchRegistrar.RollBackEverything((msg, ex) => Log.Error($"{msg}: {ex}"));
             Log.Error($"[SlayTheStreamer2] FATAL: Init failed; subsequent game " +
                 $"behavior unmodified. Exception: {e}");
+        }
+    }
+
+    /// <summary>The running game's version for the patch summary line. Never throws:
+    /// the summary must be logged even if this accessor ever changes.</summary>
+    private static string GameVersionForLog() {
+        try {
+            return MegaCrit.Sts2.Core.Debug.ReleaseInfoManager.Instance.SemVer?.ToString() ?? "unknown";
+        } catch (Exception) {
+            return "unknown";
         }
     }
 
@@ -237,6 +250,11 @@ public static class ModEntry {
                 !_twitchStartupReceiptSent) {
                 _twitchStartupReceiptSent = true;
                 var msg = BuildStartupReceipt(youtube);
+                // Only when a patch group was rolled back at init (a game update the
+                // mod has not caught up with): tell the streamer which features are
+                // off instead of leaving them to find out mid-stream.
+                var degraded = PatchGroups.ChatNotice(PatchGroups.Failures);
+                if (degraded is not null) msg = $"{msg} {degraded}";
                 _ = twitch.SendMessageAsync(msg, OutgoingMessagePriority.High);
             }
 

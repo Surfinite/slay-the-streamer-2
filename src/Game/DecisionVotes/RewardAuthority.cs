@@ -14,8 +14,13 @@ internal static class RewardAuthority {
     /// <summary>False on game builds without Hook.BeforeCombatRewardOffered (the default
     /// branch as of v0.107.1): the classifier cannot tell combat rewards apart, so the
     /// non-combat setting has no effect and every card reward is a normal vote. The
-    /// settings panel reads this to grey the dropdown out.</summary>
-    internal static bool CombatTagRegistered => CombatOriginTags.TagPatchRegistered && CombatOriginTags.CapturePatchRegistered;
+    /// settings panel reads this to grey the dropdown out. Also false when the
+    /// reward-modes patch group was rolled back at init: the two flags are set when the
+    /// patches PREPARE, before they are applied, so on their own they would stay true
+    /// after a rollback.</summary>
+    internal static bool CombatTagRegistered =>
+        !PatchGroups.IsFailed(PatchGroups.RewardModes)
+        && CombatOriginTags.TagPatchRegistered && CombatOriginTags.CapturePatchRegistered;
     internal static NonCombatRewardMode Mode => ModSettings.Current?.NonCombatCardRewards ?? NonCombatRewardModes.Default;
 
     /// <summary>True when the per-origin rules and their explanation text apply.</summary>

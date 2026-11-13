@@ -48,6 +48,7 @@
     <Compile Remove="..\src\Game\DecisionVotes\RelicOriginTags.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\DraftOriginTags.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\CardRewardCtors.cs" />
+    <Compile Remove="..\src\Game\DecisionVotes\DreadDominion.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RestSiteOriginTags.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RewardAuthority.cs" />
     <Compile Remove="..\src\Game\DecisionVotes\RemovalRecords.cs" />

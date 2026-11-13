@@ -35,6 +35,7 @@ internal static class BossVotePatch {
     private static int _voteInProgress;
     private static int _resumeInProgress;
     private static int _multiplayerWarnFired;
+    private static int _dreadUnavailableWarnFired;
 
     /// <summary>True while a boss vote is in flight. Read by the global map-button
     /// guard (<c>TopBarMapButtonGuardPatch</c>) so the streamer can't bypass an
@@ -99,7 +100,11 @@ internal static class BossVotePatch {
     /// test csproj) — the testable winner-index→option mapping lives in BossVoteResolver.
     /// </summary>
     internal static Action<IRunState, EncounterModel> ApplyBossSwap { get; set; }
-        = (rs, boss) => MapCmd.SetBossEncounter(rs, boss);
+        = (rs, boss) => {
+            MapCmd.SetBossEncounter(rs, boss);
+            // Dread only: the act-wide Dominion comes from the boss (see DreadDominion).
+            DreadDominion.Resync(rs, "boss swap");
+        };
 
     /// <summary>
     /// Runtime override hook for the A10 second-boss swap (task 2a/2b). There is no
@@ -116,6 +121,9 @@ internal static class BossVotePatch {
     internal static Action<IRunState, EncounterModel> ApplySecondBossSwap { get; set; }
         = (rs, boss) => {
             rs.Act.SetSecondBossEncounter(boss);
+            // Dread only, and before the UI refresh below: in the final act the
+            // Dominion comes from the SECOND boss (see DreadDominion).
+            DreadDominion.Resync(rs, "second-boss swap");
             if (MegaCrit.Sts2.Core.TestSupport.TestMode.IsOff) {
                 NRun.Instance.GlobalUi.TopBar.BossIcon.RefreshBossIcon();
                 // Via SeedCompat: RunRngSet.Seed and SetMap's seed param widened
@@ -313,6 +321,18 @@ internal static class BossVotePatch {
     private static bool PrefixContinue(NTreasureRoom room, VoteCoordinator coordinator) {
         IRunState? runState = RunManager.Instance?.DebugOnlyGetState();
         if (runState is null) {
+            Interlocked.Exchange(ref _voteInProgress, 0);
+            return true;
+        }
+
+        // Dread (game v0.113.0+): the act's Dominion comes from its boss and is
+        // re-derived after a swap. If this game version no longer exposes what that
+        // needs, stay out of Dread rather than swap the boss and leave the Dominion
+        // behind.
+        if (DreadDominion.IsDreadRun(runState) && !DreadDominion.CanResync(runState)) {
+            if (Interlocked.CompareExchange(ref _dreadUnavailableWarnFired, 1, 0) == 0) {
+                TiLog.Warn("[SlayTheStreamer2][boss-vote] Dread run and the Dominion cannot be re-derived on this game version; no boss vote in Dread, vanilla boss stands");
+            }
             Interlocked.Exchange(ref _voteInProgress, 0);
             return true;
         }

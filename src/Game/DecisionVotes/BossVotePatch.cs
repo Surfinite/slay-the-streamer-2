@@ -26,10 +26,11 @@ using SlayTheStreamer2.Ti.Voting;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
 
-// OnProceedButtonPressed is private with an NButton param — must use string literal +
-// explicit param types (nameof won't bind across private accessibility, and the NButton
-// arg is discarded inside the vanilla method body but is part of the signature).
-[HarmonyPatch(typeof(NTreasureRoom), "OnProceedButtonPressed", new[] { typeof(NButton) })]
+// The treasure room's Proceed handler is private with an NButton param (discarded
+// inside the vanilla body but part of the signature), so it is bound by name. The
+// name differs per game version, hence TargetMethod() rather than an attribute; see
+// ProceedHandlerNames.
+[HarmonyPatch]
 internal static class BossVotePatch {
     private static int _voteInProgress;
     private static int _resumeInProgress;
@@ -126,14 +127,27 @@ internal static class BossVotePatch {
             }
         };
 
+    /// <summary>
+    /// The handler connected to the treasure room's Proceed button, in lookup order.
+    /// It is <c>OnProceedButtonPressed</c> up to game v0.111.0 and
+    /// <c>OnProceedButtonReleased</c> from v0.113.0. ORDER IS LOAD-BEARING: the older
+    /// builds also declare an <c>OnProceedButtonReleased(NButton)</c> that nothing
+    /// connects to (it only opens the map). Trying that name first would patch the dead
+    /// method there: no vote would ever open, and the resume would just open the map.
+    /// </summary>
+    private static readonly string[] ProceedHandlerNames = { "OnProceedButtonPressed", "OnProceedButtonReleased" };
+
     private static readonly Lazy<MethodInfo?> _proceedMethod =
-        new(() => AccessTools.Method(typeof(NTreasureRoom), "OnProceedButtonPressed", new[] { typeof(NButton) }));
+        new(() => MemberCompat.FirstMethod(typeof(NTreasureRoom), new[] { typeof(NButton) }, ProceedHandlerNames));
+
+    /// <summary>Only reached when Prepare's hard check passed, so never null.</summary>
+    static MethodBase TargetMethod() => _proceedMethod.Value!;
 
     static bool Prepare(MethodBase? original) {
         if (original is null) {
             // Registration-time. Hard check: the patched method must resolve.
             if (_proceedMethod.Value is null) {
-                TiLog.Error("[SlayTheStreamer2][boss-vote] hard check failed: NTreasureRoom.OnProceedButtonPressed(NButton) not found via reflection; patch will not register");
+                TiLog.Error($"[SlayTheStreamer2][boss-vote] hard check failed: NTreasureRoom has neither {string.Join(" nor ", ProceedHandlerNames)}(NButton); patch will not register");
                 return false;
             }
 
@@ -640,9 +654,20 @@ internal static class BossVotePatch {
                 TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab: animation state not ready; column renders unanimated");
                 return;
             }
-            state.SetAnimation("body/idle_loop",  loop: true, trackId: 0);
-            state.SetAnimation("left/idle_loop",  loop: true, trackId: 1);
-            state.SetAnimation("right/idle_loop", loop: true, trackId: 2);
+            // SetAnimation returns MegaTrackEntry? on game v0.107.1 and void from
+            // v0.111.0. The return type is part of a compiled method reference, so a
+            // direct call makes this whole method fail to JIT on the other branch (and
+            // the catch below cannot catch a failure to compile itself). Invoked
+            // reflectively, where the return type plays no part.
+            var setAnimation = MemberCompat.FirstMethod(
+                state.GetType(), new[] { typeof(string), typeof(bool), typeof(int) }, "SetAnimation");
+            if (setAnimation is null) {
+                TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab: SetAnimation(string, bool, int) not found; column renders unanimated");
+                return;
+            }
+            setAnimation.Invoke(state, new object[] { "body/idle_loop",  true, 0 });
+            setAnimation.Invoke(state, new object[] { "left/idle_loop",  true, 1 });
+            setAnimation.Invoke(state, new object[] { "right/idle_loop", true, 2 });
         } catch (Exception ex) {
             TiLog.Warn($"[SlayTheStreamer2][boss-vote] Kaiser Crab deferred setup failed for encounter={encounterId}: {ex.Message}");
         }
@@ -963,8 +988,9 @@ internal static class BossVotePatch {
         Interlocked.Exchange(ref _resumeInProgress, 1);
         try {
             // Synthetic Proceed re-click. _resumeInProgress=1 makes the prefix pass through.
-            // OnProceedButtonPressed is private with an NButton param (discarded); reflective
-            // invoke via the cached _proceedMethod handle. Pass null for the NButton arg.
+            // The Proceed handler is private with an NButton param (discarded); reflective
+            // invoke via the cached _proceedMethod handle, which is the same method the
+            // prefix is attached to. Pass null for the NButton arg.
             try {
                 var method = _proceedMethod.Value;
                 if (method is null) {
@@ -973,7 +999,7 @@ internal static class BossVotePatch {
                     method.Invoke(room, new object?[] { null });
                 }
             } catch (Exception ex) {
-                TiLog.Error("[SlayTheStreamer2][boss-vote] synthetic OnProceedButtonPressed threw", ex);
+                TiLog.Error("[SlayTheStreamer2][boss-vote] synthetic Proceed re-click threw", ex);
             }
 
             // Mark this run+act as voted. Subsequent chest clicks (Golden Compass second

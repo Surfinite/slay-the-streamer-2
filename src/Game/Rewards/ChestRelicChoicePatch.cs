@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Threading;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Relics;
@@ -35,12 +38,26 @@ namespace SlayTheStreamer2.Game.Rewards;
 /// </summary>
 [HarmonyPatch(typeof(TreasureRoomRelicSynchronizer), nameof(TreasureRoomRelicSynchronizer.BeginRelicPicking))]
 internal static class ChestRelicChoicePatch {
-    private static readonly AccessTools.FieldRef<TreasureRoomRelicSynchronizer, List<RelicModel>?> CurrentRelicsRef =
-        AccessTools.FieldRefAccess<TreasureRoomRelicSynchronizer, List<RelicModel>?>("_currentRelics");
-    private static readonly AccessTools.FieldRef<TreasureRoomRelicSynchronizer, RelicGrabBag> SharedBagRef =
-        AccessTools.FieldRefAccess<TreasureRoomRelicSynchronizer, RelicGrabBag>("_sharedGrabBag");
-    private static readonly AccessTools.FieldRef<TreasureRoomRelicSynchronizer, IPlayerCollection> PlayersRef =
-        AccessTools.FieldRefAccess<TreasureRoomRelicSynchronizer, IPlayerCollection>("_playerCollection");
+    // Private fields of the synchronizer, resolved lazily and by name. They used to be
+    // static AccessTools.FieldRefAccess initialisers; when game v0.113.0 renamed one of
+    // them the lookup threw from the type initialiser and took the whole class down on
+    // the first chest. A lazy lookup that returns null degrades to a vanilla chest and
+    // one Warn instead.
+    private static readonly Lazy<FieldInfo?> CurrentRelicsField = new(() =>
+        MemberCompat.FirstField(typeof(TreasureRoomRelicSynchronizer), "_currentRelics"));
+    private static readonly Lazy<FieldInfo?> SharedBagField = new(() =>
+        MemberCompat.FirstField(typeof(TreasureRoomRelicSynchronizer), "_sharedGrabBag"));
+    /// <summary><c>IRunState _runState</c> from game v0.113.0,
+    /// <c>IPlayerCollection _playerCollection</c> before. IRunState extends
+    /// IPlayerCollection on every version, so both read as an IPlayerCollection.</summary>
+    private static readonly Lazy<FieldInfo?> PlayersField = new(() =>
+        MemberCompat.FirstField(typeof(TreasureRoomRelicSynchronizer), "_runState", "_playerCollection"));
+    private static int _missingFieldWarned;
+
+    /// <summary>The synchronizer's player collection, or null when the backing field
+    /// cannot be found on this game version.</summary>
+    internal static IPlayerCollection? PlayersOf(TreasureRoomRelicSynchronizer synchronizer) =>
+        PlayersField.Value?.GetValue(synchronizer) as IPlayerCollection;
 
     /// <summary>Extras (and the original) offered by the current chest session, pending refund.</summary>
     internal static readonly List<RelicModel> SessionOffer = new();
@@ -52,11 +69,18 @@ internal static class ChestRelicChoicePatch {
             int choices = RelicChoicePlanner.Clamp(ModSettings.Current?.RelicChoices ?? 1);
             if (choices <= 1) return;
 
-            var players = PlayersRef(__instance).Players;
+            var playerCollection = PlayersOf(__instance);
+            if (playerCollection is null || CurrentRelicsField.Value is null || SharedBagField.Value is null) {
+                if (Interlocked.Exchange(ref _missingFieldWarned, 1) == 0) {
+                    TiLog.Warn("[bossy-relics] TreasureRoomRelicSynchronizer private fields not found (game update?); chests stay vanilla");
+                }
+                return;
+            }
+            var players = playerCollection.Players;
             if (players.Count != 1) return;
             var player = players[0];
 
-            var current = CurrentRelicsRef(__instance);
+            var current = CurrentRelicsField.Value.GetValue(__instance) as List<RelicModel>;
             // Count == 0: empty chest / ShouldGenerateTreasure false - leave alone.
             // Count > 1: not the shape we expect (future game change) - leave alone.
             if (current is null || current.Count != 1) return;
@@ -86,7 +110,7 @@ internal static class ChestRelicChoicePatch {
             // happened to be in `current` after a post-loop AddRange.
             SessionOffer.AddRange(current);
 
-            var sharedBag = SharedBagRef(__instance);
+            if (SharedBagField.Value.GetValue(__instance) is not RelicGrabBag sharedBag) return;
             for (int i = 0; i < extraCount; i++) {
                 // Mirror the vanilla pull shape, rarity on OUR rng (vanilla's
                 // chest stream position stays untouched -> the ORIGINAL relic is
@@ -139,14 +163,11 @@ internal static class ChestRelicChoicePatch {
 /// </summary>
 [HarmonyPatch(typeof(TreasureRoomRelicSynchronizer), nameof(TreasureRoomRelicSynchronizer.OnPicked))]
 internal static class ChestRelicRefundPatch {
-    private static readonly AccessTools.FieldRef<TreasureRoomRelicSynchronizer, IPlayerCollection> PlayersRef =
-        AccessTools.FieldRefAccess<TreasureRoomRelicSynchronizer, IPlayerCollection>("_playerCollection");
-
     static void Postfix(TreasureRoomRelicSynchronizer __instance, Player player, int? index) {
         try {
             if (ChestRelicChoicePatch.SessionOffer.Count == 0) return;
-            var players = PlayersRef(__instance).Players;
-            if (players.Count != 1) return;
+            var players = ChestRelicChoicePatch.PlayersOf(__instance)?.Players;
+            if (players is null || players.Count != 1) return;
 
             // After a CLAIM the vanilla flow has already run AwardRelics +
             // EndRelicVoting (session over: _currentRelics is null). After a

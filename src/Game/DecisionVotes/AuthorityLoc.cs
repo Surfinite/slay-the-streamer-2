@@ -48,6 +48,8 @@ public static class AuthorityLoc {
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.REGENT.description"] = Unskippable,
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.SILENT.description"] = Unskippable,
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.DEFECT.description"] = Unskippable,
+        // The Fool's option exists from game v0.113.0; older builds never ask for the key.
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.FOOL.description"] = Unskippable,
         ["THE_FUTURE_OF_POTIONS.pages.INITIAL.options.POTION.description"] = UnskippableSingle,
         ["BRAIN_LEECH.pages.INITIAL.options.RIP.description"] = UnskippableSingle,
         ["TRIAL.pages.NONDESCRIPT.options.GUILTY.description"] = Unskippable,
@@ -76,6 +78,7 @@ public static class AuthorityLoc {
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.REGENT.description"] = RemoveOneEvent,
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.SILENT.description"] = RemoveOneEvent,
         ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.DEFECT.description"] = RemoveOneEvent,
+        ["COLORFUL_PHILOSOPHERS.pages.INITIAL.options.FOOL.description"] = RemoveOneEvent,
         ["THE_FUTURE_OF_POTIONS.pages.INITIAL.options.POTION.description"] = RemoveOneEventSingle,
         ["BRAIN_LEECH.pages.INITIAL.options.RIP.description"] = RemoveOneEventSingle,
         ["TRIAL.pages.NONDESCRIPT.options.GUILTY.description"] = RemoveOneEvent,

@@ -104,6 +104,20 @@ public class AuthorityLocTests {
         return dir?.FullName ?? Directory.GetCurrentDirectory();
     }
 
+    /// <summary>Game v0.113.0 added The Fool's card pool to Colorful Philosophers; the
+    /// option is unskippable like the other five, so it carries the same line.</summary>
+    [Fact]
+    public void ColorfulPhilosophers_FoolOption_GetsTheSameLinesAsTheOtherCharacters() {
+        const string fool = "COLORFUL_PHILOSOPHERS.pages.INITIAL.options.FOOL.description";
+        const string silent = "COLORFUL_PHILOSOPHERS.pages.INITIAL.options.SILENT.description";
+        var reg = Registry();
+        Assert.NotNull(AuthorityLoc.SuffixFor("events", fool, reg));
+        Assert.Equal(AuthorityLoc.SuffixFor("events", silent, reg), AuthorityLoc.SuffixFor("events", fool, reg));
+        Assert.Equal(
+            AuthorityLoc.SuffixFor("events", silent, reg, NonCombatRewardMode.RemoveOne),
+            AuthorityLoc.SuffixFor("events", fool, reg, NonCombatRewardMode.RemoveOne));
+    }
+
     [Fact]
     public void RemoveOneMode_EventsBecomeRemovalText() {
         var reg = Registry();

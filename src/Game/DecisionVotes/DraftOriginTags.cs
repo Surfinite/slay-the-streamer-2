@@ -1,15 +1,14 @@
 // src/Game/DecisionVotes/DraftOriginTags.cs
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Players;
-using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Modifiers;
 using MegaCrit.Sts2.Core.Rewards;
-using MegaCrit.Sts2.Core.Runs;
 using SlayTheStreamer2.Ti.Internal;
 
 namespace SlayTheStreamer2.Game.DecisionVotes;
@@ -64,15 +63,14 @@ internal static class DraftOriginTags {
         }
     }
 
-    [HarmonyPatch(typeof(CardReward), MethodType.Constructor,
-        new[] { typeof(CardCreationOptions), typeof(int), typeof(Player), typeof(PlayerChoiceSynchronizer) })]
-    internal static class CtorAPatch {
-        static void Postfix(CardReward __instance, Player player) => TagIfDrafting(__instance, player);
-    }
-
-    [HarmonyPatch(typeof(CardReward), MethodType.Constructor,
-        new[] { typeof(IEnumerable<CardModel>), typeof(CardCreationSource), typeof(Player), typeof(CardCreationOptions), typeof(PlayerChoiceSynchronizer) })]
-    internal static class CtorBPatch {
+    /// <summary>Both CardReward constructors, targeted by shape; see
+    /// <see cref="CardRewardCtors"/> for why not by exact argument list. Every target
+    /// has a <c>Player player</c> parameter by construction, which is what lets the
+    /// postfix inject it by name.</summary>
+    [HarmonyPatch]
+    internal static class CtorPatch {
+        static bool Prepare(MethodBase? original) => CardRewardCtors.Prepare(original, "Draft");
+        static IEnumerable<MethodBase> TargetMethods() => CardRewardCtors.WithPlayer;
         static void Postfix(CardReward __instance, Player player) => TagIfDrafting(__instance, player);
     }
 }

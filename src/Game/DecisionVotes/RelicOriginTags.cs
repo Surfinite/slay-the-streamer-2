@@ -6,9 +6,7 @@ using System.Runtime.CompilerServices;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Players;
-using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
-using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Rewards;
 using SlayTheStreamer2.Ti.Internal;
 
@@ -66,15 +64,12 @@ internal static class RelicOriginTags {
         }
     }
 
-    [HarmonyPatch(typeof(CardReward), MethodType.Constructor,
-        new[] { typeof(CardCreationOptions), typeof(int), typeof(Player), typeof(PlayerChoiceSynchronizer) })]
-    internal static class CtorAPatch {
-        static void Postfix(CardReward __instance) => TagIfObtaining(__instance);
-    }
-
-    [HarmonyPatch(typeof(CardReward), MethodType.Constructor,
-        new[] { typeof(IEnumerable<CardModel>), typeof(CardCreationSource), typeof(Player), typeof(CardCreationOptions), typeof(PlayerChoiceSynchronizer) })]
-    internal static class CtorBPatch {
+    /// <summary>Both CardReward constructors, targeted by shape; see
+    /// <see cref="CardRewardCtors"/> for why not by exact argument list.</summary>
+    [HarmonyPatch]
+    internal static class CtorPatch {
+        static bool Prepare(MethodBase? original) => CardRewardCtors.Prepare(original, "relic-origin");
+        static IEnumerable<MethodBase> TargetMethods() => CardRewardCtors.WithPlayer;
         static void Postfix(CardReward __instance) => TagIfObtaining(__instance);
     }
 }

@@ -29,6 +29,15 @@ public static class AuthorityRules {
         return mode == NonCombatRewardMode.RemoveOne ? AuthorityMode.RemoveOne : AuthorityMode.Unskippable;
     }
 
+    /// <summary>What a classification becomes while the remove-one patch group is off
+    /// (rolled back at init because a game update broke one of its targets). The
+    /// removal vote on the card-reward screen is started by the card vote itself, so it
+    /// would still run, but without the group's presenter the removed card is not
+    /// marked when the screen is reopened. An ordinary pick vote is what every card
+    /// reward was before the reward modes existed, and it needs none of that.</summary>
+    public static AuthorityMode WithoutRemoveOne(AuthorityMode mode) =>
+        mode == AuthorityMode.RemoveOne ? AuthorityMode.NormalVote : mode;
+
     /// <summary>True when the per-origin rules (and their explanation text) are live.</summary>
     public static bool RulesActive(bool combatTagRegistered, NonCombatRewardMode mode) =>
         combatTagRegistered && mode != NonCombatRewardMode.Free;

@@ -76,7 +76,7 @@ internal static class PatchRegistrar {
                 : "needs " + string.Join(" + ", PatchGroups.DependenciesOf(group).Where(off.Contains));
             int undone = RollBack(group, error);
             PatchGroups.MarkFailed(group, reason);
-            warn($"[SlayTheStreamer2] patch group '{group}' is OFF: {reason} ({undone} patched method(s) rolled back); that feature behaves as vanilla");
+            warn($"[SlayTheStreamer2] patch group '{group}' is OFF: {reason} ({undone} patched method(s) rolled back)");
         }
 
         var patched = _harmonies

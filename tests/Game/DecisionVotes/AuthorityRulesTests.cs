@@ -21,6 +21,19 @@ public class AuthorityRulesTests {
     }
 
     [Fact]
+    public void WithoutRemoveOne_ARemovalVoteBecomesAnOrdinaryPickVote() {
+        Assert.Equal(AuthorityMode.NormalVote, AuthorityRules.WithoutRemoveOne(AuthorityMode.RemoveOne));
+    }
+
+    [Theory]
+    [InlineData(AuthorityMode.Free)]
+    [InlineData(AuthorityMode.NormalVote)]
+    [InlineData(AuthorityMode.Unskippable)]
+    public void WithoutRemoveOne_LeavesEveryOtherModeAlone(AuthorityMode mode) {
+        Assert.Equal(mode, AuthorityRules.WithoutRemoveOne(mode));
+    }
+
+    [Fact]
     public void Free_CombatVotes_EverythingElseFree() {
         Assert.Equal(AuthorityMode.NormalVote, AuthorityRules.Resolve(Combat, true, NonCombatRewardMode.Free));
         foreach (var o in new[] { AncientRelic, ShopRelic, RestSite, Untagged })

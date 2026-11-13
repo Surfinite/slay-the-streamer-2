@@ -43,14 +43,4 @@ public class GameModeNamesTests {
         Assert.False(GameModeNames.IsDread(null));
         Assert.False(GameModeNames.IsBlitz(null));
     }
-
-    [Fact]
-    public void Describe_ReturnsTheMemberName() {
-        Assert.Equal("Blitz", GameModeNames.Describe(BetaGameMode.Blitz));
-    }
-
-    [Fact]
-    public void Describe_ReturnsUnknown_ForNull() {
-        Assert.Equal("unknown", GameModeNames.Describe(null));
-    }
 }

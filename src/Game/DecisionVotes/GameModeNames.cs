@@ -23,9 +23,6 @@ internal static class GameModeNames {
     internal static bool IsDread(object? gameMode) => Is(gameMode, Dread);
     internal static bool IsBlitz(object? gameMode) => Is(gameMode, Blitz);
 
-    /// <summary>The mode's name for log lines; "unknown" for null.</summary>
-    internal static string Describe(object? gameMode) => gameMode?.ToString() ?? "unknown";
-
     private static bool Is(object? gameMode, string name) =>
         gameMode is not null && string.Equals(gameMode.ToString(), name, StringComparison.Ordinal);
 }

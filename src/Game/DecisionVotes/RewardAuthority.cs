@@ -41,7 +41,8 @@ internal static class RewardAuthority {
             RelicAncient: relic is not null && relic.Rarity == RelicRarity.Ancient,
             RestSiteTagged: RestSiteOriginTags.IsTagged(reward),
             DraftTagged: DraftOriginTags.IsTagged(reward));
-        return AuthorityRules.Resolve(origin, CombatTagRegistered, Mode);
+        var mode = AuthorityRules.Resolve(origin, CombatTagRegistered, Mode);
+        return PatchGroups.IsFailed(PatchGroups.RemoveOne) ? AuthorityRules.WithoutRemoveOne(mode) : mode;
     }
 
     /// <summary>Mode of the reward whose selection sub-screen is on screen.</summary>

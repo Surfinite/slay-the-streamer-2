@@ -58,8 +58,15 @@ public class PatchGroupsTests {
     }
 
     [Fact]
+    public void Closure_OfRemoveOne_TakesTheExplanationTextThatDescribesIt() {
+        Assert.Equal(
+            new[] { PatchGroups.ExplainText, PatchGroups.RemoveOne },
+            PatchGroups.Closure(new[] { PatchGroups.RemoveOne }));
+    }
+
+    [Fact]
     public void Closure_OfALeafGroup_IsOnlyThatGroup() {
-        Assert.Equal(new[] { PatchGroups.RemoveOne }, PatchGroups.Closure(new[] { PatchGroups.RemoveOne }));
+        Assert.Equal(new[] { PatchGroups.ExplainText }, PatchGroups.Closure(new[] { PatchGroups.ExplainText }));
     }
 
     [Fact]

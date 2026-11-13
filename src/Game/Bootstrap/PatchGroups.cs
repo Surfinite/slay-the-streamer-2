@@ -95,8 +95,10 @@ internal static class PatchGroups {
         [RewardModes] = new[] { CardVote },
         // A removal vote needs the screens' guards and the origin tags that pick it.
         [RemoveOne] = new[] { CardVote, RewardModes },
-        // The text explains rules that would no longer be enforced.
-        [ExplainText] = new[] { RewardModes },
+        // The text explains rules that would no longer be enforced: without the
+        // reward modes there are none, and without remove-one the lines that say
+        // "chat votes to remove one option" describe a vote that no longer happens.
+        [ExplainText] = new[] { RewardModes, RemoveOne },
     };
 
     internal static IReadOnlyList<string> All { get; } =

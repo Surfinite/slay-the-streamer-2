@@ -80,6 +80,13 @@ internal static class ChestRelicChoicePatch {
             if (players.Count != 1) return;
             var player = players[0];
 
+            // Blitz (game v0.113.0+) chests are already multi-relic and are picked over
+            // several ROUNDS; a Silver Crucible chest there holds one relic across two
+            // rounds, which passes the Count == 1 shape check below. Expanding it and
+            // then refunding the unclaimed relics after round one would return relics
+            // that are still on offer in round two. Vanilla's Blitz chest stands.
+            if (GameModeNames.IsBlitz(player.RunState.GameMode)) return;
+
             var current = CurrentRelicsField.Value.GetValue(__instance) as List<RelicModel>;
             // Count == 0: empty chest / ShouldGenerateTreasure false - leave alone.
             // Count > 1: not the shape we expect (future game change) - leave alone.

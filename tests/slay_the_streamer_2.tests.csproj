@@ -23,6 +23,7 @@
     <Compile Include="..\src\Game\Ui\Settings\ModConstants.cs" />
     <Compile Include="..\src\Game\Content\TalismanPickRules.cs" />
     <Compile Include="..\src\Game\Content\SealedNeowLoc.cs" />
+    <Compile Include="..\src\Game\CharSelect\RandomCharacterRules.cs" />
     <!--
       Game/DecisionVotes contains Harmony patches that reference
       MegaCrit.Sts2.* / Godot / HarmonyLib types not available to the test

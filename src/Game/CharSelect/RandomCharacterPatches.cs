@@ -328,6 +328,26 @@ internal static class RandomCharacterDreadRule {
             TiLog.Info($"{RandomCharacterLobby.LogPrefix} Random was selected in Dread; selection moved to {fallback.Character?.Id.Entry ?? "?"} ({trigger})");
         } catch (Exception e) { TiLog.Warn($"{RandomCharacterLobby.LogPrefix} Dread rule failed ({trigger}): {e.Message}"); }
     }
+
+    /// <summary>True when launching now would hit the lobby's Dread throw: see
+    /// <see cref="RandomCharacterRules.MustRefuseEmbark"/>. The lobby's player list is
+    /// read reflectively because its element type differs per game branch. Any failure
+    /// to read it answers false: never block Embark on a broken check.</summary>
+    internal static bool MustRefuseEmbark(NCustomRunScreen screen) {
+        try {
+            var lobby = screen.Lobby;
+            if (lobby is null) return false;
+            if (AccessTools.Property(lobby.GetType(), "Players")?.GetValue(lobby) is not System.Collections.IEnumerable players) return false;
+            var onRandom = new List<bool>();
+            foreach (var player in players) onRandom.Add(RandomCharacterLobby.PlayerCharacter(player) is RandomCharacter);
+            if (!RandomCharacterRules.MustRefuseEmbark(lobby.GameMode, onRandom)) return false;
+            TiLog.Warn($"{RandomCharacterLobby.LogPrefix} Embark refused: the lobby is in Dread and {onRandom.Count(r => r)} player(s) are still on Random, which the game cannot launch; press Embark again once their selection has moved");
+            return true;
+        } catch (Exception e) {
+            TiLog.Warn($"{RandomCharacterLobby.LogPrefix} Dread embark check failed; not blocking Embark: {e.Message}");
+            return false;
+        }
+    }
 }
 
 /// <summary>Re-applies the Dread rule when the Custom Mode screen opens (every game
@@ -364,7 +384,13 @@ internal static class RandomCharacterDreadEmbarkGuardPatch {
 
     private static IEnumerable<MethodBase> TargetMethods() => new[] { Target.Value! };
 
+    /// <summary>Returns false (Embark does nothing, the screen stays usable) while the
+    /// mode is Dread and any lobby player is still on Random after the local selection
+    /// has been moved. That is a remote player whose own client has not moved it yet;
+    /// pressing Embark again a moment later goes through.</summary>
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(NCustomRunScreen __instance) =>
+    private static bool Prefix(NCustomRunScreen __instance) {
         RandomCharacterDreadRule.Apply(__instance, "OnEmbarkPressed");
+        return !RandomCharacterDreadRule.MustRefuseEmbark(__instance);
+    }
 }

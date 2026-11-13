@@ -61,7 +61,7 @@ internal static class EliteRelicChoicePatch {
             var members = new List<Reward> { original };
             for (int i = 0; i < extraCount; i++) {
                 // Fixed-rarity ctor consumes no vanilla RNG; rarity from OUR rng.
-                members.Add(new RelicReward(RelicFactory.RollRarity(rng), player));
+                members.Add(CreateRelicReward(RelicFactory.RollRarity(rng), player));
             }
 
             var wrapper = new LinkedRewardSet(members, player);
@@ -75,6 +75,21 @@ internal static class EliteRelicChoicePatch {
             TiLog.Error("[bossy-relics] EliteRelicChoicePatch failed; vanilla rewards unchanged", ex);
         }
     }
+
+    /// <summary>RelicReward(RelicRarity, Player) gained a trailing optional Rng in game
+    /// v0.113.0. That changes the COMPILED constructor reference, so a direct
+    /// <c>new RelicReward(rarity, player)</c> binds on one game branch and makes the
+    /// whole postfix above fail to JIT on the other. The postfix runs at every combat's
+    /// reward generation and the failure lands before its own try block, so it has to be
+    /// a reflective construction. The appended parameter takes its declared default
+    /// (null: the reward rolls on its own rng, as before).</summary>
+    private static RelicReward CreateRelicReward(
+            MegaCrit.Sts2.Core.Entities.Relics.RelicRarity rarity,
+            MegaCrit.Sts2.Core.Entities.Players.Player player) =>
+        (RelicReward)MemberCompat.Construct(
+            typeof(RelicReward),
+            new[] { typeof(MegaCrit.Sts2.Core.Entities.Relics.RelicRarity), typeof(MegaCrit.Sts2.Core.Entities.Players.Player) },
+            new object?[] { rarity, player });
 }
 
 /// <summary>

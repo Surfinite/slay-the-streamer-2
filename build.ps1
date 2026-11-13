@@ -29,6 +29,25 @@ if (Test-Path $gameXml) { Copy-Item -Force $gameXml "src\sts2.xml" }
 $harmonyVer = (Get-Item "src\0Harmony.dll").VersionInfo.FileVersion
 Write-Host "Refreshed src\sts2.dll and src\0Harmony.dll (Harmony $harmonyVer)"
 
+# Keep one copy of each game version's sts2.dll for the reference checker
+# (tools\refcheck), which verifies the built mod against every supported game
+# version without switching Steam branches. decompiled\ is gitignored; the DLL is
+# MegaCrit's and never committed.
+$releaseInfo = Join-Path $GameInstall "release_info.json"
+if (Test-Path $releaseInfo) {
+    $gameVersion = (Get-Content $releaseInfo -Raw | ConvertFrom-Json).version
+    if ($gameVersion) {
+        $archiveDir = "decompiled\dll-archive"
+        New-Item -ItemType Directory -Force -Path $archiveDir | Out-Null
+        $archived = Join-Path $archiveDir "sts2-$gameVersion.dll"
+        if (-not (Test-Path $archived)) {
+            Copy-Item $gameSts2 $archived
+            Write-Host "Archived game DLL as $archived"
+        }
+        Write-Host "Building against game $gameVersion"
+    }
+}
+
 # Build via dotnet publish to a stable output path (avoid .godot/mono/temp drift).
 # Assembly version is stamped from the manifest so the two can't diverge; the
 # SDK's SourceLink default appends "+<git sha>" to the informational version.

@@ -38,7 +38,7 @@ public class FooTests : ... { }
 
 Without this, the class runs in parallel with `TiLogTests` (which captures the static sink) and surfaces as `InvalidOperationException: Collection was modified during enumeration`. Voting tests are especially prone — `VoteSession` warns on tally events. Found the hard way during Task 5 of yt-chat work.
 
-Two timing-sensitive tests can fail once under CPU load (seen while the language server was re-analysing fresh edits): `VoteSessionTests.ReceiptSend_LogsErrorOnFault` and `YouTubeChatServiceTests.Escalation_Fires_At_30th_Consecutive_Reconnect`. Rerun on an idle machine before investigating; ten consecutive clean runs is the bar that was used on 2026-11-13.
+Three timing-sensitive tests can fail once under CPU load (seen while the language server was re-analysing fresh edits, and with the game running): `VoteSessionTests.ReceiptSend_LogsErrorOnFault`, `YouTubeChatServiceTests.Escalation_Fires_At_30th_Consecutive_Reconnect` and `YouTubeChatServiceTests.Escalation_OneShot_Until_Counter_Resets`. Rerun on an idle machine before investigating; ten consecutive clean runs is the bar that was used on 2026-11-13.
 
 ### Commit conventions
 

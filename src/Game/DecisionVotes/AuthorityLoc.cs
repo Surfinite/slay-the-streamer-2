@@ -24,9 +24,12 @@ public static class AuthorityLoc {
         ["DREAM_CATCHER"] = "chat votes to remove one of the card-reward options each time you [gold]Rest[/gold].",
         // Reroll is blocked while any vote on the card-reward screen is open
         // (CardReward_Reroll_Prefix), so on an ordinary pick vote it is usable only before
-        // the streamer's click starts the vote. After a removal it is allowed again and
-        // the next click starts a fresh removal vote (RemovalVoteFlow.EffectiveRecord).
-        ["DRIFTWOOD"] = "reroll before you click to start chat's vote. You can't reroll while chat is voting. After chat removes an option you can still reroll, and chat then votes again on the new cards.",
+        // the streamer's click starts the vote. The rarer removal-vote case (reroll is
+        // allowed again after a removal and the next click starts a fresh removal vote,
+        // RemovalVoteFlow.EffectiveRecord) is left out on purpose: the removal status line
+        // already says "You can reroll these cards once, for free" on that screen
+        // (Surfinite, 2026-11-16).
+        ["DRIFTWOOD"] = "reroll before you click to start chat's vote. You can't reroll while chat is voting.",
         ["ORRERY"] = "you must take a card from each of the five rewards.",
         ["STRONGBOX"] = "you must take a card from each of the two rewards.",
     };

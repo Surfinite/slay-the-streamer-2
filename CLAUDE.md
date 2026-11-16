@@ -181,7 +181,7 @@ Plus `VoteSessionTestBase.CreateCoordinator(...)` which already encapsulates the
 | Pre-spec landscape research (Bossy Relics pick-1-of-N relic rewards) | `notes/11-bossy-relics-investigation.md` |
 | Pre-spec landscape research (every card-choice surface: reward screen vs `CardSelectCmd` families, vote-shape problem, candidate rulings for FrostPrime) | `notes/13-card-choice-surfaces-inventory.md` |
 | StS2 asset extraction workflow (`.pck` → `decompiled/sts2-assets/`) | `notes/asset-extraction.md` |
-| Decompiled game source (regenerable, gitignored) | `decompiled/sts2-v0.113.0/` (current Beta, XML-free, 2026-11-13 — grep THIS); `decompiled/sts2-v0.107.1/` = default branch; `decompiled/sts2-v0.111.0/` = previous Beta, announced as the next default-branch content; `decompiled/sts2/` is a stale May-2026 tree |
+| Decompiled game source (regenerable, gitignored) | `decompiled/sts2-v0.113.1/` (current Beta hotfix, XML-free, 2026-11-16 — grep THIS); `decompiled/sts2-v0.113.0/` = the Beta before it (20 files differ, none on the mod's surface); `decompiled/sts2-v0.107.1/` = default branch; `decompiled/sts2-v0.111.0/` = previous Beta, announced as the next default-branch content; `decompiled/sts2/` is a stale May-2026 tree |
 | Archived game DLLs, one per version, for the reference checker | `decompiled/dll-archive/sts2-vX.Y.Z.dll` (written by `build.ps1`; gitignored) |
 | Reference checker (mod DLL vs game DLLs: compiled refs, Harmony targets, name lookups) | `tools/refcheck/` — `pwsh -File tools\refcheck\run.ps1` |
 | Game-update audits: findings, work items, tiered in-game test plan | `notes/v0.113.0-compat-plan.md` (latest); `notes/v0.107.0-compat-test-plan.md` |

@@ -14,8 +14,11 @@ namespace SlayTheStreamer2.Game.DecisionVotes;
 /// </summary>
 internal static class VoteOverrideBudget {
     /// <summary>Override clicks only register this long after vote start, so
-    /// the double-click that opened the vote can't consume an override.</summary>
-    public static readonly TimeSpan ArmingDelay = TimeSpan.FromSeconds(1.5);
+    /// the double-click that opened the vote can't consume an override. 0.2 s
+    /// since 2026-11-20 (was 1.5 s): a streamer who has already decided to override
+    /// clicks the same card again straight away, and at 1.5 s that meant hammering
+    /// the card until the click registered (seen on FrostPrime's stream).</summary>
+    public static readonly TimeSpan ArmingDelay = TimeSpan.FromSeconds(0.2);
 
     private static readonly ActBudgetTracker _tracker = new();
 

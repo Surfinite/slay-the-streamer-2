@@ -2,7 +2,7 @@
 
 A Slay the Spire 2 mod that lets your Twitch chat (and optionally YouTube chat) vote on the choices you make during a run: Neow's and the Ancients' blessings, card rewards, the act boss, and the Act 1 variant. It also gives you a small budget to overrule chat, and chat gets to name your enemies.
 
-> 🎮 Tested against Slay the Spire 2 Beta `v0.111.0` and the regular branch `v0.107.1`. One build serves both; the non-combat card-reward rules need the Beta (the setting says so in the panel on the regular branch).
+> 🎮 Tested against Slay the Spire 2 Beta `v0.113.1` and the regular branch `v0.111.1`. One build serves both.
 
 Inspired by [Tempus's StS1 Slay the Streamer](https://github.com/Tempus/SlayTheStreamer). No code from that mod is used here.
 
@@ -127,6 +127,11 @@ Two vanilla Custom Mode modifiers get special handling:
 
 Custom Mode also gets the standard-mode "?" Random character button (vanilla leaves it out). Pick it and the game draws your character from the run seed when you embark, with the same reveal as standard mode. Locked until every character is unlocked on your profile, same as vanilla.
 
+The Beta's new modes work too:
+
+- Blitz. Chat votes on card rewards and on each act's boss. Blitz chests already hand out several relics, so Relic choices leaves them alone, and merchant card packs follow the Non-combat card rewards setting (unskippable under Mixed, like Orrery). Custom Mode can combine Blitz with Draft or Sealed Deck: set the game mode to Blitz there and tick the modifier.
+- Dread. When chat changes an act's boss, the act's Dominion changes with it. Dread doesn't allow a Random character, so Custom Mode's "?" button hides while Dread is selected.
+
 Sealed Deck and Draft are mutually exclusive in Custom Mode. Vanilla locks Custom Mode behind three standard-mode wins. On the modded save you can open the dev console (`~`) and run `unlock all` instead.
 
 ### 🎛 Streamer-side extras (not chat votes)
@@ -157,9 +162,9 @@ Open the in-game settings menu and pick Slay the Streamer 2 in the mod list. You
   - Mixed (default): Ancient-relic and Dream Catcher card rewards get a remove-one vote; event and shop-relic card rewards can't be skipped and have no vote.
   - Remove-one: every non-combat card reward gets the remove-one vote. Orrery becomes five removal votes and Colorful Philosophers three, so this mode is slower.
   - Free: chat only votes on combat card rewards. Everything else is a free streamer pick.
-  - In Mixed and Remove-one, a blue "Slay the Streamer:" line on each relic and event explains the active rule. Beta branch only: the default branch lacks the hook this needs, so there every card reward is a normal pick vote.
+  - In Mixed and Remove-one, a blue "Slay the Streamer:" line on each relic and event explains the active rule.
 - Streamer card skips / act. How many card rewards you can skip per act (0 / 1 / 2 / 3 / 5 / Unlimited).
-- Streamer vote overrides / act. How many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). Clicks in the first 1.5 seconds of a countdown are ignored, so an accidental double-click that opened the vote can't spend an override.
+- Streamer vote overrides / act. How many times per act you can override a running vote (0 / 1 / 2 / 3 / Unlimited, default 1). Clicks in the first 0.2 seconds of a countdown are ignored, so an accidental double-click that opened the vote can't spend an override.
 - Cursed Overrides. Each override you spend also adds a random curse. Off by default.
 - Name enemies after chat voters. On by default.
 - Enemy chat message duration. How long a named enemy shows its chatter's messages as a speech bubble. Default 5 seconds; Off disables bubbles. Only applies while naming is on.
